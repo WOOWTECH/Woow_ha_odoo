@@ -1,3 +1,4 @@
-name: WoowTech Add-ons
-url: https://github.com/WOOWTECH/Woow_odoo_docker_compose_all
-maintainer: WoowTech
+---
+name: "WoowTech Add-ons"
+url: "https://github.com/WOOWTECH/Woow_odoo_docker_compose_all"
+maintainer: "WoowTech <info@woow.tech>"
