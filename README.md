@@ -1,12 +1,12 @@
 # WoowTech Home Assistant Add-ons
 
-[![Add Repository](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FWOOWTECH%2FWoow_odoo_docker_compose_all)
+[![Add Repository](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FWOOWTECH%2FWoow_odoo_docker_compose_all%23ha)
 
 ## Add-ons
 
 ### [Odoo 18 CE](./odoo18ce)
 
-[![Show Add-on](https://my.home-assistant.io/badges/supervisor_addon.svg)](https://my.home-assistant.io/redirect/supervisor_addon/?addon=0af40a62_odoo18ce&repository_url=https%3A%2F%2Fgithub.com%2FWOOWTECH%2FWoow_odoo_docker_compose_all)
+[![Show Add-on](https://my.home-assistant.io/badges/supervisor_addon.svg)](https://my.home-assistant.io/redirect/supervisor_addon/?addon=87ab746d_odoo18ce&repository_url=https%3A%2F%2Fgithub.com%2FWOOWTECH%2FWoow_odoo_docker_compose_all%23ha)
 
 Odoo 18 Community Edition + PostgreSQL 16 — bundled all-in-one add-on for SME.
 
@@ -26,7 +26,7 @@ Odoo 18 Community Edition + PostgreSQL 16 — bundled all-in-one add-on for SME.
 
 1. Click the badge below to add this repository to your Home Assistant:
 
-   [![Add Repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FWOOWTECH%2FWoow_odoo_docker_compose_all)
+   [![Add Repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FWOOWTECH%2FWoow_odoo_docker_compose_all%23ha)
 
 2. Navigate to **Settings** -> **Add-ons** -> **Add-on Store**
 3. Find **"Odoo 18 CE"** and click **INSTALL**
@@ -38,7 +38,7 @@ Odoo 18 Community Edition + PostgreSQL 16 — bundled all-in-one add-on for SME.
 1. Add this repository to your Home Assistant:
    - Go to **Settings** -> **Add-ons** -> **Add-on Store**
    - Click the **&#8942;** menu -> **Repositories**
-   - Add: `https://github.com/WOOWTECH/Woow_odoo_docker_compose_all`
+   - Add: `https://github.com/WOOWTECH/Woow_odoo_docker_compose_all#ha`
    - Click **Add** -> **Close**
 2. Navigate to **Settings** -> **Add-ons** -> **Add-on Store**
 3. Find **"Odoo 18 CE"** and click **INSTALL**
