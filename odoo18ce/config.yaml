@@ -3,7 +3,7 @@ name: "Odoo 18 CE"
 description: "Odoo 18 Community Edition + PostgreSQL 16 — bundled all-in-one add-on for SME"
 version: "0.2.0"
 slug: "odoo18ce"
-url: "https://github.com/WOOWTECH/Woow_odoo_docker_compose_all"
+url: "https://github.com/WOOWTECH/Woow_ha_odoo"
 startup: application
 boot: auto
 init: false
