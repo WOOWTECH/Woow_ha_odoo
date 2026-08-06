@@ -75,7 +75,17 @@ schema:
   smtp_ssl: "bool?"
 
 options:
+  # REQUIRED — the add-on will not start until both are set.
+  # admin_passwd is Odoo's master password (database manager);
+  # db_password is the password for the bundled PostgreSQL 'odoo' role.
+  # Home Assistant rejects known-breached passwords, so pick a fresh one.
+  admin_passwd: null
+  db_password: null
+
   TZ: "Asia/Taipei"
+  # Leave true for first-run: the initial database is created through
+  # /web/database/manager, which this gates. Turn it off once your
+  # databases exist and the add-on is reachable from outside the LAN.
   list_db: true
   workers: 0
   max_cron_threads: 1
@@ -83,7 +93,10 @@ options:
   limit_memory_soft: 2147483648
   limit_time_cpu: 60
   limit_time_real: 120
-  proxy_mode: true
+  # Enable ONLY behind a trusted reverse proxy (NGINX Proxy Manager,
+  # Cloudflare Tunnel). Port 8069 is published directly, so leaving this
+  # on makes Odoo trust X-Forwarded-* headers from any LAN client.
+  proxy_mode: false
   dev_mode: false
   log_level: "info"
   without_demo: true
