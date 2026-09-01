@@ -40,6 +40,8 @@ assert 'must contain at least 20 characters' in m
 pg=(root/'rootfs/etc/cont-init.d/00-postgres-init.sh').read_text()
 assert 'local   all       all                  peer' in pg
 assert '--auth-local=peer' in pg
+assert '51856b0abbce68848b2b024a00191cac5eeead3f' in d
+assert 'odoo-jsonrpc-filter' in d
 assert 'while(q.indexOf(P+P)===0)' in n
 assert 'absolute_redirect off;' in n
 assert '(?<odoo_redirect>/.*)' in n
@@ -56,5 +58,7 @@ assert '%%PUBLIC_HOST_GUARD%%' in n
 assert '%%PUBLIC_PROTO%%' in n
 assert 'window.WebSocket.OPEN=W.OPEN' in n
 assert '$request_method $uri $server_protocol' in n
+assert '$http_referer' not in n
+assert 'proxy_pass http://127.0.0.1:8071' in n
 PY
 printf '%s\n' 'dual gateway tests passed'

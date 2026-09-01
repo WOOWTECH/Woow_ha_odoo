@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.13 — 2026-09-02
+
+### Security
+- Add a localhost JSON-RPC filter that rejects public `service: db` calls while preserving object/common API services; HA Ingress retains database service access.
+- Fail the public origin closed until an HTTPS `public_url` supplies an exact Host guard and canonical scheme.
+- Remove Referer from access logs and pin WOOWTECH custom addons to a reviewed commit.
+
 ## 0.3.12 — 2026-09-02
 
 ### Security
