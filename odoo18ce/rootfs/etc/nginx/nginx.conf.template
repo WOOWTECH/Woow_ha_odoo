@@ -86,10 +86,6 @@ http {
         deny all;
         client_max_body_size 512M;
 
-        location = / {
-            return 302 $safe_ingress_path/odoo;
-        }
-
         location = /websocket {
             proxy_pass http://odoo_websocket;
             proxy_http_version 1.1;
@@ -130,6 +126,9 @@ http {
             sub_filter '"/mail/' '"$safe_ingress_path/mail/';
             sub_filter "'/mail/" "'$safe_ingress_path/mail/";
             sub_filter '`/mail/' '`$safe_ingress_path/mail/';
+            sub_filter '"/my/' '"$safe_ingress_path/my/';
+            sub_filter "'/my/" "'$safe_ingress_path/my/";
+            sub_filter '`/my/' '`$safe_ingress_path/my/';
             sub_filter '"/bus/' '"$safe_ingress_path/bus/';
             sub_filter "'/bus/" "'$safe_ingress_path/bus/";
             sub_filter '`/bus/' '`$safe_ingress_path/bus/';
