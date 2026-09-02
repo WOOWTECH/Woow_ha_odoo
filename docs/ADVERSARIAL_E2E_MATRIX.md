@@ -5,14 +5,15 @@ Every release must test both entrances: Cloudflare root and an HTTPS Supervisor-
 ## Recursive user journeys
 
 1. Anonymous Website: `/`, `/shop`, `/shop/cart`, `/contactus`, search and static assets.
-2. Authentication: login form visible, bad login error, valid login, logout, protected-route redirect, session cookie flags/path.
-3. Backend: `/odoo`, Discuss, app menu, browser back/forward, refresh/deep link.
-4. Cross-surface: backend → Website → shop/cart/contact → portal `/my/home` → backend.
-5. Data operations: JSON-RPC common/object allowed; DB service denied publicly; XML-RPC DB denied; attachment round-trip; PDF report.
-6. Realtime: `/websocket` upgrade, worker bundle, no root-prefix escape.
-7. Security perimeter: public DB web/RPC routes denied, unexpected Host denied, LAN host port closed, internal DNS expected Host accepted, query/Referer secrets absent from logs.
-8. Worker matrix: rendered nginx and startup with workers=0 (8070) and workers>0 (8072).
-9. Recovery: cold backup exists, secrets rotate, failed bootstrap remains fail-closed, rollback origin documented.
+2. Website editor: click the Website app from the backend, load `/website/iframefallback`, `/web/bundle/website.assets_all_wysiwyg_inside`, then assert both generated WYSIWYG CSS/JS assets return 200 without `AssetsLoadingError`.
+3. Authentication: login form visible, bad login error, valid login, logout, protected-route redirect, session cookie flags/path.
+4. Backend: `/odoo`, Discuss, app menu, browser back/forward, refresh/deep link.
+5. Cross-surface: backend → Website → shop/cart/contact → portal `/my/home` → backend.
+6. Data operations: JSON-RPC common/object allowed; DB service denied publicly; XML-RPC DB denied; attachment round-trip; PDF report.
+7. Realtime: `/websocket` upgrade, worker bundle, no root-prefix escape.
+8. Security perimeter: public DB web/RPC routes denied, unexpected Host denied, LAN host port closed, internal DNS expected Host accepted, query/Referer secrets absent from logs.
+9. Worker matrix: rendered nginx and startup with workers=0 (8070) and workers>0 (8072).
+10. Recovery: cold backup exists, secrets rotate, failed bootstrap remains fail-closed, rollback origin documented.
 
 ## Scoring
 
