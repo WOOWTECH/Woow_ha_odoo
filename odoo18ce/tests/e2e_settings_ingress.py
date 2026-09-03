@@ -24,7 +24,7 @@ HA_PASSWORD = os.environ.get("HA_TEST_PASSWORD")
 ODOO_LOGIN = os.environ.get("ODOO_TEST_LOGIN")
 ODOO_PASSWORD = os.environ.get("ODOO_TEST_PASSWORD")
 BASELINE_TAB_KEYS = {"general_settings", "calendar", "website", "stock", "account", "point_of_sale"}
-STAMP = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+STAMP = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
 ARTIFACT_DIR = Path(os.environ.get("E2E_ARTIFACT_DIR", "/tmp/odoo-settings-e2e")) / STAMP
 ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -33,6 +33,53 @@ def require(value, name):
     if not value:
         raise RuntimeError(f"{name} is required in the environment")
     return value
+
+
+def sanitize_diagnostic(value):
+    """Redact secrets from every diagnostic before it is stored or formatted."""
+    if isinstance(value, str):
+        value = re.sub(r"/api/hassio_ingress/[^/\s?#]+", "/api/hassio_ingress/<redacted>", value)
+        # Strip query values from absolute and root-relative URLs embedded in
+        # Playwright errors, including HA OAuth callback code/state values.
+        value = re.sub(
+            r"([^\s?#<>\"']+)\?[^\s#<>\"']*(#[^\s<>\"']*)?",
+            lambda match: match.group(1) + (match.group(2) or ""),
+            value,
+        )
+        if value.startswith(("http://", "https://", "/")):
+            parts = urlsplit(value)
+            value = urlunsplit((parts.scheme, parts.netloc, parts.path, "", parts.fragment))
+        return value
+    if isinstance(value, tuple):
+        return tuple(sanitize_diagnostic(item) for item in value)
+    if isinstance(value, list):
+        return [sanitize_diagnostic(item) for item in value]
+    if isinstance(value, dict):
+        return {key: sanitize_diagnostic(item) for key, item in value.items()}
+    return value
+
+
+def diagnostic_text(value):
+    """Return a safe, deterministic string for exceptions and stderr."""
+    sanitized = sanitize_diagnostic(value)
+    if isinstance(sanitized, str):
+        return sanitized
+    return json.dumps(sanitized, ensure_ascii=False, sort_keys=True)
+
+
+def is_detached_frame_error(error):
+    """Recognize only Playwright errors caused by replacement frame contexts."""
+    message = str(error).lower()
+    return any(
+        marker in message
+        for marker in (
+            "frame was detached",
+            "frame has been detached",
+            "execution context was destroyed",
+            "cannot find context with specified id",
+            "cannot find context",
+        )
+    )
 
 
 def direct_ingress_frame(page):
@@ -45,37 +92,40 @@ def direct_ingress_frame(page):
         if frames:
             return frames[0]
         page.wait_for_timeout(200)
-    raise AssertionError(f"direct ingress iframe absent; frames={[frame.url for frame in page.frames]}")
+    raise AssertionError(
+        "direct ingress iframe absent; frames="
+        + diagnostic_text([frame.url for frame in page.frames])
+    )
 
 
 def add_evidence(page, evidence):
-    page.on("response", lambda response: evidence["http_failures"].append({"status": response.status, "url": response.url}) if response.status >= 400 else None)
-    page.on("requestfailed", lambda request: evidence["request_failures"].append({"url": request.url, "failure": request.failure}) )
-    page.on("pageerror", lambda error: evidence["page_errors"].append(str(error)))
-    page.on("console", lambda message: evidence["console_errors"].append(message.text) if message.type == "error" else None)
-    page.on("framenavigated", lambda frame: evidence["frame_navigations"].append(frame.url))
-
-
-def redact_sensitive_urls(value):
-    """Never persist ingress tokens or authorization query values."""
-    if isinstance(value, str):
-        value = re.sub(r"/api/hassio_ingress/[^/]+", "/api/hassio_ingress/<redacted>", value)
-        value = re.sub(r"(https?://[^\s?#]+)\?[^\s#]*", r"\1", value)
-        if value.startswith(("http://", "https://")):
-            parts = urlsplit(value)
-            value = urlunsplit((parts.scheme, parts.netloc, parts.path, "", parts.fragment))
-        return value
-    if isinstance(value, list):
-        return [redact_sensitive_urls(item) for item in value]
-    if isinstance(value, dict):
-        return {key: redact_sensitive_urls(item) for key, item in value.items()}
-    return value
+    page.on(
+        "response",
+        lambda response: evidence["http_failures"].append(
+            sanitize_diagnostic({"status": response.status, "url": response.url})
+        ) if response.status >= 400 else None,
+    )
+    page.on(
+        "requestfailed",
+        lambda request: evidence["request_failures"].append(
+            sanitize_diagnostic({"url": request.url, "failure": request.failure})
+        ),
+    )
+    page.on("pageerror", lambda error: evidence["page_errors"].append(diagnostic_text(str(error))))
+    page.on(
+        "console",
+        lambda message: evidence["console_errors"].append(diagnostic_text(message.text))
+        if message.type == "error" else None,
+    )
+    page.on("framenavigated", lambda frame: evidence["frame_navigations"].append(diagnostic_text(frame.url)))
 
 
 def assert_no_http_failures(evidence):
-    failures = evidence["http_failures"]
+    failures = sanitize_diagnostic(evidence["http_failures"])
     if failures:
-        raise AssertionError(f"HTTP >=400 responses: {failures}; artifacts: {ARTIFACT_DIR}")
+        raise AssertionError(
+            "HTTP >=400 responses: " + diagnostic_text(failures) + f"; artifacts: {ARTIFACT_DIR}"
+        )
 
 
 def save(page, evidence, surface):
@@ -83,7 +133,7 @@ def save(page, evidence, surface):
         page.screenshot(path=str(ARTIFACT_DIR / f"{surface}-final.png"), full_page=True)
     finally:
         (ARTIFACT_DIR / f"{surface}-evidence.json").write_text(
-            json.dumps(redact_sensitive_urls(evidence), ensure_ascii=False, indent=2), encoding="utf-8"
+            json.dumps(sanitize_diagnostic(evidence), ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
 
@@ -108,25 +158,42 @@ def login_ha_and_open_panel(page):
             page.wait_for_timeout(300)
         # Retry the root URL after an incomplete/expired HA authorization
         # callback; do not reuse an iframe or page handle from that attempt.
-    raise AssertionError(f"HA sidebar did not become ready after authentication; url={page.url}")
+    raise AssertionError(
+        "HA sidebar did not become ready after authentication; url="
+        + diagnostic_text(page.url)
+    )
 
 
 def login_odoo_in_frame(page, frame):
     require(ODOO_LOGIN, "ODOO_TEST_LOGIN")
     require(ODOO_PASSWORD, "ODOO_TEST_PASSWORD")
-    if frame.locator('input[name="login"]').count():
-        frame.locator('input[name="login"]').fill(ODOO_LOGIN)
-        frame.locator('input[name="password"]').fill(ODOO_PASSWORD)
-        frame.get_by_role("button", name="Log in", exact=True).click()
-    last = None
-    for _ in range(100):
+    for _ in range(3):
         try:
             frame = direct_ingress_frame(page)
+            if frame.locator('input[name="login"]').count():
+                frame.locator('input[name="login"]').fill(ODOO_LOGIN)
+                frame.locator('input[name="password"]').fill(ODOO_PASSWORD)
+                frame.get_by_role("button", name="Log in", exact=True).click()
+            break
+        except PlaywrightError as error:
+            if not is_detached_frame_error(error):
+                raise
+    else:
+        raise AssertionError("Odoo login frame remained detached after retry")
+
+    last = None
+    for _ in range(100):
+        frame = direct_ingress_frame(page)
+        try:
             frame.locator(".o_main_navbar").wait_for(timeout=500)
             return frame
-        except (AssertionError, PlaywrightError, PlaywrightTimeoutError) as error:
-            last = error
-    raise AssertionError(f"Odoo navbar did not become ready after login: {last}")
+        except PlaywrightTimeoutError as error:
+            last = diagnostic_text(str(error))
+        except PlaywrightError as error:
+            if not is_detached_frame_error(error):
+                raise
+            last = diagnostic_text(str(error))
+    raise AssertionError("Odoo navbar did not become ready after login: " + diagnostic_text(last))
 
 
 def open_ingress_settings(page):
@@ -141,31 +208,44 @@ def open_ingress_settings(page):
             frame = direct_ingress_frame(page)
             frame.locator(".settings_tab").wait_for(timeout=20000)
             return frame
-        except (AssertionError, PlaywrightError, PlaywrightTimeoutError) as error:
-            last = error
-            # HA may replace the panel with its authorization document. Reopen
-            # the sidebar item instead of retaining a stale Frame handle.
-            if "/auth/authorize" in page.url or not any("/api/hassio_ingress/" in f.url for f in page.frames):
-                frame = login_ha_and_open_panel(page)
-                login_odoo_in_frame(page, frame)
-            else:
-                continue
-    raise AssertionError(f"could not open ingress Settings after retry: {last}")
+        except PlaywrightError as error:
+            if not is_detached_frame_error(error):
+                raise
+            last = diagnostic_text(str(error))
+            # Reopen/re-authenticate only when Playwright proves that the
+            # current frame execution context was replaced.
+            frame = login_ha_and_open_panel(page)
+            login_odoo_in_frame(page, frame)
+    raise AssertionError("could not open ingress Settings after detached-frame retry: " + diagnostic_text(last))
 
 
-def discover_tab_keys(frame):
-    """Discover every visible, enabled Settings tab in stable DOM order."""
-    tabs = frame.locator(".settings_tab a.tab[data-key]")
-    keys = []
-    for index in range(tabs.count()):
-        tab = tabs.nth(index)
-        key = tab.get_attribute("data-key")
-        enabled = tab.get_attribute("aria-disabled") != "true" and tab.get_attribute("disabled") is None
-        if key and enabled and tab.is_visible() and key not in keys:
-            keys.append(key)
-    missing = BASELINE_TAB_KEYS.difference(keys)
-    assert not missing, f"baseline Settings tabs missing: {sorted(missing)}; discovered={keys}"
-    return keys
+def discover_tab_keys(frame_getter):
+    """Discover every visible, enabled tab, retrying only a detached frame."""
+    last = None
+    for _ in range(3):
+        try:
+            frame = frame_getter()
+            tabs = frame.locator(".settings_tab a.tab[data-key]")
+            keys = []
+            for index in range(tabs.count()):
+                tab = tabs.nth(index)
+                key = tab.get_attribute("data-key")
+                enabled = (
+                    tab.get_attribute("aria-disabled") != "true"
+                    and tab.get_attribute("disabled") is None
+                )
+                if key and enabled and tab.is_visible() and key not in keys:
+                    keys.append(key)
+            missing = BASELINE_TAB_KEYS.difference(keys)
+            assert not missing, "baseline Settings tabs missing: " + diagnostic_text(
+                {"missing": sorted(missing), "discovered": keys}
+            )
+            return keys
+        except PlaywrightError as error:
+            if not is_detached_frame_error(error):
+                raise
+            last = diagnostic_text(str(error))
+    raise AssertionError("Settings tab discovery frame remained detached: " + diagnostic_text(last))
 
 
 def wait_for_selected_tab(page, frame_getter, key):
@@ -179,31 +259,61 @@ def wait_for_selected_tab(page, frame_getter, key):
             last = {"url": frame.url, "selected": selected_key}
             if selected_key == key and frame.locator(".settings").is_visible():
                 return frame, selected_key
-        except (AssertionError, PlaywrightError, PlaywrightTimeoutError) as error:
-            last = str(error)
+        except PlaywrightError as error:
+            if not is_detached_frame_error(error):
+                raise
+            last = diagnostic_text(str(error))
         page.wait_for_timeout(100)
-    raise AssertionError(f"Settings tab did not become selected: key={key}; last={last}")
+    raise AssertionError(
+        "Settings tab did not become selected: "
+        + diagnostic_text({"key": key, "last": last})
+    )
+
+
+def click_settings_tab(frame_getter, key):
+    """Click one tab, retrying only if its frame execution context detaches."""
+    last = None
+    for _ in range(3):
+        try:
+            frame = frame_getter()
+            tab = frame.locator(f'.settings_tab a.tab[data-key="{key}"]')
+            tab.wait_for(timeout=20000)
+            before = sanitize_diagnostic(
+                {"url": frame.url, "href": tab.get_attribute("href")}
+            )
+            tab.click()
+            return before
+        except PlaywrightError as error:
+            if not is_detached_frame_error(error):
+                raise
+            last = diagnostic_text(str(error))
+    raise AssertionError(
+        "Settings tab frame remained detached: "
+        + diagnostic_text({"key": key, "last": last})
+    )
 
 
 def assert_tabs_in_frame(page, frame_getter, surface, evidence, post_click_frame_getter=None):
     post_click_frame_getter = post_click_frame_getter or frame_getter
-    initial_frame = frame_getter()
-    keys = discover_tab_keys(initial_frame)
+    keys = discover_tab_keys(frame_getter)
     evidence["discovered_tabs"] = keys
     results = []
     for key in keys:
-        frame = frame_getter()
-        tab = frame.locator(f'.settings_tab a.tab[data-key="{key}"]')
-        tab.wait_for(timeout=20000)
-        before_url, before_href = frame.url, tab.get_attribute("href")
-        tab.click()
+        before = click_settings_tab(frame_getter, key)
         frame, selected_key = wait_for_selected_tab(page, post_click_frame_getter, key)
-        result = {"key": key, "before_url": before_url, "before_href": before_href, "after_url": frame.url, "selected": selected_key}
+        result = sanitize_diagnostic(
+            {
+                "key": key,
+                "before_url": before["url"],
+                "before_href": before["href"],
+                "after_url": frame.url,
+                "selected": selected_key,
+            }
+        )
         results.append(result)
-        assert "/odoo/settings" in frame.url, result
-        assert "/odoo/discuss" not in frame.url, result
-        assert selected_key == key, result
-        assert frame.locator(".settings").is_visible(), result
+        assert "/odoo/settings" in frame.url, diagnostic_text(result)
+        assert "/odoo/discuss" not in frame.url, diagnostic_text(result)
+        assert selected_key == key, diagnostic_text(result)
     evidence["tab_results"] = results
     return keys
 
@@ -272,5 +382,9 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as error:
-        print(f"Settings E2E failed; artifacts: {ARTIFACT_DIR}; error: {error}", file=sys.stderr)
-        raise
+        safe_error = diagnostic_text(str(error))
+        print(
+            f"Settings E2E failed; artifacts: {ARTIFACT_DIR}; error: {safe_error}",
+            file=sys.stderr,
+        )
+        raise RuntimeError(safe_error) from None
