@@ -221,10 +221,10 @@ http {
             sub_filter '"icon": "/' '"icon": "$safe_ingress_path/';
             sub_filter '"imgurl":"/' '"imgurl":"$safe_ingress_path/';
             sub_filter '"imgurl": "/' '"imgurl": "$safe_ingress_path/';
-            # Explicit General Settings logos are embedded in get_views XML,
-            # either directly or JSON-escaped. Keep both precise encodings.
-            sub_filter 'logo="/' 'logo="$safe_ingress_path/';
-            sub_filter 'logo=\"/' 'logo=\"$safe_ingress_path/';
+            # General Settings embeds this exact logo path in get_views XML.
+            # Match the path itself so surrounding XML/JSON quote escaping does
+            # not affect the ingress-only replacement.
+            sub_filter '/base/static/description/settings.png' '$safe_ingress_path/base/static/description/settings.png';
             sub_filter '`/web/webclient/' '`$safe_ingress_path/web/webclient/';
             sub_filter 'url(/' 'url($safe_ingress_path/';
             sub_filter "url('/" "url('$safe_ingress_path/";
