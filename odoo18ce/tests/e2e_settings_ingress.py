@@ -10,6 +10,7 @@ import json
 import os
 import re
 import sys
+import uuid
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -25,7 +26,8 @@ ODOO_LOGIN = os.environ.get("ODOO_TEST_LOGIN")
 ODOO_PASSWORD = os.environ.get("ODOO_TEST_PASSWORD")
 BASELINE_TAB_KEYS = {"general_settings", "calendar", "website", "stock", "account", "point_of_sale"}
 STAMP = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-ARTIFACT_DIR = Path(os.environ.get("E2E_ARTIFACT_DIR", "/tmp/odoo-settings-e2e")) / STAMP
+RUN_ID = f"{STAMP}-{uuid.uuid4().hex}"
+ARTIFACT_DIR = Path(os.environ.get("E2E_ARTIFACT_DIR", "/tmp/odoo-settings-e2e")) / RUN_ID
 ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -38,7 +40,18 @@ def require(value, name):
 def sanitize_diagnostic(value):
     """Redact secrets from every diagnostic before it is stored or formatted."""
     if isinstance(value, str):
-        value = re.sub(r"/api/hassio_ingress/[^/\s?#]+", "/api/hassio_ingress/<redacted>", value)
+        value = re.sub(
+            r"(?P<prefix>/?api/hassio_ingress/)[^/\s?#]+",
+            lambda match: match.group("prefix") + "<redacted>",
+            value,
+        )
+        # Query-only references occur in HA authorization diagnostics without
+        # a path to anchor the general URL pattern below.
+        value = re.sub(
+            r"(?<![\w/])\?[^\s#<>\"']*(#[^\s<>\"']*)?",
+            lambda match: "?<redacted>" + (match.group(1) or ""),
+            value,
+        )
         # Strip query values from absolute and root-relative URLs embedded in
         # Playwright errors, including HA OAuth callback code/state values.
         value = re.sub(
@@ -57,6 +70,20 @@ def sanitize_diagnostic(value):
     if isinstance(value, dict):
         return {key: sanitize_diagnostic(item) for key, item in value.items()}
     return value
+
+
+def assert_sanitizer_contract():
+    """Keep credential-bearing relative diagnostics covered without secrets."""
+    assert sanitize_diagnostic(
+        "api/hassio_ingress/example-token/odoo/settings"
+    ) == "api/hassio_ingress/<redacted>/odoo/settings"
+    assert sanitize_diagnostic(
+        "/api/hassio_ingress/example-token/odoo/settings"
+    ) == "/api/hassio_ingress/<redacted>/odoo/settings"
+    assert sanitize_diagnostic("?code=example-code&state=example-state") == "?<redacted>"
+    assert sanitize_diagnostic(
+        "https://ha.example/callback?code=example-code&state=example-state"
+    ) == "https://ha.example/callback"
 
 
 def diagnostic_text(value):
@@ -361,6 +388,7 @@ def run_public(browser):
 
 
 def main():
+    assert_sanitizer_contract()
     parser = argparse.ArgumentParser()
     parser.add_argument("--surface", choices=("ingress", "public", "both"), default="both")
     args = parser.parse_args()
@@ -381,7 +409,7 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except Exception as error:
+    except (AssertionError, RuntimeError, PlaywrightError) as error:
         safe_error = diagnostic_text(str(error))
         print(
             f"Settings E2E failed; artifacts: {ARTIFACT_DIR}; error: {safe_error}",
