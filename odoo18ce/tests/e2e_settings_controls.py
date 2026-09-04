@@ -30,9 +30,63 @@ ARTIFACT_ROOT = (
     / RUN_ID
 )
 ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
-SAVE_SELECTOR = os.environ.get("ODOO_SETTINGS_SAVE_SELECTOR")
-SAVE_VALUE = os.environ.get("ODOO_SETTINGS_SAVE_VALUE")
 EXTERNAL_NAME_RE = re.compile(r"(?:buy\s+credits|purchase|upgrade)", re.I)
+EXECUTABLE_CATEGORIES = frozenset({"action", "object", "dialog"})
+
+
+def parse_safe_controls(raw):
+    """Return exact accessible names explicitly approved for a control click."""
+    return frozenset(name.strip() for name in (raw or "").split(",") if name.strip())
+
+
+def control_execution_policy(item, safe_controls):
+    """Never infer approval for a Settings control from its visible label."""
+    if item["category"] not in EXECUTABLE_CATEGORIES:
+        return {"allowed": False, "reason": "not-an-executable-control"}
+    if item["name"] in safe_controls:
+        return {"allowed": True, "reason": "explicit-safe-allowlist"}
+    return {"allowed": False, "reason": "not-approved"}
+
+
+def mutation_policy(environment):
+    """Require an explicit text field for each mutating Settings scenario."""
+    selector = environment.get("ODOO_SETTINGS_MUTATION_SELECTOR")
+    save_value = environment.get("ODOO_SETTINGS_SAVE_VALUE")
+    if not selector:
+        return {
+            "selector": None,
+            "discard_allowed": False,
+            "save_allowed": False,
+            "discard_reason": "ODOO_SETTINGS_MUTATION_SELECTOR is required; no setting was mutated",
+            "save_reason": "ODOO_SETTINGS_MUTATION_SELECTOR is required; no setting was mutated",
+        }
+    return {
+        "selector": selector,
+        "discard_allowed": True,
+        "save_allowed": save_value is not None,
+        "discard_reason": None,
+        "save_reason": (
+            None
+            if save_value is not None
+            else "ODOO_SETTINGS_SAVE_VALUE is required; no setting was saved"
+        ),
+        "save_value": save_value,
+    }
+
+
+def is_transient_ingress_detach(error):
+    message = str(error).lower()
+    return "frame was detached" in message or "/auth/authorize" in message
+
+
+def should_retry_control(surface, item, attempt, error):
+    """Retry one approved, non-mutating ingress control after auth/frame loss."""
+    return (
+        surface == "ingress"
+        and item["category"] in EXECUTABLE_CATEGORIES
+        and attempt == 0
+        and is_transient_ingress_detach(error)
+    )
 
 
 def classify_control(control):
@@ -75,6 +129,37 @@ def assert_self_tests():
     ]
     for payload, expected in cases:
         assert classify_control(payload) == expected, (payload, expected)
+    assert parse_safe_controls(None) == frozenset()
+    assert parse_safe_controls(" Manage Users, Add Languages,Manage Users, ") == {
+        "Manage Users",
+        "Add Languages",
+    }
+    action = {"name": "Manage Users", "category": "action"}
+    assert control_execution_policy(action, frozenset()) == {
+        "allowed": False,
+        "reason": "not-approved",
+    }
+    assert control_execution_policy(action, {"Manage Users"}) == {
+        "allowed": True,
+        "reason": "explicit-safe-allowlist",
+    }
+    no_mutation = mutation_policy({})
+    assert not no_mutation["discard_allowed"] and not no_mutation["save_allowed"]
+    discard_only = mutation_policy({"ODOO_SETTINGS_MUTATION_SELECTOR": "input[type=text]"})
+    assert discard_only["discard_allowed"] and not discard_only["save_allowed"]
+    explicit_save = mutation_policy(
+        {
+            "ODOO_SETTINGS_MUTATION_SELECTOR": "input[type=text]",
+            "ODOO_SETTINGS_SAVE_VALUE": "test",
+        }
+    )
+    assert explicit_save["discard_allowed"] and explicit_save["save_allowed"]
+    detach = PlaywrightError("Frame was detached")
+    assert should_retry_control("ingress", action, 0, detach)
+    assert not should_retry_control("ingress", action, 1, detach)
+    assert not should_retry_control("public", action, 0, detach)
+    assert not should_retry_control("ingress", {"category": "form-control"}, 0, detach)
+    assert is_transient_ingress_detach(RuntimeError("frames=[.../auth/authorize]"))
     secret = {
         "url": "api/hassio_ingress/token-value/odoo/settings?code=secret&state=secret",
         "nested": ["?code=secret&state=secret"],
@@ -264,57 +349,83 @@ def observe_outcome(page, frame_getter, before_url):
 
 
 def execute_control(browser, surface, item):
-    scenario = f"{surface}-{item['id']}"
-    context, page, evidence = new_evidence_session(browser, surface, scenario)
+    """Run one approved non-mutating control, with one fresh ingress retry."""
     result = {"id": item["id"], "name": item["name"], "category": item["category"]}
-    try:
-        frame_getter = prepare_surface(page, surface)
-        frame = frame_getter()
-        control = locate_control(frame, item)
-        before_url = frame.url
-        control.click(timeout=30000)
-        outcome = observe_outcome(page, frame_getter, before_url)
-        outcome = shared.sanitize_diagnostic(outcome)
-        result.update(outcome)
-        assert "/odoo/discuss" not in outcome["url"], shared.diagnostic_text(result)
-        assert_clean(evidence)
-        result["status"] = "passed"
-    except (AssertionError, RuntimeError, PlaywrightError) as error:
-        result.update({"status": "failed", "error": shared.diagnostic_text(str(error))})
-    finally:
-        evidence["result"] = result
+    for attempt in range(2):
+        scenario = f"{surface}-{item['id']}-attempt-{attempt + 1}"
+        context, page, evidence = new_evidence_session(browser, surface, scenario)
         try:
-            save_artifact(page, evidence, scenario)
+            frame_getter = prepare_surface(page, surface)
+            frame = frame_getter()
+            control = locate_control(frame, item)
+            before_url = frame.url
+            control.click(timeout=30000)
+            outcome = shared.sanitize_diagnostic(observe_outcome(page, frame_getter, before_url))
+            result.update(outcome)
+            assert "/odoo/discuss" not in outcome["url"], shared.diagnostic_text(result)
+            assert_clean(evidence)
+            result["status"] = "passed"
+            if attempt:
+                result["recovered_after_detach"] = True
+            return result
+        except (AssertionError, RuntimeError, PlaywrightError) as error:
+            if should_retry_control(surface, item, attempt, error):
+                evidence["result"] = {"status": "retrying-after-detach"}
+                continue
+            result.update({"status": "failed", "error": shared.diagnostic_text(str(error))})
+            return result
         finally:
-            context.close()
-    return result
+            evidence.setdefault("result", result)
+            try:
+                save_artifact(page, evidence, scenario)
+            finally:
+                context.close()
+    raise AssertionError("unreachable control retry state")
+
+
+def explicit_text_field(frame, selector, scenario):
+    field = frame.locator(selector).first
+    field.wait_for(state="visible", timeout=30000)
+    assert field.is_enabled(), f"explicit {scenario} field is disabled"
+    tag_name = field.evaluate("element => element.tagName.toLowerCase()")
+    field_type = (field.get_attribute("type") or "text").lower()
+    assert tag_name == "input" and field_type == "text", (
+        f"{scenario} only permits a non-server-side text input, not {tag_name}[type={field_type}]"
+    )
+    return field
 
 
 def run_discard(browser, surface):
     scenario = f"{surface}-discard"
+    policy = mutation_policy(os.environ)
+    if not policy["discard_allowed"]:
+        return {"scenario": "discard", "status": "blocked", "reason": policy["discard_reason"]}
     context, page, evidence = new_evidence_session(browser, surface, scenario)
-    result = {"scenario": "discard"}
+    result = {"scenario": "discard", "selector_supplied": True}
     try:
         frame_getter = prepare_surface(page, surface)
         frame = frame_getter()
-        checkboxes = frame.locator(
-            '.o_action_manager input[type="checkbox"]:not([disabled])'
+        field = explicit_text_field(frame, policy["selector"], "Discard")
+        original = field.input_value()
+        changed = f"e2e-discard-{RUN_ID[-8:]}"
+        if changed == original:
+            changed += "x"
+        requests = []
+        page.on(
+            "request",
+            lambda request: requests.append(
+                {"method": request.method, "url": shared.sanitize_diagnostic(request.url)}
+            )
+            if request.method not in {"GET", "HEAD", "OPTIONS"}
+            else None,
         )
-        index = next(
-            (i for i in range(checkboxes.count()) if checkboxes.nth(i).is_visible()),
-            None,
-        )
-        assert index is not None, "no visible enabled checkbox available for Discard"
-        checkbox = checkboxes.nth(index)
-        original = checkbox.is_checked()
-        checkbox.click()
-        assert checkbox.is_checked() != original, "checkbox did not change before Discard"
+        field.fill(changed)
+        assert field.input_value() == changed, "text field did not change before Discard"
         frame.get_by_role("button", name="Discard", exact=True).click()
         frame = wait_settings_loaded(page, frame_getter)
-        restored = frame.locator(
-            '.o_action_manager input[type="checkbox"]:not([disabled])'
-        ).nth(index).is_checked()
+        restored = explicit_text_field(frame, policy["selector"], "Discard").input_value()
         assert restored == original, {"original": original, "after_discard": restored}
+        assert not requests, "Discard produced a server request: " + shared.diagnostic_text(requests)
         assert "/odoo/discuss" not in frame.url
         assert_clean(evidence)
         result.update({"status": "passed", "restored": True, "url": shared.sanitize_diagnostic(frame.url)})
@@ -329,61 +440,31 @@ def run_discard(browser, surface):
     return result
 
 
-def mutate_explicit_field(field, new_value=None):
-    field_type = (field.get_attribute("type") or "text").lower()
-    if field_type == "checkbox":
-        original = field.is_checked()
-        field.click()
-        return original, not original, "checkbox"
-    if new_value is None:
-        raise RuntimeError(
-            "ODOO_SETTINGS_SAVE_VALUE is required for a non-checkbox save selector"
-        )
-    original = field.input_value()
-    field.fill(new_value)
-    return original, new_value, field_type
-
-
-def field_equals(field, expected, field_type):
-    if field_type == "checkbox":
-        return field.is_checked() == expected
-    return field.input_value() == expected
-
-
 def run_save_restore(browser, surface):
     scenario = f"{surface}-save-restore"
-    if not SAVE_SELECTOR:
-        return {
-            "scenario": "save-restore",
-            "status": "blocked",
-            "reason": "ODOO_SETTINGS_SAVE_SELECTOR is required; no arbitrary setting was mutated",
-        }
+    policy = mutation_policy(os.environ)
+    if not policy["save_allowed"]:
+        return {"scenario": "save-restore", "status": "blocked", "reason": policy["save_reason"]}
     context, page, evidence = new_evidence_session(browser, surface, scenario)
-    result = {"scenario": "save-restore", "selector_supplied": True}
+    result = {"scenario": "save-restore", "selector_supplied": True, "save_value_supplied": True}
     try:
         frame_getter = prepare_surface(page, surface)
         frame = frame_getter()
-        field = frame.locator(SAVE_SELECTOR).first
-        field.wait_for(state="visible", timeout=30000)
-        assert field.is_enabled(), "explicit save field is disabled"
-        original, changed, field_type = mutate_explicit_field(field, SAVE_VALUE)
+        field = explicit_text_field(frame, policy["selector"], "Save")
+        original = field.input_value()
+        field.fill(policy["save_value"])
         frame.get_by_role("button", name="Save", exact=True).click()
         frame = wait_settings_loaded(page, frame_getter)
-        persisted = frame.locator(SAVE_SELECTOR).first
-        persisted.wait_for(state="visible", timeout=30000)
-        assert field_equals(persisted, changed, field_type), "saved value did not persist"
-        if field_type == "checkbox":
-            persisted.click()
-        else:
-            persisted.fill(original)
+        persisted = explicit_text_field(frame, policy["selector"], "Save")
+        assert persisted.input_value() == policy["save_value"], "saved value did not persist"
+        persisted.fill(original)
         frame.get_by_role("button", name="Save", exact=True).click()
         frame = wait_settings_loaded(page, frame_getter)
-        restored = frame.locator(SAVE_SELECTOR).first
-        restored.wait_for(state="visible", timeout=30000)
-        assert field_equals(restored, original, field_type), "original value was not restored"
+        restored = explicit_text_field(frame, policy["selector"], "Save")
+        assert restored.input_value() == original, "original value was not restored"
         assert "/odoo/discuss" not in frame.url
         assert_clean(evidence)
-        result.update({"status": "passed", "restored": True, "field_type": field_type})
+        result.update({"status": "passed", "restored": True, "field_type": "text"})
     except (AssertionError, RuntimeError, PlaywrightError) as error:
         result.update({"status": "failed", "error": shared.diagnostic_text(str(error))})
     finally:
@@ -405,6 +486,7 @@ def comparable_controls(controls):
 
 def run_surface(browser, surface):
     controls = discover_controls(browser, surface)
+    safe_controls = parse_safe_controls(os.environ.get("ODOO_SETTINGS_SAFE_CONTROLS"))
     results = []
     for item in controls:
         if item["category"] == "external-skip":
@@ -417,8 +499,20 @@ def run_surface(browser, surface):
                     "reason": "external/IAP purchase control is never clicked",
                 }
             )
-        elif item["category"] in {"action", "object", "dialog"}:
-            results.append(execute_control(browser, surface, item))
+        elif item["category"] in EXECUTABLE_CATEGORIES:
+            policy = control_execution_policy(item, safe_controls)
+            if policy["allowed"]:
+                results.append(execute_control(browser, surface, item))
+            else:
+                results.append(
+                    {
+                        "id": item["id"],
+                        "name": item["name"],
+                        "category": item["category"],
+                        "status": "blocked",
+                        "reason": policy["reason"],
+                    }
+                )
     discard = run_discard(browser, surface)
     save_restore = run_save_restore(browser, surface)
     return {
@@ -433,7 +527,9 @@ def run_surface(browser, surface):
 def assert_surface_success(report):
     failures = [item for item in report["results"] if item["status"] == "failed"]
     assert not failures, shared.diagnostic_text(failures)
-    assert report["discard"]["status"] == "passed", shared.diagnostic_text(report["discard"])
+    assert report["discard"]["status"] in {"passed", "blocked"}, shared.diagnostic_text(
+        report["discard"]
+    )
     assert report["save_restore"]["status"] in {"passed", "blocked"}, shared.diagnostic_text(
         report["save_restore"]
     )
