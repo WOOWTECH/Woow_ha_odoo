@@ -79,11 +79,12 @@ def is_transient_ingress_detach(error):
     return "frame was detached" in message or "/auth/authorize" in message
 
 
-def should_retry_control(surface, item, attempt, error):
-    """Retry one approved, non-mutating ingress control after auth/frame loss."""
+def should_retry_control(surface, item, safe_controls, attempt, error):
+    """Retry one explicitly approved ingress control after auth/frame loss."""
+    approval = control_execution_policy(item, safe_controls)
     return (
         surface == "ingress"
-        and item["category"] in EXECUTABLE_CATEGORIES
+        and approval["allowed"]
         and attempt == 0
         and is_transient_ingress_detach(error)
     )
@@ -155,10 +156,13 @@ def assert_self_tests():
     )
     assert explicit_save["discard_allowed"] and explicit_save["save_allowed"]
     detach = PlaywrightError("Frame was detached")
-    assert should_retry_control("ingress", action, 0, detach)
-    assert not should_retry_control("ingress", action, 1, detach)
-    assert not should_retry_control("public", action, 0, detach)
-    assert not should_retry_control("ingress", {"category": "form-control"}, 0, detach)
+    assert not should_retry_control("ingress", action, frozenset(), 0, detach)
+    assert should_retry_control("ingress", action, frozenset({"Manage Users"}), 0, detach)
+    assert not should_retry_control("ingress", action, frozenset({"Manage Users"}), 1, detach)
+    assert not should_retry_control("public", action, frozenset({"Manage Users"}), 0, detach)
+    assert not should_retry_control(
+        "ingress", {"category": "form-control", "name": "Save"}, frozenset({"Save"}), 0, detach
+    )
     assert is_transient_ingress_detach(RuntimeError("frames=[.../auth/authorize]"))
     secret = {
         "url": "api/hassio_ingress/token-value/odoo/settings?code=secret&state=secret",
@@ -348,7 +352,7 @@ def observe_outcome(page, frame_getter, before_url):
     return {"kind": "same-page", "url": last, "dialog_title": None}
 
 
-def execute_control(browser, surface, item):
+def execute_control(browser, surface, item, safe_controls):
     """Run one approved non-mutating control, with one fresh ingress retry."""
     result = {"id": item["id"], "name": item["name"], "category": item["category"]}
     for attempt in range(2):
@@ -369,7 +373,7 @@ def execute_control(browser, surface, item):
                 result["recovered_after_detach"] = True
             return result
         except (AssertionError, RuntimeError, PlaywrightError) as error:
-            if should_retry_control(surface, item, attempt, error):
+            if should_retry_control(surface, item, safe_controls, attempt, error):
                 evidence["result"] = {"status": "retrying-after-detach"}
                 continue
             result.update({"status": "failed", "error": shared.diagnostic_text(str(error))})
@@ -502,7 +506,7 @@ def run_surface(browser, surface):
         elif item["category"] in EXECUTABLE_CATEGORIES:
             policy = control_execution_policy(item, safe_controls)
             if policy["allowed"]:
-                results.append(execute_control(browser, surface, item))
+                results.append(execute_control(browser, surface, item, safe_controls))
             else:
                 results.append(
                     {
