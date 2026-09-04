@@ -173,6 +173,36 @@ def assert_self_tests():
     assert "code=secret" not in rendered
     assert "state=secret" not in rendered
 
+    class FakePage:
+        def __init__(self):
+            self.events = []
+
+        def on(self, event, callback):
+            self.events.append((event, callback))
+
+    class FakeBrowserContext:
+        def __init__(self):
+            self.page = FakePage()
+
+        def new_page(self):
+            return self.page
+
+    class FakeBrowser:
+        def __init__(self):
+            self.context = FakeBrowserContext()
+            self.context_options = None
+
+        def new_context(self, **options):
+            self.context_options = options
+            return self.context
+
+    fake_browser = FakeBrowser()
+    context, page, evidence = new_evidence_session(fake_browser, "public", "viewport-contract")
+    assert context is fake_browser.context
+    assert page is context.page
+    assert fake_browser.context_options == {"viewport": {"width": 1440, "height": 1100}}
+    assert evidence["surface"] == "public"
+
 
 def evidence_template(surface, scenario):
     return {
@@ -234,8 +264,8 @@ def wait_settings_loaded(page, frame_getter):
 
 def new_evidence_session(browser, surface, scenario):
     """Create resources before navigation so callers always own their cleanup."""
-    context = browser.new_context()
-    page = context.new_page(viewport={"width": 1440, "height": 1100})
+    context = browser.new_context(viewport={"width": 1440, "height": 1100})
+    page = context.new_page()
     evidence = evidence_template(surface, scenario)
     shared.add_evidence(page, evidence)
     return context, page, evidence
