@@ -177,10 +177,12 @@ def assert_self_tests():
     expected_aborts, unexpected_aborts = split_expected_save_navigation_aborts(
         [
             {"failure": "net::ERR_ABORTED", "url": "https://example.invalid/web/dataset/call_button/res.config.settings/execute"},
+            {"failure": "net::ERR_ABORTED", "url": "https://example.invalid/api/hassio_ingress/<redacted>/web/dataset/call_button/res.config.settings/execute"},
+            {"failure": "net::ERR_ABORTED", "url": "https://example.invalid/unsafe/web/dataset/call_button/res.config.settings/execute"},
             {"failure": "net::ERR_ABORTED", "url": "https://example.invalid/web/dataset/call_kw/res.config.settings/write"},
         ]
     )
-    assert len(expected_aborts) == 1 and len(unexpected_aborts) == 1
+    assert len(expected_aborts) == 2 and len(unexpected_aborts) == 2
     assert is_transient_ingress_detach(RuntimeError("frames=[.../auth/authorize]"))
     secret = {
         "url": "api/hassio_ingress/token-value/odoo/settings?code=secret&state=secret",
@@ -453,11 +455,13 @@ def execute_control(browser, surface, item, safe_controls):
 def split_expected_save_navigation_aborts(failures):
     """Separate only Odoo's post-save reload abort from unexpected failures."""
     expected_path = "/web/dataset/call_button/res.config.settings/execute"
+    ingress_path = re.compile(r"/api/hassio_ingress/[^/]+" + re.escape(expected_path) + r"\Z")
     expected, unexpected = [], []
     for failure in failures:
+        path = urlsplit(failure.get("url", "")).path
         if (
             failure.get("failure") == "net::ERR_ABORTED"
-            and urlsplit(failure.get("url", "")).path.endswith(expected_path)
+            and (path == expected_path or ingress_path.fullmatch(path))
         ):
             expected.append(failure)
         else:
