@@ -40,15 +40,18 @@ def sample_manifest() -> Manifest:
 
 
 class RouteTests(unittest.TestCase):
-    def test_surface_routes_normalize_to_same_logical_route(self) -> None:
-        public = normalize_route("/odoo/sales?debug=1#view", Surface.PUBLIC)
+    def test_surface_routes_normalize_to_same_query_free_logical_route(self) -> None:
+        public = normalize_route("/odoo/sales?debug=1&db=hidden#view", Surface.PUBLIC)
         ingress = normalize_route(
-            "/api/hassio_ingress/token_123/odoo/sales?debug=1#view",
+            "/api/hassio_ingress/token_123/odoo/sales?code=secret&state=secret#view",
             Surface.HA_INGRESS,
             ingress_prefix="/api/hassio_ingress/token_123",
         )
         self.assertEqual(public, ingress)
-        self.assertEqual(public.as_string(), "/odoo/sales?debug=1#view")
+        self.assertEqual(public.as_string(), "/odoo/sales#view")
+        self.assertNotIn("debug=1", public.as_string())
+        self.assertNotIn("hidden", public.as_string())
+        self.assertNotIn("secret", ingress.as_string())
 
     def test_surface_boundaries_and_unsafe_paths_are_rejected(self) -> None:
         with self.assertRaises(ValueError):
@@ -59,18 +62,21 @@ class RouteTests(unittest.TestCase):
             normalize_route("https://example.invalid/odoo", Surface.PUBLIC)
         with self.assertRaises(ValueError):
             normalize_route("/odoo/%2e%2e/web", Surface.PUBLIC)
-        with self.assertRaises(ValueError):
-            normalize_route("/odoo?access_token=secret", Surface.PUBLIC)
+        self.assertEqual("/odoo", normalize_route("/odoo?access_token=secret", Surface.PUBLIC).as_string())
 
 
 class ManifestAndPlanningTests(unittest.TestCase):
-    def test_normalized_schema_is_deterministic_and_surface_free(self) -> None:
+    def test_normalized_schema_is_deterministic_surface_and_query_free(self) -> None:
         manifest = sample_manifest()
         normalized = manifest.normalized()
         self.assertEqual(normalized["schema_version"], MANIFEST_SCHEMA_VERSION)
         self.assertEqual([item["id"] for item in normalized["menus"]], ["child", "deep", "grandchild", "root"])
         self.assertNotIn("surface", str(normalized))
         self.assertNotIn("api/hassio_ingress", str(normalized))
+        self.assertNotIn("?", str(normalized))
+        for query in ("?code=oauth-secret", "?state=opaque", "?db=private-db"):
+            with self.assertRaisesRegex(ValueError, "normalized"):
+                Manifest(actions=(ActionRecord("query", "Query", "/odoo" + query),))
 
     def test_plan_is_read_only_ordered_and_limited_to_depth_three(self) -> None:
         plan = plan_traversal(sample_manifest())
@@ -98,16 +104,21 @@ class FailureSanitizationAndParityTests(unittest.TestCase):
         self.assertEqual(classify_failure("missing environment ODOO_BASE_URL"), FailureClass.HARNESS)
         self.assertEqual(classify_failure("unexpected 500 traceback"), FailureClass.PRODUCT)
 
-    def test_sanitization_redacts_nested_secrets(self) -> None:
+    def test_sanitization_redacts_nested_secrets_and_bearer_values(self) -> None:
         diagnostic = sanitize_diagnostic({
             "Authorization": "Bearer real-secret",
+            "headers": {"authorization": "Basic another-secret"},
             "url": "https://ha.invalid/api/hassio_ingress/actual-token/odoo?code=secret",
             "nested": ["/api/hassio_ingress/another-token/web?state=secret"],
+            "message": "upstream sent Bearer standalone-secret; retry denied",
         })
         self.assertEqual(diagnostic["Authorization"], "<redacted>")
+        self.assertEqual(diagnostic["headers"]["authorization"], "<redacted>")
+        self.assertEqual("Bearer <redacted>", sanitize_diagnostic("Bearer standalone-secret"))
         self.assertNotIn("actual-token", str(diagnostic))
         self.assertNotIn("another-token", str(diagnostic))
         self.assertNotIn("code=secret", str(diagnostic))
+        self.assertNotIn("standalone-secret", str(diagnostic))
         self.assertIn("<redacted>", str(diagnostic))
 
     def test_parity_compares_logical_records(self) -> None:

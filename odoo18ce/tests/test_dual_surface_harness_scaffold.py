@@ -172,17 +172,22 @@ class PdfResponseExpectation:
 
 @dataclass(frozen=True)
 class WorkerExclusiveWindowPlan:
-    """A non-executing workers=2 exclusive-window precondition and restore record."""
+    """A non-executing workers=2 window that restores the captured baseline."""
 
-    observed_global_workers: int
-    restore_global_workers: int
-    exclusive_window: bool
-    restore_plan: str = "restore the observed global worker count after evidence collection"
+    original_global_workers: int = 0
+    active_global_workers: int = 2
+    restore_global_workers: int = 0
+    exclusive_window: bool = False
+    restore_plan: str = "restore the captured global worker count after evidence collection"
 
     def validate(self) -> None:
-        _require(self.observed_global_workers == 2, "global workers=2 is required")
+        _require(self.original_global_workers >= 0, "original global workers must be non-negative")
+        _require(self.active_global_workers == 2, "global workers=2 is required during the exclusive window")
         _require(self.exclusive_window, "an exclusive window is required")
-        _require(self.restore_global_workers == self.observed_global_workers, "restore plan must restore workers=2")
+        _require(
+            self.restore_global_workers == self.original_global_workers,
+            "restore plan must restore the captured original worker count",
+        )
         _require(bool(self.restore_plan), "restore plan is required")
 
 
@@ -211,7 +216,12 @@ def sample_state() -> DualSurfaceHarnessState:
     file_content = b"dual-surface fixture\n"
     return DualSurfaceHarnessState(
         policy=HarnessPolicy(),
-        workers=WorkerExclusiveWindowPlan(2, 2, True),
+        workers=WorkerExclusiveWindowPlan(
+            original_global_workers=0,
+            active_global_workers=2,
+            restore_global_workers=0,
+            exclusive_window=True,
+        ),
         discuss=DiscussDualSurfaceScenario(
             windows=("discuss-window-a", "discuss-window-b"),
             evidence=(
@@ -242,7 +252,19 @@ class DualSurfaceHarnessSelfTest(unittest.TestCase):
 
     def test_models_reject_the_required_failure_modes(self) -> None:
         with self.assertRaises(ContractError):
-            WorkerExclusiveWindowPlan(1, 1, True).validate()
+            WorkerExclusiveWindowPlan(
+                original_global_workers=0,
+                active_global_workers=2,
+                restore_global_workers=2,
+                exclusive_window=True,
+            ).validate()
+        with self.assertRaises(ContractError):
+            WorkerExclusiveWindowPlan(
+                original_global_workers=0,
+                active_global_workers=1,
+                restore_global_workers=0,
+                exclusive_window=True,
+            ).validate()
         with self.assertRaises(ContractError):
             CalendarRecurrenceFlow("series", "series", ("open-occurrence",)).validate()
         with self.assertRaises(ContractError):

@@ -51,14 +51,21 @@ class CommercialFixtureLedgerTest(unittest.TestCase):
         with self.assertRaisesRegex(LedgerError, "dependency cycle"):
             cyclic.validate_graph()
 
-    def test_cleanup_orders_dependents_before_dependencies_and_transitions(self):
+    def test_cleanup_requires_dependents_first_and_allows_valid_order(self):
         self.ledger.add_fixture(self.fixture("category"))
         self.ledger.add_fixture(self.fixture("product", ("category",), FixtureState.MATERIALIZED))
         self.ledger.add_fixture(self.fixture("line", ("product",), FixtureState.MATERIALIZED))
         plan = self.ledger.plan_cleanup()
         self.assertEqual(["line", "product", "category"], [action.fixture_id for action in plan.actions])
         self.assertTrue(all(item.state == FixtureState.CLEANUP_PLANNED for item in self.ledger.fixtures.values()))
+        with self.assertRaisesRegex(LedgerError, "cannot be cleaned before dependents: \['product'\]"):
+            self.ledger.transition("category", FixtureState.CLEANED)
+        with self.assertRaisesRegex(LedgerError, "cannot be cleaned before dependents: \['line'\]"):
+            self.ledger.transition("product", FixtureState.CLEANED)
         self.ledger.transition("line", FixtureState.CLEANED)
+        self.ledger.transition("product", FixtureState.CLEANED)
+        self.ledger.transition("category", FixtureState.CLEANED)
+        self.assertTrue(all(item.state == FixtureState.CLEANED for item in self.ledger.fixtures.values()))
         with self.assertRaisesRegex(LedgerError, "invalid transition"):
             self.ledger.transition("line", FixtureState.CLEANUP_PLANNED)
 

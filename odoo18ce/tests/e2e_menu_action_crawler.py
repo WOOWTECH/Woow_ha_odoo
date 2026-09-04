@@ -11,11 +11,10 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 import re
 from typing import Any, Mapping
-from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 MANIFEST_SCHEMA_VERSION = 1
 MAX_TRAVERSAL_DEPTH = 3
-_CREDENTIAL_QUERY_KEY = re.compile(r"(authorization|cookie|password|secret|token|session|api[_-]?key)", re.I)
 
 
 class Surface(str, Enum):
@@ -94,8 +93,6 @@ def normalize_route(
     if parts.scheme or parts.netloc or parts.username or parts.password:
         raise ValueError("route must not contain an origin or credentials")
     path = _safe_path(parts.path)
-    if any(_CREDENTIAL_QUERY_KEY.search(key) for key, _ in parse_qsl(parts.query, keep_blank_values=True)):
-        raise ValueError("route query must not contain credentials")
     if surface is Surface.PUBLIC:
         if path.startswith("/api/hassio_ingress/"):
             raise ValueError("public route must not use HA ingress")
@@ -112,7 +109,10 @@ def normalize_route(
             raise ValueError("HA ingress route is outside ingress_prefix")
     else:
         raise ValueError("unknown surface: %r" % surface)
-    return NormalizedRoute(logical, parts.query, parts.fragment)
+    # Manifests must never retain URL query values. They can carry OAuth,
+    # database-selection, and session credentials, and are not part of a logical
+    # menu/action/view route.
+    return NormalizedRoute(logical, "", parts.fragment)
 
 
 @dataclass(frozen=True)
@@ -285,13 +285,15 @@ def classify_failure(error: BaseException | str) -> FailureClass:
 _SECRET_KEY = re.compile(r"(authorization|cookie|password|secret|token|session|api[_-]?key)", re.I)
 _INGRESS_TOKEN = re.compile(r"(?P<prefix>/?api/hassio_ingress/)[^/\s?#<>\"']+")
 _QUERY = re.compile(r"\?[^\s#<>\"']*")
+_BEARER = re.compile(r"(?i)(bearer\s+)[^\s,;]+")
 
 
 def sanitize_diagnostic(value: Any) -> Any:
     """Redact ingress tokens, query strings, and secret-bearing mapping values."""
     if isinstance(value, str):
         value = _INGRESS_TOKEN.sub(lambda match: match.group("prefix") + "<redacted>", value)
-        return _QUERY.sub("?<redacted>", value)
+        value = _QUERY.sub("?<redacted>", value)
+        return _BEARER.sub(r"\1<redacted>", value)
     if isinstance(value, Mapping):
         return {
             str(key): "<redacted>" if _SECRET_KEY.search(str(key)) else sanitize_diagnostic(item)

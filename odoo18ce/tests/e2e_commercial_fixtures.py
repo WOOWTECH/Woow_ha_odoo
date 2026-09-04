@@ -220,6 +220,16 @@ class FixtureLedger:
             raise LedgerError(f"unknown fixture: {fixture_id}") from error
         if target not in _ALLOWED_TRANSITIONS[current.state]:
             raise LedgerError(f"invalid transition: {current.state.value} -> {target.value}")
+        if target is FixtureState.CLEANED:
+            uncleaned_dependents = sorted(
+                item.fixture_id
+                for item in self.fixtures.values()
+                if fixture_id in item.dependencies and item.state is not FixtureState.CLEANED
+            )
+            if uncleaned_dependents:
+                raise LedgerError(
+                    f"fixture {fixture_id} cannot be cleaned before dependents: {uncleaned_dependents}"
+                )
         updated = replace(current, state=target)
         self.fixtures[fixture_id] = updated
         return updated
