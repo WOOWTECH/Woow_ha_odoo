@@ -1,0 +1,3 @@
+{"event":"ledger_initialized","campaign":"odoo-ha-public-e2e","base_sha":"28a5e42","authority":"WOOWTECH/Woow_ha_odoo","reason":"adopt hybrid pi-dynamic-workflows/native-subagent operating model"}
+{"event":"task_reconciled","task":"SET-CTRL-IDENTITY","state":"Running","reason":"late reviewer reported stale DOM-index identity risk; repair task dispatched"}
+{"event":"task_reconciled","task":"MENU-CRAWLER-READONLY","state":"CompletedUnconsumed","candidate_sha":"207b5d3","reason":"writer reported completion; parent has not yet completed pinned-SHA review/integration"}

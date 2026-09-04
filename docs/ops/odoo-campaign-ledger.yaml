@@ -1,0 +1,160 @@
+# Odoo HA/Public campaign control plane
+# Authority: this ledger records campaign state; runtime notifications are wake-up hints only.
+# Canonical source: WOOWTECH/Woow_ha_odoo. The App Store repository is a synchronized mirror.
+
+schema_version: 1
+campaign:
+  id: odoo-ha-public-e2e
+  canonical_repository: WOOWTECH/Woow_ha_odoo
+  mirror_repository: WOOWTECH/Woow_HA_App_Store
+  base_sha: 28a5e42
+  policy: docs/plans/2026-09-03-execution-continuity-protocol.md
+
+states:
+  - Queued
+  - Running
+  - CompletedUnconsumed
+  - ReadyForReview
+  - Reviewed
+  - Integrated
+  - E2EVerified
+  - Blocked
+  - Cancelled
+
+stages:
+  - intake
+  - static
+  - implementation
+  - review
+  - integration
+  - e2e
+  - deploy
+  - cleanup
+
+# Capacity is intentionally lower than host RAM alone would permit: HA authentication,
+# the shared Odoo DB, worker configuration, and deployment are critical-path resources.
+capacity:
+  weighted_slots: 2
+  dynamic_readonly:
+    max_agents: 2
+    concurrency: 2
+  native_writer_or_e2e:
+    slots: 2
+    exclusive: true
+  rules:
+    - Do not run a dynamic fan-out while a two-slot writer, browser E2E, DB, worker, or deploy lane is active.
+    - Do not run more than one writer in the same repository worktree.
+    - Public read-only browser work may use one slot only when no HA/browser E2E owns both slots.
+
+locks:
+  repo-write: One native writer owns a repository worktree.
+  db-write: One fixture/E2E owner creates, modifies, reverses, or cleans shared test records.
+  worker-config: One owner changes workers, restarts Odoo, and proves restoration.
+  deploy: One owner builds, updates, restarts, verifies, or rolls back the add-on.
+  merge: Parent-approved integrator only; exact reviewed SHA required.
+  promotion: Parent only; requires integrated SHA equals E2E SHA.
+
+tasks:
+  - id: SET-CTRL-IDENTITY
+    state: Running
+    stage: implementation
+    owner: native:settings-harness-repair
+    scope: Fresh signature-based Settings control identity; block ambiguous duplicate controls.
+    base_sha: 28a5e42
+    candidate_sha: null
+    locks: [repo-write]
+    acceptance:
+      - Credential-free duplicate-signature regression tests pass.
+      - Rendered nginx/gateway test passes.
+      - Real HA and Public Settings E2E passes against the candidate script.
+      - Reviewer records exact base/head pair.
+    next_command: Reconcile worker handoff, then run static gates and real both-surface Settings E2E.
+    attempts: 1
+    artifacts: []
+
+  - id: MENU-CRAWLER-READONLY
+    state: CompletedUnconsumed
+    stage: review
+    owner: native:menu-crawler-writer
+    scope: Bounded depth-3, non-mutating HA/Public app-menu-action-view crawler.
+    base_sha: 28a5e42
+    candidate_sha: 207b5d3
+    locks: []
+    acceptance:
+      - Candidate diff is source-level reviewed at exact SHA.
+      - Static/self tests pass after integration.
+      - Real HA and Public read-only manifests contain no unsanitized ingress/auth values.
+      - Parity deltas are semantic, not raw URL differences.
+    next_command: Reconcile candidate commit and create a pinned review task.
+    attempts: 1
+    artifacts: []
+
+  - id: FIXTURE-LEDGER-FOUNDATION
+    state: Integrated
+    stage: integration
+    owner: native:commercial-foundations
+    scope: Credential-free run marker, ownership, cleanup dependency, and baseline ledger primitives.
+    base_sha: aa8b1b8
+    integration_sha: 8cac9ea
+    locks: []
+    acceptance:
+      - Static tests passed before integration.
+      - A later fixture runner uses this ledger before any shared DB mutation.
+    next_command: Consume from COMMERCIAL-PHASE0 only after live preflight.
+    attempts: 1
+    artifacts: []
+
+  - id: COMMERCIAL-PHASE0
+    state: Queued
+    stage: intake
+    owner: null
+    scope: Read-only runtime inventory of modules, journals, warehouses, POS/payment configuration, test users, and fixture baselines.
+    base_sha: 28a5e42
+    locks: []
+    dependencies: [SET-CTRL-IDENTITY, FIXTURE-LEDGER-FOUNDATION]
+    acceptance:
+      - No DB mutation.
+      - Sanitized inventory identifies safe, test-only resources and baseline capture requirements.
+      - Results produce one explicit db-write fixture plan.
+    next_command: Dispatch a bounded native read-only inventory after Settings identity closure.
+    attempts: 0
+    artifacts: []
+
+  - id: COMMERCIAL-DB-FIXTURES
+    state: Queued
+    stage: implementation
+    owner: null
+    scope: Create tagged fixtures, baseline snapshots, and cleanup plan for one commercial run.
+    base_sha: 28a5e42
+    locks: [db-write]
+    dependencies: [COMMERCIAL-PHASE0]
+    acceptance:
+      - Unique WOOW-E2E run marker.
+      - Fixture ownership and cleanup dependencies recorded before mutation.
+      - External payment/email/SMS providers verified test or disabled.
+    next_command: Acquire db-write lock and run only after Phase 0 review.
+    attempts: 0
+    artifacts: []
+
+  - id: COMMERCIAL-FLOWS
+    state: Queued
+    stage: e2e
+    owner: null
+    scope: Website/commerce/portal, Inventory/accounting/POS, Discuss/calendar/files/reports, each paired HA/Public.
+    base_sha: 28a5e42
+    locks: [db-write]
+    dependencies: [COMMERCIAL-DB-FIXTURES, MENU-CRAWLER-READONLY]
+    acceptance:
+      - One serialized mutation lane at a time.
+      - Each mutation has opposite-surface semantic evidence and cleanup state.
+      - workers=2 realtime window owns worker-config and restores original value.
+    next_command: Schedule individual phases after fixture verification.
+    attempts: 0
+    artifacts: []
+
+promotion_gate:
+  - candidate_sha, reviewed_sha, integration_sha, and e2e_sha are full immutable SHAs.
+  - Review is invalid if origin/main advances; reintegrate and re-review.
+  - No merge by branch name alone.
+  - No deployment or destructive E2E without the applicable lock.
+  - Runtime completion becomes CompletedUnconsumed until the parent records a verified handoff.
