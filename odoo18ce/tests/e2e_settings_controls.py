@@ -172,6 +172,9 @@ def assert_self_tests():
         [{"method": "POST", "url": "https://example.invalid/web/dataset/call_kw/res.config.settings/onchange"}]
     ) == []
     assert unsafe_discard_requests(
+        [{"method": "POST", "url": "https://example.invalid/unsafe/web/dataset/call_kw/res.config.settings/onchange"}]
+    )
+    assert unsafe_discard_requests(
         [{"method": "POST", "url": "https://example.invalid/web/dataset/call_kw/res.config.settings/write"}]
     )
     expected_aborts, unexpected_aborts = split_expected_save_navigation_aborts(
@@ -452,16 +455,21 @@ def execute_control(browser, surface, item, safe_controls):
     raise AssertionError("unreachable control retry state")
 
 
+def is_expected_settings_rpc_path(path, expected_path):
+    """Match only the public path or one HA ingress token segment plus that path."""
+    ingress_path = re.compile(r"/api/hassio_ingress/[^/]+" + re.escape(expected_path) + r"\Z")
+    return path == expected_path or bool(ingress_path.fullmatch(path))
+
+
 def split_expected_save_navigation_aborts(failures):
     """Separate only Odoo's post-save reload abort from unexpected failures."""
     expected_path = "/web/dataset/call_button/res.config.settings/execute"
-    ingress_path = re.compile(r"/api/hassio_ingress/[^/]+" + re.escape(expected_path) + r"\Z")
     expected, unexpected = [], []
     for failure in failures:
         path = urlsplit(failure.get("url", "")).path
         if (
             failure.get("failure") == "net::ERR_ABORTED"
-            and (path == expected_path or ingress_path.fullmatch(path))
+            and is_expected_settings_rpc_path(path, expected_path)
         ):
             expected.append(failure)
         else:
@@ -477,7 +485,7 @@ def unsafe_discard_requests(requests):
         for request in requests
         if not (
             request["method"] == "POST"
-            and urlsplit(request["url"]).path.endswith(allowed_path)
+            and is_expected_settings_rpc_path(urlsplit(request["url"]).path, allowed_path)
         )
     ]
 
