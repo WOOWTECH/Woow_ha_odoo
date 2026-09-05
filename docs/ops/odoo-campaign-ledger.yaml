@@ -56,19 +56,22 @@ locks:
 
 tasks:
   - id: SET-CTRL-IDENTITY
-    state: Running
-    stage: implementation
+    state: E2EVerified
+    stage: e2e
     owner: native:settings-harness-repair
     scope: Fresh signature-based Settings control identity; block ambiguous duplicate controls.
     base_sha: 28a5e42
-    candidate_sha: null
-    locks: [repo-write]
+    candidate_sha: 17db9bc5a10ac11813e71ea30a1beddd828acf74
+    integration_sha: 17db9bc5a10ac11813e71ea30a1beddd828acf74
+    e2e_sha: 17db9bc5a10ac11813e71ea30a1beddd828acf74
+    deployed_version: 0.3.35
+    locks: []
     acceptance:
       - Credential-free duplicate-signature regression tests pass.
       - Rendered nginx/gateway test passes.
       - Real HA and Public Settings E2E passes against the candidate script.
       - Reviewer records exact base/head pair.
-    next_command: Reconcile worker handoff, then run static gates and real both-surface Settings E2E.
+    next_command: Closed; preserve sanitized Settings E2E artifacts and do not rerun unless Settings changes.
     attempts: 1
     artifacts: []
 
