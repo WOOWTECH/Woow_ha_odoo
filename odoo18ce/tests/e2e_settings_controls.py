@@ -75,11 +75,17 @@ def mutation_policy(environment):
 
 
 def is_transient_ingress_detach(error):
-    """Retry only when HA itself has replaced the direct ingress iframe with auth."""
-    message = str(error).lower()
-    return (
-        "direct ingress iframe absent; frames=[" in message
-        and "/auth/authorize" in message
+    """Retry only when the configured HA origin replaces ingress with its auth frame."""
+    message = str(error)
+    if "direct ingress iframe absent; frames=[" not in message.lower():
+        return False
+    ha_origin = urlsplit(shared.HA_BASE)
+    frame_urls = re.findall(r"https?://[^\s\]\"']+", message)
+    return any(
+        (candidate := urlsplit(frame_url)).scheme == ha_origin.scheme
+        and candidate.netloc == ha_origin.netloc
+        and candidate.path == "/auth/authorize"
+        for frame_url in frame_urls
     )
 
 
@@ -273,12 +279,24 @@ def assert_self_tests():
     )
     assert len(expected_aborts) == 2 and len(unexpected_aborts) == 2
     auth_frame_absent = RuntimeError(
-        "direct ingress iframe absent; frames=[https://ha.invalid/auth/authorize]"
+        f"direct ingress iframe absent; frames=[{shared.HA_BASE}/auth/authorize]"
+    )
+    foreign_auth_frame = RuntimeError(
+        "direct ingress iframe absent; frames=[https://untrusted.invalid/auth/authorize]"
+    )
+    lookalike_auth_frame = RuntimeError(
+        f"direct ingress iframe absent; frames=[{shared.HA_BASE}/anything/auth/authorize-extra]"
     )
     assert should_retry_control(
         "ingress", action, frozenset({"Manage Users"}), 0, auth_frame_absent
     )
     assert not should_retry_control("ingress", action, frozenset(), 0, auth_frame_absent)
+    assert not should_retry_control(
+        "ingress", action, frozenset({"Manage Users"}), 0, foreign_auth_frame
+    )
+    assert not should_retry_control(
+        "ingress", action, frozenset({"Manage Users"}), 0, lookalike_auth_frame
+    )
     assert not should_retry_control(
         "ingress", action, frozenset({"Manage Users"}), 1, auth_frame_absent
     )
