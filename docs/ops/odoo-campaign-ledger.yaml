@@ -107,6 +107,23 @@ tasks:
     attempts: 1
     artifacts: []
 
+  - id: DEBUG-MODE-DELTA-TDD
+    state: Queued
+    stage: intake
+    owner: null
+    scope: Exhaustive Odoo developer-mode delta discovery and TDD coverage across HA Ingress and public surfaces; ordinary semantic duplicates are suppressed only with linked passing coverage.
+    base_sha: b7ed0225425d4b6e402ab91f5ea00ea6b9403e3b
+    locks: []
+    dependencies: [SET-CTRL-IDENTITY, MENU-CRAWLER-READONLY]
+    acceptance:
+      - All normal/debug variants have a sanitized target/surface manifest and declared public-debug policy.
+      - Every discovered or statically predicted debug control has exactly one coverage disposition; ambiguity and unlinked duplicates fail.
+      - Safe controls have HA/Public deployed evidence; mutation/external/destructive controls obey fixture, rollback, and egress policy.
+      - Cleanup and evidence schema validation pass for every target lane.
+    next_command: Implement red manifest and identity contracts before any debug control crawler behavior.
+    attempts: 0
+    artifacts: [docs/plans/2026-09-05-odoo-developer-mode-delta-tdd.md]
+
   - id: COMMERCIAL-PHASE0
     state: Queued
     stage: intake
@@ -130,7 +147,7 @@ tasks:
     scope: Create tagged fixtures, baseline snapshots, and cleanup plan for one commercial run.
     base_sha: 28a5e42
     locks: [db-write]
-    dependencies: [COMMERCIAL-PHASE0]
+    dependencies: [COMMERCIAL-PHASE0, DEBUG-MODE-DELTA-TDD]
     acceptance:
       - Unique WOOW-E2E run marker.
       - Fixture ownership and cleanup dependencies recorded before mutation.
@@ -146,7 +163,7 @@ tasks:
     scope: Website/commerce/portal, Inventory/accounting/POS, Discuss/calendar/files/reports, each paired HA/Public.
     base_sha: 28a5e42
     locks: [db-write]
-    dependencies: [COMMERCIAL-DB-FIXTURES, MENU-CRAWLER-READONLY]
+    dependencies: [COMMERCIAL-DB-FIXTURES, MENU-CRAWLER-READONLY, DEBUG-MODE-DELTA-TDD]
     acceptance:
       - One serialized mutation lane at a time.
       - Each mutation has opposite-surface semantic evidence and cleanup state.
