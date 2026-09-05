@@ -4,3 +4,4 @@
 {"event":"task_e2e_verified","task":"SET-CTRL-IDENTITY","version":"0.3.35","sha":"17db9bc5a10ac11813e71ea30a1beddd828acf74","evidence":"dynamic tabs, all internal controls, Save/Discard restore, and Document Layout HA/Public passed"}
 {"event":"task_queued","task":"DEBUG-MODE-DELTA-TDD","scope":"exhaustive developer-mode delta TDD prerequisite","policy":"docs/plans/2026-09-05-odoo-developer-mode-delta-tdd.md"}
 {"event":"review_fix","task":"DEBUG-MODE-DELTA-TDD","finding":"commercial fixtures were not gated","resolution":"added DEBUG-MODE-DELTA-TDD dependency to COMMERCIAL-DB-FIXTURES"}
+{"event":"task_started","task":"DEBUG-MODE-DELTA-TDD","owner":"native:debug-delta-foundation/e5f966e3-24a8-417c-aadd-c6b01c9506ac","lock":"repo-write","scope":"local red-to-green identity/delta/manifest contracts"}
