@@ -75,8 +75,9 @@ def mutation_policy(environment):
 
 
 def is_transient_ingress_detach(error):
+    """Retry only when HA itself has replaced the direct ingress iframe with auth."""
     message = str(error).lower()
-    return "frame was detached" in message or (
+    return (
         "direct ingress iframe absent; frames=[" in message
         and "/auth/authorize" in message
     )
@@ -247,7 +248,7 @@ def assert_self_tests():
     assert explicit_save["discard_allowed"] and explicit_save["save_allowed"]
     detach = PlaywrightError("Frame was detached")
     assert not should_retry_control("ingress", action, frozenset(), 0, detach)
-    assert should_retry_control("ingress", action, frozenset({"Manage Users"}), 0, detach)
+    assert not should_retry_control("ingress", action, frozenset({"Manage Users"}), 0, detach)
     assert not should_retry_control("ingress", action, frozenset({"Manage Users"}), 1, detach)
     assert not should_retry_control("public", action, frozenset({"Manage Users"}), 0, detach)
     assert not should_retry_control(
