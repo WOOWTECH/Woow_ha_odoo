@@ -76,7 +76,10 @@ def mutation_policy(environment):
 
 def is_transient_ingress_detach(error):
     message = str(error).lower()
-    return "frame was detached" in message or "/auth/authorize" in message
+    return "frame was detached" in message or (
+        "direct ingress iframe absent; frames=[" in message
+        and "/auth/authorize" in message
+    )
 
 
 def should_retry_control(surface, item, safe_controls, attempt, error):
@@ -268,7 +271,23 @@ def assert_self_tests():
         ]
     )
     assert len(expected_aborts) == 2 and len(unexpected_aborts) == 2
-    assert is_transient_ingress_detach(RuntimeError("frames=[.../auth/authorize]"))
+    auth_frame_absent = RuntimeError(
+        "direct ingress iframe absent; frames=[https://ha.invalid/auth/authorize]"
+    )
+    assert should_retry_control(
+        "ingress", action, frozenset({"Manage Users"}), 0, auth_frame_absent
+    )
+    assert not should_retry_control("ingress", action, frozenset(), 0, auth_frame_absent)
+    assert not should_retry_control(
+        "ingress", action, frozenset({"Manage Users"}), 1, auth_frame_absent
+    )
+    assert not should_retry_control(
+        "public", action, frozenset({"Manage Users"}), 0, auth_frame_absent
+    )
+    assert not is_transient_ingress_detach(RuntimeError("frames=[.../auth/authorize]"))
+    assert not is_transient_ingress_detach(
+        RuntimeError("direct ingress iframe absent; frames=[https://ha.invalid/odoo]")
+    )
     secret = {
         "url": "api/hassio_ingress/token-value/odoo/settings?code=secret&state=secret",
         "nested": ["?code=secret&state=secret"],
