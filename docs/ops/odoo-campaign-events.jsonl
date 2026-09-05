@@ -2,3 +2,5 @@
 {"event":"task_reconciled","task":"SET-CTRL-IDENTITY","state":"Running","reason":"late reviewer reported stale DOM-index identity risk; repair task dispatched"}
 {"event":"task_reconciled","task":"MENU-CRAWLER-READONLY","state":"CompletedUnconsumed","candidate_sha":"207b5d3","reason":"writer reported completion; parent has not yet completed pinned-SHA review/integration"}
 {"event":"task_e2e_verified","task":"SET-CTRL-IDENTITY","version":"0.3.35","sha":"17db9bc5a10ac11813e71ea30a1beddd828acf74","evidence":"dynamic tabs, all internal controls, Save/Discard restore, and Document Layout HA/Public passed"}
+{"event":"task_queued","task":"DEBUG-MODE-DELTA-TDD","scope":"exhaustive developer-mode delta TDD prerequisite","policy":"docs/plans/2026-09-05-odoo-developer-mode-delta-tdd.md"}
+{"event":"review_fix","task":"DEBUG-MODE-DELTA-TDD","finding":"commercial fixtures were not gated","resolution":"added DEBUG-MODE-DELTA-TDD dependency to COMMERCIAL-DB-FIXTURES"}
