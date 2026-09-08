@@ -12,14 +12,14 @@ Odoo 18 Community Edition 的 Home Assistant add-on 倉庫,
 
 | Add-on | Description |
 |---|---|
-| [Odoo 18 CE](odoo18ce/) | Odoo 18 CE + PostgreSQL 16 all-in-one (amd64/aarch64) |
+| [Woow Odoo 18](odoo18ce/) | Odoo 18 Community Edition + PostgreSQL 16 all-in-one (amd64/aarch64) |
 
 ## Installation | 安裝
 
 1. Click the badge above (or **Settings → Add-ons → Add-on Store → ⋮ →
    Repositories**) and add:
    `https://github.com/WOOWTECH/Woow_ha_odoo`
-2. Find **Odoo 18 CE** in the store and click **INSTALL**.
+2. Find **Woow Odoo 18** in the store and click **INSTALL**.
 3. Details, options and troubleshooting: [odoo18ce/README.md](odoo18ce/README.md)
    and [odoo18ce/DOCS.md](odoo18ce/DOCS.md)
 
