@@ -108,19 +108,19 @@ tasks:
     artifacts: []
 
   - id: DEBUG-MODE-DELTA-TDD
-    state: Queued
-    stage: intake
-    owner: null
+    state: Running
+    stage: implementation
+    owner: native:debug-delta-foundation/e5f966e3-24a8-417c-aadd-c6b01c9506ac
     scope: Exhaustive Odoo developer-mode delta discovery and TDD coverage across HA Ingress and public surfaces; ordinary semantic duplicates are suppressed only with linked passing coverage.
     base_sha: b7ed0225425d4b6e402ab91f5ea00ea6b9403e3b
-    locks: []
+    locks: [repo-write]
     dependencies: [SET-CTRL-IDENTITY, MENU-CRAWLER-READONLY]
     acceptance:
       - All normal/debug variants have a sanitized target/surface manifest and declared public-debug policy.
       - Every discovered or statically predicted debug control has exactly one coverage disposition; ambiguity and unlinked duplicates fail.
       - Safe controls have HA/Public deployed evidence; mutation/external/destructive controls obey fixture, rollback, and egress policy.
       - Cleanup and evidence schema validation pass for every target lane.
-    next_command: Implement red manifest and identity contracts before any debug control crawler behavior.
+    next_command: Await isolated debug-delta-foundation red-to-green contract handoff, then run independent review before integration.
     attempts: 0
     artifacts: [docs/plans/2026-09-05-odoo-developer-mode-delta-tdd.md]
 
