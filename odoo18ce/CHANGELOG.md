@@ -13,8 +13,16 @@
   version is unchanged.
 - LGPL-3.0 `LICENSE` file, matching the licence the README has always named.
 - Dependabot for GitHub Actions, weekly, grouped into one pull request.
+- The Home Assistant add-on linter runs on every pull request as advisory
+  output. It also asks for `webui` to go (Ingress is enabled) and for
+  `watchdog` to become a Docker `HEALTHCHECK`; both change runtime
+  behaviour and are deferred to the 0.4.0 Release, after which the linter
+  becomes blocking.
 
 ### Changed
+- `config.yaml` no longer states `startup: application`, `boot: auto` and
+  `panel_admin: true`; these are Supervisor defaults and the linter rejects
+  restating them. Nothing changes for installed add-ons.
 - The static tests are pytest modules under `odoo18ce/tests/` with one
   entrypoint, `pytest odoo18ce/tests`, replacing `test-dual-gateway.sh`.
 - The Settings E2E harness no longer defaults to a real deployment; the HA
