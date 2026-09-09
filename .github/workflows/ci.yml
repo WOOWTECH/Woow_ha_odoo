@@ -131,31 +131,21 @@ jobs:
           RELEASE_CHECK_STRICT: ${{ steps.version.outputs.changed == 'true' && '1' || '0' }}
         run: pytest -q "${ADDON_DIR}/tests"
 
-  build:
-    name: build (${{ matrix.arch }})
+  # amd64 on every PR; aarch64 only when the version changes. A skipped job
+  # counts as passed for the required checks, so both can be required. Two
+  # jobs rather than a matrix because a job-level `if` cannot see `matrix`.
+  build-amd64:
+    name: build (amd64)
     needs: static
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-          - arch: aarch64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
-    # amd64 on every PR; aarch64 only when the version changes. A skipped job
-    # counts as passed for the required checks, so both can be required.
-    if: ${{ matrix.arch == 'amd64' || needs.static.outputs.version_changed == 'true' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Resolve base image
         id: base
-        env:
-          ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          from="$(yq -r ".build_from.${ARCH}" "${ADDON_DIR}/build.yaml")"
+          from="$(yq -r '.build_from.amd64' "${ADDON_DIR}/build.yaml")"
           echo "from=${from}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
@@ -167,6 +157,34 @@ jobs:
           push: false
           build-args: |
             BUILD_FROM=${{ steps.base.outputs.from }}
-          tags: woow-ha-odoo-${{ matrix.arch }}:ci
-          cache-from: type=gha,scope=${{ matrix.arch }}
-          cache-to: type=gha,scope=${{ matrix.arch }},mode=max
+          tags: woow-ha-odoo-amd64:ci
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,scope=amd64,mode=max
+
+  build-aarch64:
+    name: build (aarch64)
+    needs: static
+    if: ${{ needs.static.outputs.version_changed == 'true' }}
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve base image
+        id: base
+        run: |
+          set -euo pipefail
+          from="$(yq -r '.build_from.aarch64' "${ADDON_DIR}/build.yaml")"
+          echo "from=${from}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.ADDON_DIR }}
+          push: false
+          build-args: |
+            BUILD_FROM=${{ steps.base.outputs.from }}
+          tags: woow-ha-odoo-aarch64:ci
+          cache-from: type=gha,scope=aarch64
+          cache-to: type=gha,scope=aarch64,mode=max
