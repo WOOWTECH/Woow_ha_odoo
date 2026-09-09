@@ -1,0 +1,6 @@
+---
+# DL3008 asks for apt version pins. On a Debian base that tracks security
+# updates this pins us to packages that stop existing; the Odoo package, the
+# one artefact whose exact build matters, is pinned by version and SHA256.
+ignored:
+  - DL3008

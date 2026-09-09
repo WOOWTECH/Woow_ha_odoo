@@ -1,0 +1,22 @@
+---
+extends: default
+
+rules:
+  document-start:
+    present: true
+  indentation:
+    spaces: 2
+    indent-sequences: true
+  line-length:
+    max: 120
+    level: warning
+  truthy:
+    level: error
+    # Home Assistant option schemas use bare yes/no nowhere, but GitHub
+    # workflow files use `on:` as a key, which yamllint would otherwise flag.
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1
+
+ignore: |
+  docs/ops/
