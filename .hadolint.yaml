@@ -2,5 +2,9 @@
 # DL3008 asks for apt version pins. On a Debian base that tracks security
 # updates this pins us to packages that stop existing; the Odoo package, the
 # one artefact whose exact build matters, is pinned by version and SHA256.
+#
+# DL3006 wants a tag on FROM. The base image is `FROM ${BUILD_FROM}`, the
+# Home Assistant add-on convention: the tagged image comes from build.yaml.
 ignored:
   - DL3008
+  - DL3006
