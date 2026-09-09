@@ -1,2 +1,6 @@
 __pycache__/
 *.py[cod]
+.pytest_cache/
+
+# Human handoff notes contain LAN addresses and database names; keep them local.
+docs/plans/odoo-handoff-*.html
