@@ -50,3 +50,8 @@ pytest odoo18ce/tests
 
 The live tier (`odoo18ce/tests/e2e_*.py`) needs a deployed Odoo and
 credentials from the environment; it is run by hand, never by CI.
+
+A **Release** is a version bump in `odoo18ce/config.yaml` merged to `main`
+(with a matching CHANGELOG section and no `## Unreleased` left). It
+publishes the images, tags `v<version>`, creates the GitHub Release, and
+asks the App Store mirror to sync; see `.github/workflows/release.yml`.
