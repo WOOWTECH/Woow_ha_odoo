@@ -18,3 +18,18 @@ updates:
           - "*"
     commit-message:
       prefix: "chore(ci)"
+  # The composite action used by release.yml lives outside .github/workflows,
+  # so it needs its own entry.
+  - package-ecosystem: github-actions
+    directory: /.github/actions/publish-image
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Asia/Taipei
+    groups:
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore(ci)"

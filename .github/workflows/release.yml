@@ -1,0 +1,234 @@
+---
+name: Release
+
+# A Release is a version bump in odoo18ce/config.yaml merged to main (see
+# docs/adr/0001-distribution-follows-release-tags.md). This workflow turns
+# that event into:
+#   1. prebuilt images  ghcr.io/woowtech/woow-ha-odoo-{amd64,aarch64}:<version>
+#      (version tag only, never overwritten; an existing tag is reused)
+#   2. a git tag v<version> and a GitHub Release whose notes are the
+#      CHANGELOG section for that version
+#   3. a repository_dispatch to Woow_HA_App_Store so the store syncs now
+#
+# workflow_dispatch means "images only": build and push the images for the
+# version in config.yaml on the chosen ref, with no tag, Release or store
+# sync. That is how the very first `image:` version is published before its
+# bump PR merges, so users never see a version whose image does not exist.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - odoo18ce/config.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  ADDON_DIR: odoo18ce
+  IMAGE_BASE: ghcr.io/woowtech/woow-ha-odoo
+
+jobs:
+  prepare:
+    name: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_release: ${{ steps.version.outputs.is_release }}
+      build_amd64: ${{ steps.images.outputs.build_amd64 }}
+      build_aarch64: ${{ steps.images.outputs.build_aarch64 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read the version and decide whether this is a Release
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          version="$(yq -r '.version' "${ADDON_DIR}/config.yaml")"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::images-only run for ${version} on ${GITHUB_REF_NAME}"
+            exit 0
+          fi
+          previous="$(git show "${BEFORE_SHA}:${ADDON_DIR}/config.yaml" 2>/dev/null \
+            | yq -r '.version' || echo unknown)"
+          if [ "${version}" = "${previous}" ]; then
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+            echo "config.yaml changed but the version (${version}) did not: not a Release"
+            exit 0
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v${version}" >/dev/null 2>&1; then
+            echo "::error::tag v${version} already exists; a version is released once"
+            exit 1
+          fi
+          echo "is_release=true" >> "$GITHUB_OUTPUT"
+          echo "::notice::Release ${previous} -> ${version}"
+
+      - name: Release bookkeeping is complete
+        if: steps.version.outputs.is_release == 'true'
+        run: |
+          set -euo pipefail
+          pip install --quiet pytest PyYAML
+          RELEASE_CHECK_STRICT=1 pytest -q "${ADDON_DIR}/tests/test_release_consistency.py"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Which images still need building
+        id: images
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # A published version tag is immutable. If an arch image already
+          # exists for this version it is reused as-is (that is the pre-push
+          # path for the first `image:` version); it is never rebuilt.
+          for arch in amd64 aarch64; do
+            ref="${IMAGE_BASE}-${arch}:${VERSION}"
+            if docker buildx imagetools inspect "${ref}" >/dev/null 2>&1; then
+              echo "${ref} already exists; reusing it"
+              echo "build_${arch}=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "${ref} not published yet; will build"
+              echo "build_${arch}=true" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+  build-amd64:
+    name: publish image (amd64)
+    needs: prepare
+    if: needs.prepare.outputs.build_amd64 == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/publish-image
+        with:
+          arch: amd64
+          version: ${{ needs.prepare.outputs.version }}
+          image_base: ${{ env.IMAGE_BASE }}
+          addon_dir: ${{ env.ADDON_DIR }}
+          registry_token: ${{ secrets.GITHUB_TOKEN }}
+
+  build-aarch64:
+    name: publish image (aarch64)
+    needs: prepare
+    if: needs.prepare.outputs.build_aarch64 == 'true'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/publish-image
+        with:
+          arch: aarch64
+          version: ${{ needs.prepare.outputs.version }}
+          image_base: ${{ env.IMAGE_BASE }}
+          addon_dir: ${{ env.ADDON_DIR }}
+          registry_token: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    name: tag, GitHub Release, store sync
+    needs: [prepare, build-amd64, build-aarch64]
+    # Runs when this is a Release and neither build failed (skipped is fine:
+    # it means the image already existed).
+    if: >-
+      always()
+      && needs.prepare.result == 'success'
+      && needs.prepare.outputs.is_release == 'true'
+      && needs.build-amd64.result != 'failure' && needs.build-amd64.result != 'cancelled'
+      && needs.build-aarch64.result != 'failure' && needs.build-aarch64.result != 'cancelled'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Both images are published
+        run: |
+          set -euo pipefail
+          for arch in amd64 aarch64; do
+            docker buildx imagetools inspect "${IMAGE_BASE}-${arch}:${VERSION}" >/dev/null
+            echo "${IMAGE_BASE}-${arch}:${VERSION} ok"
+          done
+
+      - name: Release notes from the CHANGELOG
+        run: |
+          set -euo pipefail
+          python3 - "${ADDON_DIR}/CHANGELOG.md" "${VERSION}" > release-notes.md <<'PY'
+          import re, sys
+          text = open(sys.argv[1], encoding="utf-8").read()
+          version = sys.argv[2]
+          pattern = r"^## " + re.escape(version) + r"(?: — [0-9-]+)?\s*$(.*?)(?=^## |\Z)"
+          match = re.search(pattern, text, re.M | re.S)
+          if not match:
+              sys.exit(f"CHANGELOG.md has no section for {version}")
+          body = match.group(1).strip()
+          if not body:
+              sys.exit(f"CHANGELOG.md section for {version} is empty")
+          print(body)
+          print()
+          base = "ghcr.io/woowtech/woow-ha-odoo"
+          images = ", ".join("`%s-%s:%s`" % (base, arch, version) for arch in ("amd64", "aarch64"))
+          print("Images: " + images)
+          PY
+          echo "--- release notes ---"; cat release-notes.md
+
+      - name: Tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Creates the v<version> tag at this commit as part of the Release.
+          gh release create "v${VERSION}" \
+            --target "${GITHUB_SHA}" \
+            --title "Woow Odoo 18 ${VERSION}" \
+            --notes-file release-notes.md
+          echo "::notice::released v${VERSION}"
+
+      - name: Ask the App Store to sync now
+        env:
+          GH_TOKEN: ${{ secrets.APP_STORE_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::warning::APP_STORE_DISPATCH_TOKEN is not set; the store will pick this Release up at its nightly sweep"
+            exit 0
+          fi
+          gh api --method POST repos/WOOWTECH/Woow_HA_App_Store/dispatches \
+            -f event_type=upstream-release \
+            -f "client_payload[slug]=odoo18ce" \
+            -f "client_payload[version]=${VERSION}" \
+            -f "client_payload[repository]=${GITHUB_REPOSITORY}"
+          echo "::notice::store sync dispatched for ${VERSION}"
