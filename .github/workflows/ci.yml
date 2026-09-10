@@ -67,11 +67,6 @@ jobs:
           yamllint -f github .
 
       - name: Home Assistant add-on linter
-        # Advisory until the 0.4.0 Release: the linter also demands that
-        # `webui` go (Ingress is on) and that `watchdog` become a Docker
-        # HEALTHCHECK, both of which change runtime behaviour and belong to a
-        # Release, not to the PR gate. Drop continue-on-error once resolved.
-        continue-on-error: true
         uses: frenck/action-addon-linter@v2
         with:
           path: ./${{ env.ADDON_DIR }}
