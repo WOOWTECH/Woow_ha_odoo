@@ -31,3 +31,22 @@ Odoo 18 Community Edition 的 Home Assistant add-on 倉庫,
 
 - Docker/Podman Compose → [Woow_podman_odoo](https://github.com/WOOWTECH/Woow_podman_odoo)
 - K3s/Kubernetes Helm chart → [Woow_k3s_odoo](https://github.com/WOOWTECH/Woow_k3s_odoo)
+
+## Development | 開發
+
+Every pull request runs the **static tier** (linters, manifest and gateway
+contracts, ingress rewrite tests) and an amd64 image build; see
+`.github/workflows/ci.yml`. A pull request that bumps the version also builds
+aarch64 and must fold any `## Unreleased` CHANGELOG section into the new
+version. Design vocabulary lives in [CONTEXT.md](CONTEXT.md) and the
+reasoning behind the pipeline in [docs/adr/](docs/adr/).
+
+Run the static tier locally with nginx and node installed:
+
+```bash
+pip install -r odoo18ce/tests/requirements-test.txt
+pytest odoo18ce/tests
+```
+
+The live tier (`odoo18ce/tests/e2e_*.py`) needs a deployed Odoo and
+credentials from the environment; it is run by hand, never by CI.

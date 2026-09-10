@@ -1,0 +1,20 @@
+---
+version: 2
+updates:
+  # GitHub Actions used by the workflows. One grouped PR per week.
+  # The Odoo nightly and the Debian base image are handled by the
+  # odoo-bump workflow, because Dependabot cannot read build.yaml or
+  # the nightly.odoo.com URL scheme.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Asia/Taipei
+    groups:
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore(ci)"

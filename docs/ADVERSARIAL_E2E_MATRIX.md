@@ -25,7 +25,6 @@ Release gate: zero blockers, zero important findings on the supported HTTPS HA a
 
 ## Commands
 
-- Static: `bash odoo18ce/tests/test-dual-gateway.sh`
-- JSON-RPC policy: `python3 odoo18ce/tests/test-jsonrpc-filter.py`
+- Static tier (manifest, gateway, JSON-RPC policy, ingress rewrites): `pytest odoo18ce/tests` with nginx and node installed
 - Browser: `ODOO_BASE_URL=... ODOO_TEST_LOGIN=... ODOO_TEST_PASSWORD=... python3 odoo18ce/tests/e2e_adversarial.py`
 - Run the browser command once with the Cloudflare base and once with the tokenized ingress base/harness.

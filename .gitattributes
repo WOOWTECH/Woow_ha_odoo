@@ -1,0 +1,8 @@
+# Every text file is stored with LF. The rootfs scripts run inside a Linux
+# container where a stray carriage return after a shebang stops the boot,
+# so the endings must not depend on any contributor's core.autocrlf.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
