@@ -223,7 +223,8 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN}" ]; then
-            echo "::warning::APP_STORE_DISPATCH_TOKEN is not set; the store will pick this Release up at its nightly sweep"
+            echo "::warning::APP_STORE_DISPATCH_TOKEN is not set;" \
+              "the store will pick this Release up at its nightly sweep"
             exit 0
           fi
           gh api --method POST repos/WOOWTECH/Woow_HA_App_Store/dispatches \
