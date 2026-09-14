@@ -1,0 +1,191 @@
+---
+name: Odoo nightly bump
+
+# Weekly: find the newest Odoo 18.0 nightly package and the newest dated
+# Debian base-image tag, and open one pull request that pins them. The PR
+# gate then proves the image still builds. A human merges it; see
+# docs/adr/0002-odoo-nightly-bumps-are-human-merged.md for why it is never
+# merged automatically.
+#
+# Opening the PR with a fine-grained PAT (secret BUMP_PR_TOKEN) is what makes
+# the PR gate run on it: events created with GITHUB_TOKEN do not trigger
+# workflows. Without the secret the PR is still opened, with a warning, and
+# a human must close and reopen it to start CI.
+
+on:
+  schedule:
+    # Monday 04:00 Asia/Taipei.
+    - cron: '0 20 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: odoo-bump
+  cancel-in-progress: false
+
+env:
+  ADDON_DIR: odoo18ce
+  NIGHTLY_INDEX: https://nightly.odoo.com/18.0/nightly/deb/
+
+jobs:
+  bump:
+    name: bump
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Newest Odoo nightly
+        id: odoo
+        run: |
+          set -euo pipefail
+          current="$(sed -nE 's/^ARG ODOO_DEB_VERSION="(18\.0\.[0-9]{8})"$/\1/p' "${ADDON_DIR}/Dockerfile")"
+          newest="$(curl -fsSL --max-time 60 "${NIGHTLY_INDEX}" \
+            | grep -oE 'odoo_18\.0\.[0-9]{8}_all\.deb' | sed -E 's/^odoo_(.*)_all\.deb$/\1/' | sort -u | tail -1)"
+          [ -n "${current}" ] && [ -n "${newest}" ]
+          echo "current=${current}" >> "$GITHUB_OUTPUT"
+          echo "newest=${newest}" >> "$GITHUB_OUTPUT"
+          if [ "${newest}" = "${current}" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Odoo nightly: ${current} is the newest"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Odoo nightly: ${current} -> ${newest}"
+          fi
+
+      - name: Newest dated base-image tag
+        id: base
+        run: |
+          set -euo pipefail
+          # build.yaml carries the same tag for every arch; read amd64's.
+          current_ref="$(yq -r '.build_from.amd64' "${ADDON_DIR}/build.yaml")"
+          current="${current_ref##*:}"
+          repo="home-assistant/amd64-base-debian"
+          token="$(curl -fsS "https://ghcr.io/token?scope=repository:${repo}:pull" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
+          newest="$(curl -fsS -H "Authorization: Bearer ${token}" "https://ghcr.io/v2/${repo}/tags/list?n=500" \
+            | python3 -c '
+          import json, re, sys
+          tags = [t for t in json.load(sys.stdin)["tags"] if re.fullmatch(r"bookworm-\d{4}\.\d{2}\.\d+", t)]
+          tags.sort(key=lambda t: tuple(int(p) for p in t.split("-")[1].split(".")))
+          print(tags[-1] if tags else "")
+          ')"
+          echo "current=${current}" >> "$GITHUB_OUTPUT"
+          echo "newest=${newest}" >> "$GITHUB_OUTPUT"
+          if [ -z "${newest}" ] || [ "${newest}" = "${current}" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "base image: ${current} is current"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::base image: ${current} -> ${newest}"
+          fi
+
+      - name: Nothing to bump
+        if: steps.odoo.outputs.changed != 'true' && steps.base.outputs.changed != 'true'
+        run: echo "Odoo ${{ steps.odoo.outputs.current }} and base ${{ steps.base.outputs.current }} are both current."
+
+      - name: Pin the new Odoo package
+        if: steps.odoo.outputs.changed == 'true'
+        env:
+          NEWEST: ${{ steps.odoo.outputs.newest }}
+        run: |
+          set -euo pipefail
+          url="${NIGHTLY_INDEX}odoo_${NEWEST}_all.deb"
+          echo "downloading ${url}"
+          curl -fsSL --max-time 900 "${url}" -o /tmp/odoo.deb
+          sha="$(sha256sum /tmp/odoo.deb | cut -d' ' -f1)"
+          rm -f /tmp/odoo.deb
+          sed -i -E "s/^ARG ODOO_DEB_VERSION=\"18\.0\.[0-9]{8}\"$/ARG ODOO_DEB_VERSION=\"${NEWEST}\"/" "${ADDON_DIR}/Dockerfile"
+          sed -i -E "s/^ARG ODOO_DEB_SHA256=\"[0-9a-f]{64}\"$/ARG ODOO_DEB_SHA256=\"${sha}\"/" "${ADDON_DIR}/Dockerfile"
+          grep -E '^ARG ODOO_DEB_(VERSION|SHA256)=' "${ADDON_DIR}/Dockerfile"
+
+      - name: Pin the new base image
+        if: steps.base.outputs.changed == 'true'
+        env:
+          NEWEST: ${{ steps.base.outputs.newest }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 aarch64; do
+            yq -i ".build_from.${arch} = \"ghcr.io/home-assistant/${arch}-base-debian:${NEWEST}\"" "${ADDON_DIR}/build.yaml"
+          done
+          cat "${ADDON_DIR}/build.yaml"
+
+      - name: Record the bump under Unreleased
+        if: steps.odoo.outputs.changed == 'true' || steps.base.outputs.changed == 'true'
+        env:
+          ODOO_CHANGED: ${{ steps.odoo.outputs.changed }}
+          ODOO_FROM: ${{ steps.odoo.outputs.current }}
+          ODOO_TO: ${{ steps.odoo.outputs.newest }}
+          BASE_CHANGED: ${{ steps.base.outputs.changed }}
+          BASE_FROM: ${{ steps.base.outputs.current }}
+          BASE_TO: ${{ steps.base.outputs.newest }}
+        run: |
+          set -euo pipefail
+          python3 - "${ADDON_DIR}/CHANGELOG.md" <<'PY'
+          import os, sys
+          path = sys.argv[1]
+          text = open(path, encoding="utf-8").read()
+          lines = []
+          if os.environ["ODOO_CHANGED"] == "true":
+              lines.append(f"- Odoo nightly package {os.environ['ODOO_FROM']} -> {os.environ['ODOO_TO']}.")
+          if os.environ["BASE_CHANGED"] == "true":
+              lines.append(f"- Debian base image {os.environ['BASE_FROM']} -> {os.environ['BASE_TO']}.")
+          entry = "\n".join(lines) + "\n"
+          head = "# Changelog\n\n"
+          assert text.startswith(head), "CHANGELOG.md must start with '# Changelog'"
+          rest = text[len(head):]
+          if rest.startswith("## Unreleased\n"):
+              body = rest[len("## Unreleased\n"):]
+              marker = "### Changed\n"
+              if marker in body.split("\n## ", 1)[0]:
+                  i = body.index(marker) + len(marker)
+                  body = body[:i] + entry + body[i:]
+              else:
+                  body = "\n### Changed\n" + entry + body
+              rest = "## Unreleased\n" + body
+          else:
+              rest = "## Unreleased\n\n### Changed\n" + entry + "\n" + rest
+          open(path, "w", encoding="utf-8").write(head + rest)
+          PY
+          sed -n '1,14p' "${ADDON_DIR}/CHANGELOG.md"
+
+      - name: Which token opens the PR
+        id: token
+        if: steps.odoo.outputs.changed == 'true' || steps.base.outputs.changed == 'true'
+        env:
+          HAS_TOKEN: ${{ secrets.BUMP_PR_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          echo "has=${HAS_TOKEN}" >> "$GITHUB_OUTPUT"
+          if [ "${HAS_TOKEN}" != "true" ]; then
+            echo "::warning::BUMP_PR_TOKEN is not set; the PR is opened with GITHUB_TOKEN" \
+              "and CI will not start until it is closed and reopened"
+          fi
+
+      - name: Open or update the pull request
+        if: steps.odoo.outputs.changed == 'true' || steps.base.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.BUMP_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: chore/odoo-nightly-bump
+          delete-branch: true
+          commit-message: |
+            chore: bump Odoo nightly to ${{ steps.odoo.outputs.newest }}, base ${{ steps.base.outputs.newest }}
+
+            Automated weekly bump. A human decides whether to merge: an Odoo
+            nightly can carry a database migration.
+          title: "chore: bump Odoo nightly to ${{ steps.odoo.outputs.newest }}"
+          body: |
+            Weekly automated bump. **Merge is a human decision**: an Odoo nightly can carry a database migration that runs on every user's database at the next Release (ADR-0002).
+
+            | | From | To |
+            |---|---|---|
+            | Odoo nightly | `${{ steps.odoo.outputs.current }}` | `${{ steps.odoo.outputs.newest }}` |
+            | Base image | `${{ steps.base.outputs.current }}` | `${{ steps.base.outputs.newest }}` |
+
+            The SHA256 in the Dockerfile was computed from the downloaded package. The PR gate builds the image; the entry is recorded under `## Unreleased` in the CHANGELOG and ships with the next Release.
+
+            Before merging, consider a Deploy of the resulting image on the woowtech host first. Closing this PR is fine; the next weekly run opens a fresh one.
+          labels: dependencies
