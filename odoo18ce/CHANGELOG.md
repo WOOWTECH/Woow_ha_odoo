@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.4.1 — 2026-09-14
+
+First Release produced entirely by the pipeline: the weekly bump proposed
+the Odoo package, a human merged it, and the Release workflow did the rest.
+No database migration: none of the installed modules changed version
+upstream in this window.
 
 ### Changed
 - Odoo nightly package 18.0.20260806 -> 18.0.20260914.
