@@ -163,6 +163,8 @@ jobs:
     permissions:
       contents: write
       packages: read
+      # To dispatch the perimeter check at the end.
+      actions: write
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
     steps:
@@ -233,3 +235,13 @@ jobs:
             -f "client_payload[version]=${VERSION}" \
             -f "client_payload[repository]=${GITHUB_REPOSITORY}"
           echo "::notice::store sync dispatched for ${VERSION}"
+
+      - name: Run the perimeter check
+        # A Release created with GITHUB_TOKEN does not fire the `release`
+        # event for other workflows, so the check is dispatched explicitly.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh workflow run perimeter.yml --ref "${GITHUB_REF_NAME}"
+          echo "::notice::perimeter check dispatched"

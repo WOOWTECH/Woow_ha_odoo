@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Perimeter check workflow: after each Release and daily at 05:30 Taipei, a
+  GitHub runner confirms from outside that every public origin listed in the
+  `ODOO_PUBLIC_URLS` repository variable keeps `/web/database/*` and the
+  XML-RPC/JSON-RPC database services closed, and that its basic pages load.
+- Weekly Odoo nightly bump workflow: finds the newest 18.0 nightly package
+  and dated Debian base-image tag, pins them with a fresh SHA256, records
+  the change here, and opens a pull request that the PR gate builds. Never
+  merged automatically.
+
 ## 0.4.0 — 2026-09-10
 
 This Release changes how the add-on is installed. Supervisor now pulls a

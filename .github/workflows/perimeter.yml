@@ -1,0 +1,98 @@
+---
+name: Perimeter check
+
+# The one live-tier check that runs from CI: from a GitHub runner, which is
+# "outside" by definition, confirm that every public origin keeps its
+# database lifecycle routes closed and its basic pages up. Read-only, no
+# credentials: it is the unauthenticated part of tests/e2e_adversarial.py
+# with ODOO_DB_POLICY=block.
+#
+# Runs after each Release (dispatched by release.yml, because an event
+# created with GITHUB_TOKEN would not trigger this workflow on its own),
+# once a day, and by hand. A failure means either the perimeter opened or
+# the site is unreachable from the internet; both are worth an email.
+
+on:
+  schedule:
+    # 05:30 Asia/Taipei, after the store's nightly sweep has settled.
+    - cron: '30 21 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perimeter
+  cancel-in-progress: false
+
+jobs:
+  perimeter:
+    name: perimeter
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Space-separated public origins, one per deployment. A repository
+      # variable, not a secret: these hostnames are already in the docs.
+      ODOO_PUBLIC_URLS: ${{ vars.ODOO_PUBLIC_URLS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: At least one public origin is configured
+        run: |
+          set -euo pipefail
+          if [ -z "${ODOO_PUBLIC_URLS// /}" ]; then
+            echo "::error::repository variable ODOO_PUBLIC_URLS is empty; nothing to check"
+            exit 1
+          fi
+          echo "origins: ${ODOO_PUBLIC_URLS}"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: odoo18ce/tests/requirements-test.txt
+
+      - name: Install Playwright and Chromium
+        run: |
+          set -euo pipefail
+          pip install --quiet playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Check each public origin
+        env:
+          ODOO_DB_POLICY: block
+        run: |
+          set -uo pipefail
+          status=0
+          {
+            echo "## Perimeter check"
+            echo
+            echo "| Origin | Result |"
+            echo "|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for origin in ${ODOO_PUBLIC_URLS}; do
+            host="$(echo "${origin}" | sed -E 's#^[a-z]+://##; s#/.*$##')"
+            export ODOO_BASE_URL="${origin}"
+            export E2E_ARTIFACT_DIR="artifacts/${host}"
+            if python odoo18ce/tests/e2e_adversarial.py > "artifacts-${host}.log" 2>&1; then
+              echo "| ${host} | closed and reachable |" >> "$GITHUB_STEP_SUMMARY"
+              echo "${host}: ok"
+            else
+              status=1
+              echo "| ${host} | **FAILED** |" >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::${host}: perimeter check failed"
+              tail -40 "artifacts-${host}.log"
+            fi
+          done
+          exit "${status}"
+
+      - name: Keep logs and screenshots of a failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perimeter-${{ github.run_id }}
+          path: |
+            artifacts/
+            artifacts-*.log
+          if-no-files-found: ignore
+          retention-days: 14
