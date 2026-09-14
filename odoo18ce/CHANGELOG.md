@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+- `HEALTHCHECK` uses the exec (JSON) form. Same probe, no shell; hadolint
+  3.5 flags the shell form (DL3025).
+
 ### Added
 - Perimeter check workflow: after each Release and daily at 05:30 Taipei, a
   GitHub runner confirms from outside that every public origin listed in the
