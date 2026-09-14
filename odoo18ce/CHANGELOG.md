@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Changed
+- Odoo nightly package 18.0.20260806 -> 18.0.20260914.
+- Debian base image bookworm -> bookworm-2026.08.0.
 - `HEALTHCHECK` uses the exec (JSON) form. Same probe, no shell; hadolint
   3.5 flags the shell form (DL3025).
 
