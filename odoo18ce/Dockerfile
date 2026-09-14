@@ -75,7 +75,7 @@ EXPOSE 8069 5691 8072
 # tier, so this exercises nginx and Odoo together. The start period covers
 # first-boot database creation and a module update after an upgrade.
 HEALTHCHECK --interval=60s --timeout=10s --start-period=600s --retries=3 \
-    CMD curl -fsS --max-time 8 http://127.0.0.1:8069/web/login >/dev/null || exit 1
+    CMD ["curl", "-fsS", "--max-time", "8", "-o", "/dev/null", "http://127.0.0.1:8069/web/login"]
 
 # ──────────────────────────────────────────────
 # 7. Image labels. The publish workflow fills these in; a local or CI
