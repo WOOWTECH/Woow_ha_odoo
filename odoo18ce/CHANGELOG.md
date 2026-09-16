@@ -6,13 +6,13 @@
 - The maintenance bootstrap now writes and freezes `web.base.url` on every
   Odoo database on every start, in every install shape. Before, it only did
   so when both `public_url` and `default_db` were set; an Ingress-only
-  install was unprotected, and one admin login through the sidebar wrote
-  the Supervisor path `/api/hassio_ingress/<token>` into `web.base.url`,
-  from where the token reached every email, share link, portal link and
-  report. Without `public_url` the Canonical URL is now the Home Assistant
-  host's LAN address with the published 8069 port, read from the
-  Supervisor; a stored value that carries an Ingress token is replaced,
-  never kept. Issue #57.
+  install was unprotected, and one admin login through Ingress wrote the
+  Supervisor path `/api/hassio_ingress/<token>` into `web.base.url`, from
+  where the token reached every email, share link, portal link and report.
+  Without `public_url` the Canonical URL is now the Home Assistant host's
+  LAN address with the published 8069 port, read from the Supervisor. A
+  stored value that carries an Ingress token is never kept: it is replaced
+  when a Canonical URL exists and removed otherwise. Issue #57.
 
 ### Added
 - The default website's `domain` is set to the Canonical URL on every

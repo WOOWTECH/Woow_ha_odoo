@@ -140,7 +140,7 @@ The add-on has two simultaneous entrances:
 The Cloudflare gateway blocks `/web/database/*`; database lifecycle management
 stays available through HA Ingress and from the trusted LAN. Odoo itself remains HTTP on localhost while TLS terminates at HA or Cloudflare.
 
-Set the HTTPS `public_url` to the Cloudflare hostname so that Odoo-generated website metadata, email links and callbacks carry that address. How the add-on locks it in is described under "Canonical URL" below. `default_db` is required only for `auto_update_module` and the one-shot maintenance account file.
+Set the HTTPS `public_url` to the Public origin so that Odoo-generated website metadata, email links and callbacks carry that address. How the add-on locks it in is described under "Canonical URL" below. `default_db` is required only for `auto_update_module` and the one-shot maintenance account file.
 
 ## Canonical URL
 
@@ -163,10 +163,10 @@ each Odoo database in its PostgreSQL and writes a Canonical URL:
 With a Canonical URL, `web.base.url` is set to it, `web.base.url.freeze`
 is set to `True`, and the default website's domain (when the `website`
 module is installed) is set to the same value. Without one, an existing
-clean `web.base.url` is frozen as it is, and an absent or token-carrying
-value is left alone with a warning in the add-on log. A stored value that
-contains `/api/hassio_ingress/` is never kept. The log shows one line per
-database.
+clean `web.base.url` is frozen as it is; an absent value is left alone and
+a token-carrying value is removed, both with a warning in the add-on log
+that the database is unprotected. A stored value that contains
+`/api/hassio_ingress/` is never kept. The log shows one line per database.
 
 The LAN fallback reads the host address and the published port from the
 Supervisor, which is why the add-on declares `hassio_api` in its manifest.

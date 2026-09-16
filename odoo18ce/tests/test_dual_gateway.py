@@ -188,10 +188,11 @@ def test_maintenance_bootstrap_contract() -> None:
     assert "/usr/local/lib/odoo-maintenance.py" in m
     assert "web.base.url.freeze" in read(ROOT / "rootfs/usr/local/lib/odoo-maintenance.py")
     assert "bootstrap-user.json" in m
-    assert "base.group_system" in m
-    assert "base.group_erp_manager" in m
     assert "root:600" in m
     assert "must contain at least 20 characters" in m
+    account = read(ROOT / "rootfs/usr/local/lib/odoo-maintenance-account.py")
+    assert "base.group_system" in account
+    assert "base.group_erp_manager" in account
 
 
 def test_postgres_init_contract() -> None:
