@@ -26,11 +26,11 @@ We decided:
   `https://woowtech-odoo-test-6.woowtech.io` (host 192.168.2.6, database
   `odoo_test`), not production. Every Live-tier item that writes data
   (archive, delete, import, large upload) runs only there.
-- **The Odoo on the production host 192.168.2.189 is being retired**
-  (commit 835ab58, issue #61). Its origin
-  `https://woowtech-odooo.woowtech.io` stays in the Perimeter check until
-  it goes offline, and must be removed from the `ODOO_PUBLIC_URLS`
-  repository variable at that moment.
+- **The Odoo on the production host 192.168.2.189 was retired on
+  2026-09-16** (commit 835ab58, issues #59 and #61). Its origin
+  `https://woowtech-odooo.woowtech.io` was removed from the Cloudflare
+  tunnel routing and from DNS, and from the `ODOO_PUBLIC_URLS` repository
+  variable; the add-on is stopped with its data kept and a backup taken.
 
 ## Considered options
 
@@ -41,8 +41,9 @@ We decided:
   Ingress implementation and no Public origin fallback is a Blocker would
   mark the whole commercial module list as unusable.
 - **Use the production origin as the control group.** Rejected: the
-  destructive Live-tier items would run against real data, the host is
-  being retired, and on 2026-09-14 all Deploy work moved to the test host.
+  destructive Live-tier items would run against real data, the host was
+  already slated for retirement, and on 2026-09-14 all Deploy work moved to
+  the test host.
 - **Give the test host no Public origin and compare Ingress only.**
   Rejected: without a control group none of the parity plan's `U-xx`
   items can be judged.
@@ -50,8 +51,8 @@ We decided:
 ## Consequences
 
 - The test host carries its own Cloudflare hostname, `public_url` and
-  `default_db`. It appears in `ODOO_PUBLIC_URLS`, so the daily Perimeter
-  check verifies that its database lifecycle routes stay closed.
+  `default_db`. It is the only entry in `ODOO_PUBLIC_URLS`, so the daily
+  Perimeter check verifies that its database lifecycle routes stay closed.
 - The parity plan's P-Check is rerun before each execution rather than
   recorded in the plan; the values measured on 2026-09-16 (P-1 to P-4,
   P-6, P-8 green) live in issue #59.
