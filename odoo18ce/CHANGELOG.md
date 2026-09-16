@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Testing
+- The perimeter check no longer reports a bare Odoo login page as blank. It
+  polls for rendered body text instead of sampling once at `domcontentloaded`,
+  where a database without `website` showed only "Powered by Odoo".
+
 ## 0.4.1 — 2026-09-14
 
 First Release produced entirely by the pipeline: the weekly bump proposed
