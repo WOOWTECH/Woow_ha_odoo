@@ -4,3 +4,4 @@ __pycache__/
 
 # Human handoff notes contain LAN addresses and database names; keep them local.
 docs/plans/odoo-handoff-*.html
+.env
