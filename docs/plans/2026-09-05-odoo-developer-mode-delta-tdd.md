@@ -1,5 +1,9 @@
 # Odoo Developer-Mode Delta TDD Campaign
 
+> **流程已廢止（2026-09-16）**：本文件所屬的 campaign ledger 派工流程已停止使用，
+> `docs/ops/odoo-campaign-ledger.yaml` 與 `odoo-campaign-events.jsonl` 已自 repo 移除。
+> 文件保留作為背景資料；其中的任務狀態、鎖與 supervisor 指令不再有效。見 #55。
+
 ## Status
 
 Approved test scope. This is a required prerequisite for commercial flow E2E.
