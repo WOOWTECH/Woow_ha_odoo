@@ -4,32 +4,16 @@
 > 目標：讓 **HA Ingress**（`/api/hassio_ingress/<token>/odoo`）能做到 **Public Website**
 > （`https://<public_url>`）能做到的每一件事，並把做不到的部分明確化、分級、歸因。
 >
-> 本文件是**檢測計劃**，不是測試報告。第 11 節的 `G-xx` 是撰寫本計劃時實地勘查
-> 已驗證的落差；其餘章節是待執行的檢測項目。
+> 本文件是**檢測計劃**，不是測試報告。第 11 節的 `G-xx` 是已對照現行 main 程式
+> 確認的 add-on 層／結構層落差；其餘章節是待執行的檢測項目。
+>
+> 受測目標為 **測試機 .6**（Public origin `https://woowtech-odoo-test-6.woowtech.io`，
+> DB `odoo_test`）。主機層的即時狀態不記錄於本文件，一律於執行前重跑第 2.3 節 P-Check。
 >
 > 相關文件：`docs/ADVERSARIAL_E2E_MATRIX.md`（發版守門）、
 > `docs/testing/COMMERCIAL_PREDEPLOY.md`（商務流程雙面向）、
 > `docs/plans/2026-09-05-odoo-developer-mode-delta-tdd.md`（開發者模式差集）。
 > 三者是**流程縱向**，本文件是**能力橫向**；本文件的 `U-xx` 項目庫供三者共用。
-
----
-
-## 0. 現況摘要（2026-09-08 實地勘查）
-
-| 項目 | 實測值 | 來源 |
-|---|---|---|
-| Add-on | `1b7b4ce7_odoo18ce` v0.3.35，`state: started` | `ha addons info` |
-| Ingress 進入點 | `/api/hassio_ingress/<token>/odoo` | `ha addons info` → `ingress_url` |
-| Public 監聽器 | **`return 503;`（整段 server 封閉）** | 容器內 `/etc/nginx/nginx.conf:52-54` |
-| `public_url` 選項 | **未設定** | `10-odoo-config.sh:137-148` 預設分支 |
-| 使用中 DB | `optionh_woowtech`（107 modules / 13 apps） | `pg_database` + `ir_module_module` |
-| 該 DB `web.base.url` | **`http://127.0.0.1:8070`** | `ir_config_parameter` |
-| `web.base.url.freeze` | **不存在** | `ir_config_parameter` |
-| `website.domain` (id=1) | **空白** | `website` 資料表 |
-| 匿名 `/web/login` | 303 → `/web/database/selector`（`list_db=true` 且無 `default_db`） | add-on log |
-
-**因此：本計劃目前無法執行**——public surface 是 fail-closed 狀態，沒有對照組。
-第 2.3 節列出解除阻斷的前置條件。
 
 ---
 
@@ -80,7 +64,7 @@
 
 | | Ingress | Public |
 |---|---|---|
-| 入口 | `https://woowtech-ha.woowtech.io/api/hassio_ingress/<token>/odoo` | `https://<public_url>` |
+| 入口 | `https://<ha-host>/api/hassio_ingress/<token>/odoo` | `https://<public_url>` |
 | nginx 監聽 | `5691`（僅允許 `172.30.32.2`） | `8069`（`$http_host` 必須等於 public host，否則 `444`） |
 | 身分前置 | 需先通過 HA 登入 | 無（Odoo 自身登入） |
 | 渲染容器 | HA 前端的 **cross-origin iframe** | 瀏覽器頂層文件 |
@@ -93,12 +77,13 @@ Public 是**基準組**，Ingress 是**待測組**。所有比對方向都是「
 
 ### 2.2 受測範圍
 
-- **主機**：`woowtech`（`woowtech-ha.woowtech.io` / SSH `woowtech-ssh.woowtech.io`）
-- **DB**：`optionh_woowtech`
+- **主機**：測試機 .6（add-on slug `1b7b4ce7_odoo18ce`，Public origin
+  `https://woowtech-odoo-test-6.woowtech.io`）
+- **DB**：`odoo_test`
 - **客戶端**：桌機 Chrome（Chromium 穩定版），1920×1080，**單一基準**
   - HA 手機 App WebView、行動版視窗、Safari／非 Chromium **本輪不納入**，
     列為已知未覆蓋風險（見 10.4）
-- **已安裝 app（13）**：`account`, `calendar`, `contacts`, `crm`, `hr`, `hr_skills`,
+- **目標安裝 app（13，測試機為全新安裝，執行前先裝回）**：`account`, `calendar`, `contacts`, `crm`, `hr`, `hr_skills`,
   `mail`, `mass_mailing`, `project`, `project_todo`, `purchase`, `stock`, `website`
 - **計劃安裝 app（12）**：`sale_management`, `website_sale`, `point_of_sale`, 金流串接,
   `survey`, `im_livechat`, `event`, `mrp`, `hr_holidays`, `hr_expense`,
@@ -108,14 +93,14 @@ Public 是**基準組**，Ingress 是**待測組**。所有比對方向都是「
 
 | ID | 前置條件 | 檢查指令 | 目前狀態 |
 |---|---|---|---|
-| `P-1` | `public_url` 已設定且為 https | `ha addons options 1b7b4ce7_odoo18ce` | ❌ 未設 |
-| `P-2` | 8069 對 public host 回應非 503／444 | `curl -sI https://<public_url>/web/login` | ❌ 503 |
-| `P-3` | `web.base.url` = public 基底（https） | `psql -tAc "select value from ir_config_parameter where key='web.base.url'"` | ❌ `http://127.0.0.1:8070` |
-| `P-4` | `web.base.url.freeze` = `True` | 同上，key `web.base.url.freeze` | ❌ 不存在 |
-| `P-5` | `website.domain` = public 基底 | `select domain from website` | ❌ 空白 |
-| `P-6` | 兩 surface 可用同一組 Odoo 帳號登入 | 人工 | 待確認 |
-| `P-7` | 已建立 run marker 測試 fixture | 見 `COMMERCIAL_PREDEPLOY.md` Phase 0 | 待建立 |
-| `P-8` | 本輪允許的破壞性等級已核准 | 人工 | 待確認 |
+| `P-1` | `public_url` 已設定且為 https | `ha addons options 1b7b4ce7_odoo18ce` | 待跑 |
+| `P-2` | 8069 對 public host 回應非 503／444 | `curl -sI https://<public_url>/web/login` | 待跑 |
+| `P-3` | `web.base.url` = public 基底（https） | `psql -tAc "select value from ir_config_parameter where key='web.base.url'"` | 待跑 |
+| `P-4` | `web.base.url.freeze` = `True` | 同上，key `web.base.url.freeze` | 待跑 |
+| `P-5` | `website.domain` = public 基底 | `select domain from website` | 待跑 |
+| `P-6` | 兩 surface 可用同一組 Odoo 帳號登入 | 人工 | 待跑 |
+| `P-7` | 已建立 run marker 測試 fixture | 見 `COMMERCIAL_PREDEPLOY.md` Phase 0 | 待跑 |
+| `P-8` | 本輪允許的破壞性等級已核准 | 人工 | 待跑 |
 
 `P-3`／`P-4` 未達成前，**第 6 節 E 群組（對外產出物 URL）全部項目的結果都不可信**，
 因為 Odoo 會在 admin 登入時把 `web.base.url` 覆寫成當次請求的基底。
@@ -130,7 +115,7 @@ Public 是**基準組**，Ingress 是**待測組**。所有比對方向都是「
 |---|---|---|---|---|
 | `AD-1` | 資料庫管理 | 可用 | `/web/database/*` → **404** | 兩邊各打一次，斷言 404 |
 | `AD-2` | XML-RPC DB 服務 | 可用 | `/xmlrpc/db`、`/xmlrpc/2/db` → **404** | 同上 |
-| `AD-3` | JSON-RPC 策略 | 直通 | 經 `odoo-jsonrpc-filter`（8071）過濾 | `tests/test-jsonrpc-filter.py` |
+| `AD-3` | JSON-RPC 策略 | 直通 | 經 `odoo-jsonrpc-filter`（8071）過濾 | `odoo18ce/tests/test_jsonrpc_filter.py` |
 | `AD-4` | Host 守門 | 不適用 | 非預期 `Host` → **444** | 用錯誤 Host 打 8069 |
 | `AD-5` | `X-Frame-Options` | 移除 | 保留 | 比對回應標頭 |
 | `AD-6` | 匿名可達性 | 需 HA session | 完全匿名可達 | 無 HA cookie 打 ingress，須被擋 |
@@ -324,7 +309,7 @@ module_specific: [<無法被 L0-L5 覆蓋的殘餘>]  # 盡量為空
 outbound_urls: [<會產生對外 URL 的功能點>]     # 觸發 E 群組
 ```
 
-`route_prefixes` 非空時，**必須**同步檢查 `rootfs/etc/nginx/nginx.conf.template`
+`route_prefixes` 非空時，**必須**同步檢查 `odoo18ce/rootfs/etc/nginx/nginx.conf.template`
 的 `location ^~ /web/assets/` 區塊是否已列入該前綴（`RC-11`／`U-A4`）。
 
 > 目前 nginx 資產改寫已列的前綴僅有：
@@ -334,7 +319,7 @@ outbound_urls: [<會產生對外 URL 的功能點>]     # 觸發 E 群組
 
 ---
 
-## 9. 已安裝 13 apps 覆蓋宣告
+## 9. 目標安裝 13 apps 覆蓋宣告
 
 | 模組 | 引用原語 | 新增路由前綴 | 模組特化殘餘 | 對外 URL 功能點 |
 |---|---|---|---|---|
@@ -342,7 +327,7 @@ outbound_urls: [<會產生對外 URL 的功能點>]     # 觸發 E 群組
 | `contacts` | C1–C3,C7,C16–C20 | — | 地圖／地址連結 | 名片分享 |
 | `calendar` | C1,C3,C9,C10,C26 | `/calendar/`（已列） | 拖放改期、重複事件、行事曆訂閱 URL | 邀請信、`.ics` 訂閱連結 |
 | `crm` | C1–C3,C9,C16,C17,C20 | — | 看板拖放、預測視圖 | 商機分享、報價信 |
-| `project` / `project_todo` | C1–C3,C9,C16,C17 | `/project/`（**待確認**） | 看板拖放、子任務、**分享唯讀連結** | **`U-E3` 分享連結（`G-02` 現場）** |
+| `project` / `project_todo` | C1–C3,C9,C16,C17 | `/project/`（**待確認**） | 看板拖放、子任務、**分享唯讀連結** | **`U-E3` 分享連結（`G-01`／`G-02`）** |
 | `account` | C1–C3,C16,C17,C20 | `/account/`、`/my/invoices`（**待確認**） | 對帳、稅務、稽核軌跡 | 發票 portal 連結、付款連結、PDF 內 QR |
 | `purchase` | C1–C3,C16,C17,C20 | `/purchase/`（**待確認**） | 供應商 portal | 詢價單寄送連結 |
 | `stock` | C1–C3,C16,C17,C20 | `/stock/`（**待確認**） | 條碼輸入、批號序號、揀貨介面 | 交貨單 PDF |
@@ -401,19 +386,17 @@ outbound_urls: [<會產生對外 URL 的功能點>]     # 觸發 E 群組
 
 ---
 
-## 11. 已驗證的落差登記（撰寫本計劃時實地勘查所得）
+## 11. 已確認的落差登記
 
-> 以下 `G-xx` **不是推測**，是 2026-09-08 在 `woowtech` 主機上實際查證的結果。
+> 以下 `G-xx` 為 add-on 層或結構層的落差，經對照現行 `main` 程式確認，與特定主機的
+> 即時狀態無關。主機層設定（`web.base.url` 現值、`website.domain`、`default_db`）由第 2.3 節
+> P-Check 於執行前實測，不在此登記。
 
 | ID | 落差 | 嚴重度 | 根因 | 證據 | 建議處置 |
 |---|---|---|---|---|---|
-| `G-01` | `optionh_woowtech` 的 `web.base.url` = `http://127.0.0.1:8070`，且 **`web.base.url.freeze` 不存在** | **Blocker** | RC-9 | `ir_config_parameter` 查詢 | 設為 public 基底並加 `web.base.url.freeze=True`。未 freeze 時 Odoo 會在 admin 登入時覆寫成當次請求基底——**從 ingress 登入一次，token 就會被寫進所有分享連結與寄出的郵件** |
-| `G-02` | 分享對話框的網址欄位與旁邊的複製鈕在 ingress 不可用 | **Important／Blocker** | RC-9 + RC-3（**兩條獨立故障線**） | 使用者回報 + `G-01` 佐證 | 拆成兩題分別修：<br>(a) **欄位值錯誤**＝`G-01` 的下游，修 `web.base.url` 即改善；<br>(b) **複製鈕無反應**＝ `navigator.clipboard.writeText` 在 cross-origin iframe 需要 `allow="clipboard-write"`。先跑 `U-F1` 確認 HA 是否給了這個權限：**有**→查 Odoo 端呼叫時機；**沒有**→ nginx shim 必須注入 `execCommand('copy')` 或「點擊即全選」的退路 |
-| `G-03` | nginx 資產改寫的路由前綴白名單只有 8 個前綴，計劃安裝的 12 個 app 至少引入 15 個新前綴 | **Important**（安裝時觸發） | RC-11 | `nginx.conf.template` `location ^~ /web/assets/` | 改為「前綴清單由設定產生」或改用泛化規則；並把 `U-A4` 納入發版守門 |
-| `G-04` | public surface 目前 `return 503`（`public_url` 未設） | **前置阻斷** | — | `/etc/nginx/nginx.conf:52-54` | 決定要不要開；不開則本計劃無法執行 |
-| `G-05` | `maindb` 的 `web.base.url` 是 `http://` 而非 `https://` | Important | RC-9 | `ir_config_parameter` | 若該 DB 仍在用則一併修正 |
-| `G-06` | `website` (id=1) 的 `domain` 為空白 | Important | RC-9 | `website` 資料表 | 多網站與絕對 URL 產生會受影響，設為 public 基底 |
-| `G-07` | 無 `default_db` 且 `list_db=true`，匿名 `/web/login` 303 → `/web/database/selector` | Minor（但影響測試可重現性） | — | add-on log | 測試前設定 `default_db`，避免兩 surface 進入點語意不同 |
+| `G-01` | add-on 的 maintenance bootstrap 只在 `public_url` **且** `default_db` 皆設定時才寫入 `web.base.url` 並設 `web.base.url.freeze`；Ingress-only 安裝或未設 `default_db` 時**完全無防護**，且任何形態下都不設定 `website.domain` | **Blocker** | RC-9 | `odoo18ce/rootfs/usr/local/bin/odoo-maintenance-bootstrap`（`if public_url:` 區塊）、static tier 僅有字串存在檢查 | 未 freeze 時 Odoo 會在 admin 登入時把 `web.base.url` 覆寫成當次請求基底——**從 ingress 登入一次，token 就會被寫進所有分享連結與寄出的郵件**。修法：bootstrap 對所有 DB 逐一處理；有 `public_url` 用它，否則用 HA 的 LAN 位址，取不到則只上鎖不改值；同時設定 `website.domain`；補 static tier 測試。追蹤 #57 |
+| `G-02` | 分享對話框的複製鈕在 ingress 可能無反應：`navigator.clipboard.writeText` 在 cross-origin iframe 需要宿主授予 `allow="clipboard-write"`，HA 是否授予**未知** | **Important** | RC-3 | 結構性假設，待 `U-F1` 實測 | 先跑 `U-F1`：**有**授權→查 Odoo 端呼叫時機；**沒有**→ nginx shim 注入 `execCommand('copy')` 或「點擊即全選」的退路。網址欄位值錯誤屬 `G-01` 下游，不在此列。追蹤 #60 |
+| `G-03` | nginx 資產改寫的路由前綴白名單只有 8 個前綴，計劃安裝的 12 個 app 至少引入 15 個新前綴 | **Important**（安裝時觸發） | RC-11 | `odoo18ce/rootfs/etc/nginx/nginx.conf.template` `location ^~ /web/assets/` | 改為「前綴清單由設定產生」或改用泛化規則；並把 `U-A4` 納入發版守門。追蹤 #58 |
 
 ---
 
@@ -425,8 +408,8 @@ outbound_urls: [<會產生對外 URL 的功能點>]     # 觸發 E 群組
 {
   "schema": "odoo-parity-evidence/v1",
   "run_id": "WOOW-PARITY-<UTC timestamp>",
-  "target": "woowtech",
-  "database": "optionh_woowtech",
+  "target": "test-6",
+  "database": "odoo_test",
   "client": "desktop-chrome-1920x1080",
   "layer": "L3",
   "item": "U-C4",
@@ -466,7 +449,7 @@ outbound_urls: [<會產生對外 URL 的功能點>]     # 觸發 E 群組
 | **1** | 跑 F 群組（`U-F1` 最優先） | **產出 iframe 能力上界清單**——它決定 `U-C4`／`U-C24`／`U-C25` 是「可修」還是「結構性不可能」 |
 | **2** | 跑 A + B 群組 | 通道與會話層無 Blocker，才有意義往上測 |
 | **3** | 跑 E 群組 | `web.base.url` 策略確立並驗證（`G-01` 關閉） |
-| **4** | 跑 C 群組（後台原語） | 覆蓋已安裝 13 apps 的所有原語 |
+| **4** | 跑 C 群組（後台原語） | 覆蓋第 9 節 13 apps 的所有原語 |
 | **5** | 跑 D 群組（前台／Portal） | `website` 模組完整覆蓋 |
 | **6** | 第 9 節模組宣告逐一核對，補 L6 殘餘 | 守恆檢查通過 |
 | **7** | 彙整落差報告與修補提案 | 交付 |
@@ -479,18 +462,14 @@ outbound_urls: [<會產生對外 URL 的功能點>]     # 觸發 E 群組
 ## 附錄 A — 指令速查
 
 ```bash
-# 靜態閘門（不需部署）
-bash odoo18ce/tests/test-dual-gateway.sh
-python3 odoo18ce/tests/test-jsonrpc-filter.py
-python3 odoo18ce/tests/test-ingress-router-rewrite.py
-python3 odoo18ce/tests/test-ingress-content-type-filter.py
-python3 odoo18ce/tests/test-settings-icon-rewrite.py
+# 靜態閘門（不需部署；需安裝 nginx 與 node）
+pytest odoo18ce/tests
 
-# 現場狀態勘查（SSH 進 HAOS）
+# 主機狀態勘查（SSH 進測試機 HAOS）
 ha addons info 1b7b4ce7_odoo18ce
 docker exec app_1b7b4ce7_odoo18ce grep -n -A8 'listen 8069' /etc/nginx/nginx.conf
 docker exec -u postgres app_1b7b4ce7_odoo18ce \
-  psql -d optionh_woowtech -tAc \
+  psql -d odoo_test -tAc \
   "select key,value from ir_config_parameter where key like 'web.base%'"
 
 # 瀏覽器層（兩個基底各跑一次）
