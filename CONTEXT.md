@@ -18,6 +18,10 @@ _Avoid_: web version, tunnel origin, 網頁版 (in code and docs)
 The privilege level granted on the published origin ports to callers whose source address is inside `lan_networks`; it includes the database manager.
 _Avoid_: local access, trusted network, direct access
 
+**Canonical URL**:
+The value the maintenance bootstrap writes into `web.base.url` and the default website's `domain` on every start, and then locks with `web.base.url.freeze`. It is the Public origin when `public_url` is set, otherwise the Home Assistant host's LAN address with the published Odoo port. A stored value that carries an Ingress token is never kept as the Canonical URL.
+_Avoid_: base url, own address, web.base.url (in prose)
+
 ### Lifecycle
 
 **Release**:
