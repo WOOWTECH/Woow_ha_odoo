@@ -95,9 +95,24 @@ def test_classifies_by_how_the_literal_is_consumed(prefix, level):
     'window.location="/forum"',
     'location.assign("/forum")',
     "redirect('/forum')",
+    # a fallback, ternary or concatenation between the operator and the literal
+    'window.location.href=url||"/forum"',
+    'location.href=x?"/forum":"/odoo"',
+    'location.href=x?"/odoo":"/forum"',
+    'location.assign(base+"/forum")',
+    'redirect(next??"/forum")',
 ])
 def test_whole_page_navigations_are_fail(snippet):
     assert gate.classify(snippet, "/forum") == "FAIL"
+
+
+@pytest.mark.parametrize("snippet", [
+    'allocation="/forum"',                    # not the location object
+    'geolocation.assign("/forum")',
+    'location.href=a;rpc("/forum")',          # a statement boundary in between
+])
+def test_navigation_lookalikes_are_not_fail(snippet):
+    assert gate.classify(snippet, "/forum") != "FAIL"
 
 
 @pytest.mark.parametrize("snippet", [
@@ -112,6 +127,11 @@ def test_whole_page_navigations_are_fail(snippet):
 ])
 def test_path_comparisons_are_warn(snippet):
     assert gate.classify(snippet, "/forum") == "WARN"
+
+
+def test_a_long_literal_on_the_left_of_a_comparison_is_still_seen():
+    assert gate.classify('"/forum/some/long/path"===location.pathname', "/forum/") == "WARN"
+    assert gate.classify('["/forum/a","/forum/b"].includes(location.pathname)', "/forum/") == "WARN"
 
 
 @pytest.mark.parametrize("snippet", [
@@ -174,6 +194,15 @@ def test_adding_a_rule_to_the_template_needs_no_script_change():
         1,
     )
     assert gate.rewrite_prefixes(added) == EXPECTED_PREFIXES | {"/shop/"}
+
+
+def test_the_asset_block_is_found_however_the_template_is_indented():
+    block = gate.ingress_assets_block(TEMPLATE)
+    assert block.startswith("location ^~ /web/assets/ {")
+    assert "location / {" not in block
+    reindented = "\n".join(line[4:] if line.startswith("    ") else line for line in TEMPLATE.splitlines())
+    assert gate.rewrite_prefixes(reindented) == EXPECTED_PREFIXES
+    assert "/web/webclient/" not in gate.rewrite_rules(reindented)
 
 
 def test_exact_expression_patches_are_not_prefix_rules():

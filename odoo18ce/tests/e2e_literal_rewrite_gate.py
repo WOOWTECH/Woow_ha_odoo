@@ -128,7 +128,10 @@ def collect_bundles(base: str, login: str, password: str, artifacts: Path) -> di
             assert response.ok, f"{name}: HTTP {response.status} on re-fetch"
             text = response.text()
             bundles[name] = text
-            (bundle_dir / safe_filename(name)).write_text(text, encoding="utf-8")
+            # The saved copy is masked: against an Ingress base the bundles
+            # carry the token in every rewritten literal, and the artifact
+            # is uploaded on failure.
+            (bundle_dir / safe_filename(name)).write_text(gate.mask(text), encoding="utf-8")
         browser.close()
     return bundles
 

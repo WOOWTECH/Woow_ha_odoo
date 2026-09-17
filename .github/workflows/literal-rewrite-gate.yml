@@ -2,7 +2,7 @@
 name: Literal rewrite gate
 
 # Live-tier gate for the Ingress Literal rewrite (issue #58, ADR 0004).
-# Logs in to each public origin in ODOO_PUBLIC_URLS with the E2E account,
+# Logs in to each public origin in ODOO_PUBLIC_URLS with the test account,
 # collects every asset bundle the backend, Discuss, the website and each
 # installed app's landing page load, and fails when a bundle uses a
 # root-relative literal in a whole-page navigation whose prefix the nginx
@@ -49,7 +49,7 @@ jobs:
           fi
           for name in ODOO_TEST_LOGIN ODOO_TEST_PASSWORD; do
             if [ -z "${!name}" ]; then
-              echo "::error::repository secret ${name} is not set; the gate needs the E2E account to log in"
+              echo "::error::repository secret ${name} is not set; the gate needs the test account to log in"
               missing=1
             fi
           done

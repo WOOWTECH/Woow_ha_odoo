@@ -50,12 +50,19 @@ _LITERAL = re.compile(
 _BEFORE = 120
 _AFTER = 80
 
+# Between the navigation operator and the literal, minified Odoo often puts
+# a short expression: `location.href=url||"/odoo"`, `x?"/a":"/b"`,
+# `base+"/x"`. The tail admits one such expression up to the operator that
+# introduces the literal, and stops at a statement or call boundary.
+_EXPRESSION_TAIL = r"(?:[^;{}()]{0,60}?(?:\|\||\?\?|\?|:|\+))?\s*"
 _NAVIGATION_BEFORE = re.compile(
     r"(?:"
-    r"location\s*(?:\.\s*(?:href|pathname))?\s*=\s*"      # location.href = "/x", location = "/x"
-    r"|location\s*\.\s*(?:assign|replace)\s*\(\s*"          # location.assign("/x")
-    r"|\bredirect\s*\(\s*"                                  # redirect("/x")
-    r")$"
+    r"(?<![\w$])location\s*(?:"
+    r"(?:\.\s*(?:href|pathname))?\s*=(?!=)"                # location.href = "/x", location = "/x"
+    r"|\.\s*(?:assign|replace)\s*\("                        # location.assign("/x")
+    r")"
+    r"|(?<![\w$])redirect\s*\("                             # redirect("/x")
+    r")" + _EXPRESSION_TAIL + r"$"
 )
 # A path comparison is a WARN only when the other side of the comparison is
 # the location: the receiver of `.startsWith(`, the other operand of `===`,
@@ -66,9 +73,11 @@ _METHOD_BEFORE = re.compile(
     r"(?P<partner>" + _OPERAND + r")\.\s*(?:startsWith|includes|indexOf|endsWith)\s*\(\s*$"
 )
 _EQUALITY_BEFORE = re.compile(r"(?P<partner>" + _OPERAND + r")\s*[!=]==?\s*$")
-# The after-context starts at the literal's closing quote.
-_EQUALITY_AFTER = re.compile(r"""^["'`]?\s*[!=]==?\s*(?P<partner>""" + _OPERAND + r")")
-_ARRAY_INCLUDES_AFTER = re.compile(r"""^["'`]?[^\]]*\]\s*\.\s*includes\s*\(\s*(?P<partner>[^)]*)""")
+# The after-context starts just past the literal's closing quote.
+_EQUALITY_AFTER = re.compile(r"^\s*[!=]==?\s*(?P<partner>" + _OPERAND + r")")
+_ARRAY_INCLUDES_AFTER = re.compile(r"^[^\]]*\]\s*\.\s*includes\s*\(\s*(?P<partner>[^)]*)")
+# How far a literal may run before we give up looking for its closing quote.
+_MAX_LITERAL = 400
 _LOCATION_PARTNER = re.compile(r"pathname|location|href")
 
 _INGRESS_TOKEN = re.compile(r"(?P<prefix>/?api/hassio_ingress/)[^/\s?#<>\"']+")
@@ -84,6 +93,11 @@ class Finding:
     quote: str          # '"', "'", "`" or "" (unquoted CSS url)
     context: str        # "string" or "css_url"
     snippet: str
+
+    @property
+    def key(self) -> tuple[str, str]:
+        """What an exception entry matches: the prefix at this level."""
+        return (self.prefix, self.level)
 
 
 def mask(text: str) -> str:
@@ -122,12 +136,16 @@ def scan_bundle(text: str) -> list[Finding]:
         prefix = "/" + match.group("segment") + ("/" if after == "/" else "")
         css = match.group("css_quote") is not None
         quote = match.group("css_quote") if css else match.group("quote")
-        # The level is decided from the literal's opening quote, so the
-        # `url(` of a CSS literal counts as its own context, not as a call.
+        # The level is decided from the literal's opening quote to its closing
+        # one, so the `url(` of a CSS literal counts as its own context, not
+        # as a call, and a comparison after a long literal is still seen.
         literal_start = match.start("segment") - 1 - len(quote)
+        closer = quote or ")"
+        close_at = text.find(closer, match.end(), match.end() + _MAX_LITERAL)
+        literal_end = close_at + 1 if close_at != -1 else match.end()
         findings.append(Finding(
             prefix=prefix,
-            level=_level(text, literal_start, match.end()),
+            level=_level(text, literal_start, literal_end),
             quote=quote,
             context="css_url" if css else "string",
             snippet=_snippet(text, match.start(), match.end()),
@@ -152,7 +170,6 @@ def classify(text: str, prefix: str) -> str:
 
 _INGRESS_SERVER_MARKER = "# HA Supervisor Ingress adapter."
 _ASSETS_LOCATION_MARKER = "location ^~ /web/assets/ {"
-_NEXT_LOCATION_MARKER = "\n        location "
 _SUB_FILTER = re.compile(r"""sub_filter\s+(?:'([^']*)'|"([^"]*)")\s+(?:'[^']*'|"[^"]*")\s*;""")
 _PREFIX_RULE = re.compile(r"""^(?P<quote>["'`])(?P<prefix>/[A-Za-z0-9_.-]+/?)$""")
 _CSS_URL_RULE = re.compile(r"""^url\((?P<quote>["']?)/$""")
@@ -162,7 +179,12 @@ def ingress_assets_block(template: str) -> str:
     """The text of the Ingress server's `location ^~ /web/assets/` block."""
     server = template.index(_INGRESS_SERVER_MARKER)
     start = template.index(_ASSETS_LOCATION_MARKER, server)
-    end = template.index(_NEXT_LOCATION_MARKER, start + len(_ASSETS_LOCATION_MARKER))
+    # The block ends at the closing brace written at the same indentation as
+    # its `location` line. Braces inside sub_filter strings never start a
+    # line, so this holds however the template is re-indented.
+    line_start = template.rfind("\n", 0, start) + 1
+    indent = template[line_start:start]
+    end = template.index("\n" + indent + "}", start + len(_ASSETS_LOCATION_MARKER))
     return template[start:end]
 
 
@@ -277,10 +299,9 @@ def evaluate(
             if is_covered(finding, rules):
                 continue
             bundle.findings.append(finding)
-            key = (finding.prefix, finding.level)
-            if key in exceptions:
-                if key not in seen_hits:
-                    seen_hits.add(key)
+            if finding.key in exceptions:
+                if finding.key not in seen_hits:
+                    seen_hits.add(finding.key)
                     bundle.exception_hits.append(finding)
             elif finding.level == "FAIL":
                 bundle.unregistered_failures.append(finding)
@@ -296,12 +317,14 @@ def format_report(report: GateReport, header: Iterable[str] = ()) -> str:
     lines.append(f"exceptions: {len(report.exceptions)} registered")
     lines.append(f"bundles: {len(report.bundles)}")
 
+    # The summary counts (bundle, prefix) pairs at each level, exceptions
+    # excluded, the same unit as the rows printed per bundle.
     total_fail = total_warn = 0
     info_prefixes: set[str] = set()
     for bundle in report.bundles.values():
         lines.append("")
         lines.append(f"== {bundle.name} ({bundle.size} bytes)")
-        excepted = {(f.prefix, f.level) for f in bundle.exception_hits}
+        excepted = {f.key for f in bundle.exception_hits}
         for level in ("FAIL", "WARN"):
             counts = bundle.counts(level)
             shown: set[str] = set()
@@ -309,12 +332,13 @@ def format_report(report: GateReport, header: Iterable[str] = ()) -> str:
                 if finding.level != level or finding.prefix in shown:
                     continue
                 shown.add(finding.prefix)
-                tag = "exception" if (finding.prefix, level) in excepted else level
+                tag = "exception" if finding.key in excepted else level
                 lines.append(f"  {tag:<9} {finding.prefix:<20} x{counts[finding.prefix]:<4} {finding.snippet}")
+            unexcused = sum(1 for p in counts if (p, level) not in excepted)
             if level == "FAIL":
-                total_fail += len(bundle.unregistered_failures)
+                total_fail += unexcused
             else:
-                total_warn += sum(1 for p in counts if (p, level) not in excepted)
+                total_warn += unexcused
         info = bundle.counts("INFO")
         if info:
             info_prefixes.update(info)
