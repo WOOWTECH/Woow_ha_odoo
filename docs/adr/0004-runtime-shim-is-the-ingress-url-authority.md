@@ -53,3 +53,12 @@ consumed, and fails only on unlisted prefixes in navigation contexts.
   reason. Exceptions live in a checked-in file reviewed like code.
 - Path-comparison hits are reported as warnings, never as failures, because
   rewriting a comparison can be wrong (the router compares the stripped path).
+
+## Postscript (2026-09-17)
+
+The gate's first full-application run found `/shop/`, `/payment/` and
+`/contactus` (PR #72). ADR 0005 keeps every rule above (shim authority,
+navigation-only rewrites, warnings never fail, exceptions reviewed like
+code) and changes only who adds a rule: the add-on's Rewrite scan now
+derives Generated rewrites at run time instead of a person editing the
+template after a nightly gate failure.
