@@ -2,7 +2,22 @@
 
 ## Unreleased
 
+### Fixed
+- Ingress: Odoo's copy buttons (share links, Discuss invitations, copy-to-
+  clipboard widgets) work again when Home Assistant is opened over plain
+  http on the LAN. That page is not a secure context, so the browser hides
+  `navigator.clipboard` inside the ingress iframe and every copy button
+  failed silently or with "Oops! Something went wrong". The ingress runtime
+  shim now supplies a `writeText` backed by `document.execCommand("copy")`
+  whenever `navigator.clipboard` is absent; HA over https and the Public
+  origin are untouched. Issue #60.
+
 ### Testing
+- New static-tier contract test `test_ingress_clipboard_fallback.py`
+  executes the whole ingress runtime shim in a node `vm` context against a
+  DOM stand-in and pins the clipboard fallback: absent clipboard resolves
+  through one `execCommand("copy")` and removes its textarea, a present
+  clipboard keeps the same reference, and a refused copy rejects.
 - New Live-tier Literal rewrite gate, `tests/e2e_literal_rewrite_gate.py`
   (issue #58, ADR 0004). It logs in to the control group's Public origin,
   collects every asset bundle the backend, Discuss, the website and each

@@ -8,13 +8,24 @@ the Ingress iframe and every Odoo copy button throws ``TypeError`` on
 ``document.execCommand("copy")`` in that case, and must leave a real
 ``navigator.clipboard`` alone.
 
-The whole shim is executed in a node ``vm`` context against a minimal DOM
-stand-in, so the contract covers the shim as shipped rather than an excerpt.
+The clipboard shim lives in its own nginx map, ``$ingress_clipboard_shim``,
+spliced into ``$ingress_runtime_shim`` by variable reference, because nginx
+reads each quoted parameter into a 4096-byte buffer and the URL shim alone is
+close to that limit. Both scripts are executed here, in injection order, in a
+node ``vm`` context against a minimal DOM stand-in, so the contract covers the
+shim as shipped rather than an excerpt.
 """
 import json
+import re
 import subprocess
 
 from test_ingress_router_rewrite import TEMPLATE, runtime_shim
+
+CLIPBOARD_MAP = "map $upstream_http_content_type $ingress_clipboard_shim {"
+RUNTIME_MAP = "map $upstream_http_content_type $ingress_runtime_shim {"
+# ngx_conf_read_token() reports "too long parameter" once a single parameter
+# fills NGX_CONF_BUFFER, so a quoted value must stay strictly below it.
+NGX_CONF_BUFFER = 4096
 
 HARNESS = r"""
 const assert = require("node:assert/strict");
@@ -127,7 +138,7 @@ function makeContext(options) {
     await assert.rejects(context.navigator.clipboard.writeText("x"));
     assert.deepEqual(bodyChildren, []);
   }
-  // The rest of the shim still ran after the clipboard block.
+  // The URL shim still ran after the clipboard script.
   {
     const { context } = makeContext({ execCommand: () => true });
     assert.equal(context.window.__INGRESS_PATH__, P);
@@ -138,17 +149,63 @@ function makeContext(options) {
 """
 
 
-def shim_javascript() -> str:
-    template = TEMPLATE.read_text(encoding="utf-8")
-    shim = runtime_shim(template)
-    return shim.replace("$safe_ingress_path", "/api/hassio_ingress/token").replace(
-        "%%INGRESS_CACHE_VERSION%%", "V"
+def map_block(template: str, header: str) -> str:
+    start = template.index(header)
+    return template[start:template.index("\n    }", start)]
+
+
+def clipboard_shim(template: str) -> str:
+    """Return the clipboard script declared in its own map, injected for every value."""
+    block = map_block(template, CLIPBOARD_MAP)
+    match = re.search(r"default '<script>(.*?)</script>';", block, re.S)
+    assert match, "clipboard shim not found in its map"
+    assert "$" not in match.group(1), "clipboard shim must not reference nginx variables"
+    return match.group(1)
+
+
+def assert_injection_order(template: str) -> None:
+    """The clipboard script is spliced in front of the URL shim, under its text/html gate."""
+    block = map_block(template, RUNTIME_MAP)
+    assert "'$ingress_clipboard_shim<script>" in block, (
+        "the runtime shim map must splice $ingress_clipboard_shim in by variable reference"
+    )
+    assert template.count("$ingress_clipboard_shim") == 2, (
+        "the clipboard shim must be injected only through $ingress_runtime_shim"
     )
 
 
+def shipped_shim(template: str) -> str:
+    return "\n".join(
+        script.replace("$safe_ingress_path", "/api/hassio_ingress/token").replace(
+            "%%INGRESS_CACHE_VERSION%%", "V"
+        )
+        for script in (clipboard_shim(template), runtime_shim(template))
+    )
+
+
+def assert_quoted_parameters_fit(template: str) -> None:
+    """Every single-quoted nginx parameter must fit the config token buffer.
+
+    The rendered file is never longer than the template: each %%PLACEHOLDER%%
+    becomes a shorter add-on value, and $variables stay as written.
+    """
+    for number, line in enumerate(template.splitlines(), start=1):
+        for value in re.findall(r"'([^']*)'", line):
+            size = len(value.encode("utf-8"))
+            assert size < NGX_CONF_BUFFER, (
+                f"nginx.conf.template:{number}: quoted parameter is {size} bytes; "
+                f"nginx rejects a parameter of {NGX_CONF_BUFFER} bytes or more "
+                "('too long parameter'). Move the addition into its own map and "
+                "splice it in by variable reference, as $ingress_clipboard_shim is."
+            )
+
+
 def main(node: str = "node") -> None:
+    template = TEMPLATE.read_text(encoding="utf-8")
+    assert_injection_order(template)
+    assert_quoted_parameters_fit(template)
     result = subprocess.run(
-        [node, "-e", HARNESS, json.dumps(shim_javascript())],
+        [node, "-e", HARNESS, json.dumps(shipped_shim(template))],
         text=True,
         capture_output=True,
         check=False,
@@ -158,6 +215,10 @@ def main(node: str = "node") -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def test_ingress_shim_quoted_parameters_fit_nginx_token_buffer() -> None:
+    assert_quoted_parameters_fit(TEMPLATE.read_text(encoding="utf-8"))
 
 
 def test_ingress_clipboard_fallback_contracts() -> None:
