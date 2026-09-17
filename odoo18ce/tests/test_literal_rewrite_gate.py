@@ -39,6 +39,8 @@ CSS = (
 RULES = gate.rewrite_rules(TEMPLATE)
 EXPECTED_PREFIXES = {
     "/web/", "/website/", "/mail/", "/calendar/", "/base_setup/", "/my/", "/report/", "/odoo",
+    # added after the gate's first full-application run (issue #58)
+    "/shop/", "/payment/", "/contactus",
 }
 
 
@@ -162,8 +164,13 @@ def test_css_url_findings_are_marked_as_css():
 
 # --- nginx rules ----------------------------------------------------------
 
-def test_parses_the_eight_current_prefixes_from_the_template():
+def test_parses_the_current_prefixes_from_the_template():
     assert gate.rewrite_prefixes(TEMPLATE) == EXPECTED_PREFIXES
+
+
+def test_the_batch_findings_are_rewritten_in_every_quote_variant():
+    for prefix in ("/shop/", "/payment/", "/contactus"):
+        assert RULES[prefix] == frozenset({'"', "'", "`"}), prefix
 
 
 def test_rules_record_the_quote_variants_each_prefix_is_rewritten_in():
@@ -177,23 +184,23 @@ def test_rules_come_only_from_the_ingress_asset_location():
     # The Ingress HTML location has `'`/web/webclient/'` and the public
     # listener has no sub_filter at all; neither may leak into the rule set.
     assert "/web/webclient/" not in RULES
-    public_rule = "sub_filter '\"/shop/' '\"$safe_ingress_path/shop/';"
+    public_rule = "sub_filter '\"/forum/' '\"$safe_ingress_path/forum/';"
     polluted = TEMPLATE.replace(
         "listen 8069 default_server;",
         "listen 8069 default_server;\n        " + public_rule,
         1,
     )
-    assert "/shop/" not in gate.rewrite_prefixes(polluted)
+    assert "/forum/" not in gate.rewrite_prefixes(polluted)
 
 
 def test_adding_a_rule_to_the_template_needs_no_script_change():
     added = TEMPLATE.replace(
         "sub_filter '\"/report/' '\"$safe_ingress_path/report/';",
         "sub_filter '\"/report/' '\"$safe_ingress_path/report/';\n"
-        "            sub_filter '\"/shop/' '\"$safe_ingress_path/shop/';",
+        "            sub_filter '\"/forum/' '\"$safe_ingress_path/forum/';",
         1,
     )
-    assert gate.rewrite_prefixes(added) == EXPECTED_PREFIXES | {"/shop/"}
+    assert gate.rewrite_prefixes(added) == EXPECTED_PREFIXES | {"/forum/"}
 
 
 def test_the_asset_block_is_found_however_the_template_is_indented():

@@ -249,6 +249,20 @@ http {
             sub_filter "'/my/" "'$safe_ingress_path/my/";
             sub_filter '`/my/' '`$safe_ingress_path/my/';
             sub_filter '"/report/' '"$safe_ingress_path/report/';
+            # Prefixes the Literal rewrite gate found in whole-page
+            # navigations once the parity plan's 25 apps were installed
+            # (issue #58): website_sale's redirect('/shop/cart'), the
+            # payment flow's window.location='/payment/status', and a
+            # website tour's window.location.href='/contactus'.
+            sub_filter '"/shop/' '"$safe_ingress_path/shop/';
+            sub_filter "'/shop/" "'$safe_ingress_path/shop/";
+            sub_filter '`/shop/' '`$safe_ingress_path/shop/';
+            sub_filter '"/payment/' '"$safe_ingress_path/payment/';
+            sub_filter "'/payment/" "'$safe_ingress_path/payment/";
+            sub_filter '`/payment/' '`$safe_ingress_path/payment/';
+            sub_filter '"/contactus' '"$safe_ingress_path/contactus';
+            sub_filter "'/contactus" "'$safe_ingress_path/contactus";
+            sub_filter '`/contactus' '`$safe_ingress_path/contactus';
             # SettingsViewCompiler synthesizes each module fallback icon in the
             # web asset bundle. Prefix only that exact expression; a generic
             # module/static rewrite would affect unrelated application code.
