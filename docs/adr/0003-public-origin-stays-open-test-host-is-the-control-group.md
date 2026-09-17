@@ -64,3 +64,11 @@ We decided:
 - A bare Odoo login page shows only "Powered by Odoo" until its stylesheet
   loads; the Perimeter check therefore polls for rendered text instead of
   sampling once (PR #63).
+
+## Postscript (2026-09-17)
+
+The test host stops once Ingress is confirmed on the parity plan's 25
+applications. ADR 0005 moves the checks it served into the add-on: the
+Perimeter check's schedule is removed in favour of a start-time self-check,
+and the Literal rewrite gate becomes the in-container Rewrite scan. The
+Public origin decision above is unchanged.
