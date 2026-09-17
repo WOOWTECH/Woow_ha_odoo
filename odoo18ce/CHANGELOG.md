@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed
+- Three Prefix escapes under Ingress found by the Literal rewrite gate
+  once the parity plan's 25 applications were installed on the control
+  group: eCommerce's `redirect('/shop/cart')`, the payment flow's
+  `window.location='/payment/status'` and a website tour's
+  `window.location.href='/contactus'`. `/shop/`, `/payment/` and
+  `/contactus` are now rewritten in the Ingress asset location in the
+  three quote variants. Issue #58.
+
 ### Testing
 - New Live-tier Literal rewrite gate, `tests/e2e_literal_rewrite_gate.py`
   (issue #58, ADR 0004). It logs in to the control group's Public origin,
