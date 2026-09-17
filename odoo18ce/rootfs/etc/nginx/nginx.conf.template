@@ -39,23 +39,26 @@ http {
     # content-type-aware replacement: embedded preview HTML in JSON must remain
     # JSON rather than receiving raw script bytes.
     #
-    # nginx reads a single quoted parameter into a 4096-byte buffer and
-    # refuses the file ("too long parameter") when one exceeds it. The URL
-    # shim below is close to that limit, so any further shim lives in its own
-    # map and is spliced in by variable reference, as the clipboard shim is.
     #
-    # Clipboard fallback (issue #60). Home Assistant opened over plain http on
+    # The Runtime shim is two scripts. nginx reads a single quoted parameter
+    # into a 4096-byte buffer and refuses the file ("too long parameter") when
+    # one exceeds it; the prefix script below is close to that limit, so every
+    # other part of the Runtime shim lives in its own map and is spliced into
+    # `$ingress_runtime_shim` by variable reference, as the clipboard script
+    # is. That keeps the text/html gate and the Ingress-only sub_filter as the
+    # single injection point.
+    #
+    # Clipboard script (issue #60). Home Assistant opened over plain http on
     # the LAN is a supported usage, and that page is not a secure context, so
-    # `navigator.clipboard` does not exist inside the ingress iframe and every
+    # `navigator.clipboard` does not exist inside the Ingress iframe and every
     # Odoo copy button throws on `writeText`. When it is absent this defines
     # `writeText` over a temporary textarea and `document.execCommand("copy")`,
     # which still works without a secure context as long as it runs inside the
-    # user's click. A real `navigator.clipboard` (HA over https) is never
-    # touched, and `write()` stays absent so Odoo keeps its own error path for
-    # Blob payloads. Injected only through `$ingress_runtime_shim`, so it
-    # shares that map's text/html gate and the ingress-only sub_filter.
+    # user's click, then hands focus back to the element that had it. A real
+    # `navigator.clipboard` (HA over https) is never touched, and `write()`
+    # stays absent so Odoo keeps its own error path for Blob payloads.
     map $upstream_http_content_type $ingress_clipboard_shim {
-        default '<script>(function(){try{if(!navigator.clipboard){var CB={writeText:function(t){return new Promise(function(ok,no){var d=document,ta=d.createElement("textarea"),done=false;ta.value=String(t);ta.setAttribute("readonly","");ta.setAttribute("aria-hidden","true");ta.style.position="fixed";ta.style.top="0";ta.style.left="0";ta.style.width="1px";ta.style.height="1px";ta.style.opacity="0";(d.body||d.documentElement).appendChild(ta);try{ta.select();if(ta.setSelectionRange)ta.setSelectionRange(0,ta.value.length);done=d.execCommand("copy")===true}catch(e){done=false}if(ta.parentNode)ta.parentNode.removeChild(ta);if(done)ok();else no(new Error("clipboard write failed"))})}};try{Object.defineProperty(navigator,"clipboard",{value:CB,configurable:true,writable:true})}catch(e){navigator.clipboard=CB}}}catch(e){}})()</script>';
+        default '<script>(function(){try{if(!navigator.clipboard){var CB={writeText:function(t){return new Promise(function(ok,no){var d=document,f=d.activeElement,ta=d.createElement("textarea"),done=false;ta.value=String(t);ta.setAttribute("readonly","");ta.setAttribute("aria-hidden","true");ta.style.position="fixed";ta.style.top="0";ta.style.left="0";ta.style.width="1px";ta.style.height="1px";ta.style.opacity="0";(d.body||d.documentElement).appendChild(ta);try{ta.select();if(ta.setSelectionRange)ta.setSelectionRange(0,ta.value.length);done=d.execCommand("copy")===true}catch(e){done=false}if(ta.parentNode)ta.parentNode.removeChild(ta);if(f&&f.focus)f.focus();if(done)ok();else no(new Error("clipboard write failed"))})}};try{Object.defineProperty(navigator,"clipboard",{value:CB,configurable:true,writable:true})}catch(e){navigator.clipboard=CB}}}catch(e){}})()</script>';
     }
 
     map $upstream_http_content_type $ingress_runtime_shim {

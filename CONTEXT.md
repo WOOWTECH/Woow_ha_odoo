@@ -25,7 +25,7 @@ _Avoid_: base url, own address, web.base.url (in prose)
 ### Ingress mechanics
 
 **Runtime shim**:
-The script nginx injects at the top of every Ingress HTML page; it adds the Ingress prefix in the browser at the moment a request, navigation, attribute or worker is created.
+The script nginx injects at the top of every Ingress HTML page; it adds the Ingress prefix in the browser at the moment a request, navigation, attribute or worker is created, and supplies a `navigator.clipboard` fallback when Home Assistant is opened over plain http, where the page is not a secure context.
 _Avoid_: ingress shim, head script, 注入腳本
 
 **Literal rewrite**:
