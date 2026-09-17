@@ -309,13 +309,17 @@ module_specific: [<無法被 L0-L5 覆蓋的殘餘>]  # 盡量為空
 outbound_urls: [<會產生對外 URL 的功能點>]     # 觸發 E 群組
 ```
 
-`route_prefixes` 非空時，**必須**同步檢查 `odoo18ce/rootfs/etc/nginx/nginx.conf.template`
-的 `location ^~ /web/assets/` 區塊是否已列入該前綴（`RC-11`／`U-A4`）。
+`route_prefixes` 非空時，**不要**逐一把前綴補進 `odoo18ce/rootfs/etc/nginx/nginx.conf.template`
+的 `location ^~ /web/assets/` 區塊。依 ADR 0004（`docs/adr/0004-runtime-shim-is-the-ingress-url-authority.md`），
+Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔不到的整頁跳轉與路徑判斷；
+一個前綴要不要進 Literal rewrite，由 bundle 的**用法**決定，不由 bundle 是否含有它決定。
 
-> 目前 nginx 資產改寫已列的前綴僅有：
-> `/web/`、`/website/`、`/mail/`、`/calendar/`、`/base_setup/`、`/my/`、`/report/`、`/odoo`。
-> HTML 層另以屬性樣式（`href="/`、`src="/`、`action="/`、`data-src="/`、`srcset="/`、`url(/`）
-> 泛化覆蓋，**但 JS/CSS bundle 內的字面量只吃上列固定前綴**。
+> 判定工具是 `U-A4` 的守門腳本 `odoo18ce/tests/e2e_literal_rewrite_gate.py`：登入 control group
+> 收集所有已載入 bundle，抽出根相對字面量，依消費方式分為 `FAIL`（整頁跳轉）、`WARN`（路徑判斷）、
+> `INFO`（shim 已攔截），再與 nginx 模板現行 `sub_filter` 規則求差集。清單外前綴的 `FAIL` 即擋門，
+> 除非 `odoo18ce/tests/literal_rewrite_exceptions.yaml` 登記了附理由的例外。
+> 裝完 app 後跑一次守門；`FAIL` 就在模板補該前綴的三種引號規則，或登記例外。
+> 每晚由 `.github/workflows/literal-rewrite-gate.yml` 自動執行。
 
 ---
 
@@ -396,7 +400,7 @@ outbound_urls: [<會產生對外 URL 的功能點>]     # 觸發 E 群組
 |---|---|---|---|---|---|
 | `G-01` | add-on 的 maintenance bootstrap 只在 `public_url` **且** `default_db` 皆設定時才寫入 `web.base.url` 並設 `web.base.url.freeze`；Ingress-only 安裝或未設 `default_db` 時**完全無防護**，且任何形態下都不設定 `website.domain` | **Blocker** | RC-9 | `odoo18ce/rootfs/usr/local/bin/odoo-maintenance-bootstrap`（`if public_url:` 區塊）、static tier 僅有字串存在檢查 | 未 freeze 時 Odoo 會在 admin 登入時把 `web.base.url` 覆寫成當次請求基底——**從 ingress 登入一次，token 就會被寫進所有分享連結與寄出的郵件**。修法：bootstrap 對所有 DB 逐一處理；有 `public_url` 用它，否則用 HA 的 LAN 位址，取不到則只上鎖不改值；同時設定 `website.domain`；補 static tier 測試。追蹤 #57 |
 | `G-02` | 分享對話框的複製鈕在 ingress 可能無反應：`navigator.clipboard.writeText` 在 cross-origin iframe 需要宿主授予 `allow="clipboard-write"`，HA 是否授予**未知** | **Important** | RC-3 | 結構性假設，待 `U-F1` 實測 | 先跑 `U-F1`：**有**授權→查 Odoo 端呼叫時機；**沒有**→ nginx shim 注入 `execCommand('copy')` 或「點擊即全選」的退路。網址欄位值錯誤屬 `G-01` 下游，不在此列。追蹤 #60 |
-| `G-03` | nginx 資產改寫的路由前綴白名單只有 8 個前綴，計劃安裝的 12 個 app 至少引入 15 個新前綴 | **Important**（安裝時觸發） | RC-11 | `odoo18ce/rootfs/etc/nginx/nginx.conf.template` `location ^~ /web/assets/` | 改為「前綴清單由設定產生」或改用泛化規則；並把 `U-A4` 納入發版守門。追蹤 #58 |
+| `G-03` | nginx Literal rewrite 的前綴清單只有 8 個前綴，計劃安裝的 12 個 app 至少引入 15 個新前綴 | **Important**（安裝時觸發） | RC-11 | `odoo18ce/rootfs/etc/nginx/nginx.conf.template` `location ^~ /web/assets/` | **處置中（#58）**：ADR 0004 決定不擴清單也不泛化（0.3.10、0.3.34 兩次翻車）；`U-A4` 已實作為 `odoo18ce/tests/e2e_literal_rewrite_gate.py` 並納入發版守門與每晚 workflow。首次對 .6 test（4 apps）執行：0 個未登記 `FAIL`，`/scoped_app` 以例外命中，清單外前綴全部為 `WARN`／`INFO`。第 9／10 節 app 分批安裝後各跑一次守門；`FAIL` 才補規則。機制改造另開 issue |
 
 ---
 
