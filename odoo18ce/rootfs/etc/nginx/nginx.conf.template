@@ -39,7 +39,6 @@ http {
     # content-type-aware replacement: embedded preview HTML in JSON must remain
     # JSON rather than receiving raw script bytes.
     #
-    #
     # The Runtime shim is two scripts. nginx reads a single quoted parameter
     # into a 4096-byte buffer and refuses the file ("too long parameter") when
     # one exceeds it; the prefix script below is close to that limit, so every
