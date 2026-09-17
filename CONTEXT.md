@@ -36,6 +36,18 @@ _Avoid_: sub_filter whitelist, 資產改寫, route substitution, 白名單
 A request or navigation made through Ingress that lands on the Home Assistant root instead of under the Ingress prefix.
 _Avoid_: 逃逸到 HA 根, root escape, RC-1 (alone)
 
+**Shipped rewrite**:
+A Literal rewrite rule written by hand in the nginx template and delivered with a Release.
+_Avoid_: hardcoded rule, template rule, 手寫清單
+
+**Generated rewrite**:
+A Literal rewrite rule the add-on derives while running, from the asset bundles a database actually serves, and applies without a Release.
+_Avoid_: auto rule, dynamic rule, 自動修正 (as a noun)
+
+**Rewrite scan**:
+The add-on's own analysis of the served asset bundles that classifies every root-relative literal by how it is consumed and yields the Generated rewrites. The Literal rewrite gate is the same analysis run from outside against a Public origin.
+_Avoid_: 守門 (for the in-container run), auto-fix, self-check
+
 ### Lifecycle
 
 **Release**:

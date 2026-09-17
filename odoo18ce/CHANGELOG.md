@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Fixed
+- Three Prefix escapes under Ingress found by the Literal rewrite gate
+  once the parity plan's 25 applications were installed on the control
+  group: eCommerce's `redirect('/shop/cart')`, the payment flow's
+  `window.location='/payment/status'` and a website tour's
+  `window.location.href='/contactus'`. `/shop/`, `/payment/` and
+  `/contactus` are now rewritten in the Ingress asset location in the
+  three quote variants. Issue #58.
 - Ingress: Odoo's copy buttons (share links, Discuss invitations, copy-to-
   clipboard widgets) work again when Home Assistant is opened over plain
   http on the LAN. That page is not a secure context, so the browser hides
