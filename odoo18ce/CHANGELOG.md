@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Testing
+- New Live-tier Literal rewrite gate, `tests/e2e_literal_rewrite_gate.py`
+  (issue #58, ADR 0004). It logs in to the control group's Public origin,
+  collects every asset bundle the backend, Discuss, the website and each
+  installed app's landing page load, extracts every root-relative string
+  literal, classifies each by how the bundle consumes it (`FAIL` whole-page
+  navigation, `WARN` path comparison, `INFO` anything the Runtime shim
+  intercepts) and compares the prefixes against the `sub_filter` rules in
+  the Ingress asset location of `nginx.conf.template`, parsed from the
+  template itself. An unlisted prefix in a whole-page navigation fails the
+  run unless `tests/literal_rewrite_exceptions.yaml` records it with a
+  reason. Ingress tokens are masked in the output.
+- The pure stages (extraction, classification, nginx rule parsing,
+  exception matching, evaluation) live in `tests/literal_rewrite_gate.py`
+  and are pinned by `test_literal_rewrite_gate.py` in the static tier.
+- New workflow `literal-rewrite-gate.yml` runs the gate nightly and on
+  demand against every origin in `ODOO_PUBLIC_URLS` with the
+  `ODOO_TEST_LOGIN` / `ODOO_TEST_PASSWORD` secrets, failing early with the
+  name of any missing secret. The perimeter check is unchanged.
+
 ## 0.4.2 — 2026-09-16
 
 ### Security

@@ -23,8 +23,11 @@ Every release must test both entrances: Cloudflare root and an HTTPS Supervisor-
 
 Release gate: zero blockers, zero important findings on the supported HTTPS HA and Cloudflare paths. Minor findings must be documented.
 
+The Literal rewrite gate (`U-A4` in `docs/testing/INGRESS_VS_PUBLIC_PARITY.md`, ADR 0004) is part of the gate: `odoo18ce/tests/e2e_literal_rewrite_gate.py` run against the control group must report zero unregistered `FAIL` (an unlisted prefix in a whole-page navigation). `WARN` and `INFO` findings are listed, not blocking. It runs nightly from `.github/workflows/literal-rewrite-gate.yml` and must be re-run after every app install on the control group.
+
 ## Commands
 
 - Static tier (manifest, gateway, JSON-RPC policy, ingress rewrites): `pytest odoo18ce/tests` with nginx and node installed
 - Browser: `ODOO_BASE_URL=... ODOO_TEST_LOGIN=... ODOO_TEST_PASSWORD=... python3 odoo18ce/tests/e2e_adversarial.py`
+- Literal rewrite gate: `ODOO_BASE_URL=... ODOO_TEST_LOGIN=... ODOO_TEST_PASSWORD=... python3 odoo18ce/tests/e2e_literal_rewrite_gate.py` (Public origin only; `--from-dir <artifacts>/bundles` re-evaluates a saved collection without a browser)
 - Run the browser command once with the Cloudflare base and once with the tokenized ingress base/harness.
