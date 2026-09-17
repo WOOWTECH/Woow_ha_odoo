@@ -3,6 +3,65 @@
 ## Unreleased
 
 ### Testing
+- New Live-tier Literal rewrite gate, `tests/e2e_literal_rewrite_gate.py`
+  (issue #58, ADR 0004). It logs in to the control group's Public origin,
+  collects every asset bundle the backend, Discuss, the website and each
+  installed app's landing page load, extracts every root-relative string
+  literal, classifies each by how the bundle consumes it (`FAIL` whole-page
+  navigation, `WARN` path comparison, `INFO` anything the Runtime shim
+  intercepts) and compares the prefixes against the `sub_filter` rules in
+  the Ingress asset location of `nginx.conf.template`, parsed from the
+  template itself. An unlisted prefix in a whole-page navigation fails the
+  run unless `tests/literal_rewrite_exceptions.yaml` records it with a
+  reason. Ingress tokens are masked in the output.
+- The pure stages (extraction, classification, nginx rule parsing,
+  exception matching, evaluation) live in `tests/literal_rewrite_gate.py`
+  and are pinned by `test_literal_rewrite_gate.py` in the static tier.
+- New workflow `literal-rewrite-gate.yml` runs the gate nightly and on
+  demand against every origin in `ODOO_PUBLIC_URLS` with the
+  `ODOO_TEST_LOGIN` / `ODOO_TEST_PASSWORD` secrets, failing early with the
+  name of any missing secret. The perimeter check is unchanged.
+
+## 0.4.2 — 2026-09-16
+
+### Security
+- The maintenance bootstrap now writes and freezes `web.base.url` on every
+  Odoo database on every start, in every install shape. Before, it only did
+  so when both `public_url` and `default_db` were set; an Ingress-only
+  install was unprotected, and one admin login through Ingress wrote the
+  Supervisor path `/api/hassio_ingress/<token>` into `web.base.url`, from
+  where the token reached every email, share link, portal link and report.
+  Without `public_url` the Canonical URL is now the Home Assistant host's
+  LAN address with the published 8069 port, read from the Supervisor. A
+  stored value that carries an Ingress token is never kept: it is replaced
+  when a Canonical URL exists and removed otherwise. Issue #57.
+
+### Added
+- The default website's `domain` is set to the Canonical URL on every
+  start when the `website` module is installed, so website-generated
+  absolute links match email links.
+- Manifest `hassio_api: true`, needed for the LAN-address fallback. The
+  default role is enough; no `hassio_role` is requested.
+- `DOCS.md`: a "Canonical URL" section explaining the three shapes, the
+  Supervisor permission and the Ingress-only fallback.
+
+### Changed
+- `public_url` without `default_db` is a valid configuration; the add-on
+  no longer refuses to start with "default_db is required". `default_db`
+  is still required for `auto_update_module` and for the one-shot
+  maintenance account file, which is now kept (with a warning) until a
+  start with `default_db` set consumes it.
+- A failure while processing one database is logged with the database
+  name and the bootstrap continues with the next one; Odoo always starts.
+  Only the `bootstrap-user.json` policy violations remain fatal.
+
+### Testing
+- New static-tier module `test_maintenance_bootstrap.py` runs the full
+  decision matrix (`public_url` set/unset × `default_db` set/unset ×
+  stored value clean/leaked/absent × LAN address available/unavailable)
+  against the pure decision functions in
+  `rootfs/usr/local/lib/odoo-maintenance.py`, without Odoo or the
+  Supervisor.
 - The perimeter check no longer reports a bare Odoo login page as blank. It
   polls for rendered body text instead of sampling once at `domcontentloaded`,
   where a database without `website` showed only "Powered by Odoo".

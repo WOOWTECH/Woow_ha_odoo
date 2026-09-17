@@ -18,6 +18,24 @@ _Avoid_: web version, tunnel origin, 網頁版 (in code and docs)
 The privilege level granted on the published origin ports to callers whose source address is inside `lan_networks`; it includes the database manager.
 _Avoid_: local access, trusted network, direct access
 
+**Canonical URL**:
+The value the maintenance bootstrap writes into `web.base.url` and the default website's `domain` on every start, and then locks with `web.base.url.freeze`. It is the Public origin when `public_url` is set, otherwise the Home Assistant host's LAN address with the published Odoo port. A stored value that carries an Ingress token is never kept as the Canonical URL.
+_Avoid_: base url, own address, web.base.url (in prose)
+
+### Ingress mechanics
+
+**Runtime shim**:
+The script nginx injects at the top of every Ingress HTML page; it adds the Ingress prefix in the browser at the moment a request, navigation, attribute or worker is created.
+_Avoid_: ingress shim, head script, 注入腳本
+
+**Literal rewrite**:
+The server-side substitution nginx applies to root-relative string literals inside asset bundles before sending them over Ingress; it covers only what the Runtime shim cannot intercept.
+_Avoid_: sub_filter whitelist, 資產改寫, route substitution, 白名單
+
+**Prefix escape**:
+A request or navigation made through Ingress that lands on the Home Assistant root instead of under the Ingress prefix.
+_Avoid_: 逃逸到 HA 根, root escape, RC-1 (alone)
+
 ### Lifecycle
 
 **Release**:
