@@ -22,8 +22,8 @@ RUN apt-get update \
 #    Ingress changes must not silently upgrade a nightly Odoo package and
 #    trigger an unrelated database migration.
 # ──────────────────────────────────────────────
-ARG ODOO_DEB_VERSION="18.0.20260914"
-ARG ODOO_DEB_SHA256="378a53702f9971722260d1182bfb7dd650e9c3b859f92b1c0d520a222e1bc3dd"
+ARG ODOO_DEB_VERSION="18.0.20260920"
+ARG ODOO_DEB_SHA256="28a0b31d2c32e14e7f225d778070678353b118a3845208780d8102c2e7acb6e1"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         postgresql-16 \

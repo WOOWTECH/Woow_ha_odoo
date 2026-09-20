@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- Odoo nightly package 18.0.20260914 -> 18.0.20260920.
+
 ### Fixed
 - Three Prefix escapes under Ingress found by the Literal rewrite gate
   once the parity plan's 25 applications were installed on the control
