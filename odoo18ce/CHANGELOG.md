@@ -3,6 +3,21 @@
 ## Unreleased
 
 ### Added
+- The Rewrite scan now applies what it finds: the navigation prefixes no
+  shipped rule covers become an nginx `include` file, which is validated
+  with `nginx -t` against a rendered configuration that loads the candidate
+  and is moved into place and reloaded only when nginx accepts it. A page
+  that navigates to an address the Ingress rules do not cover yet is
+  therefore fixed on the host, without a new Release. Four refusals guard
+  it: an incomplete scan is never applied, a bundle whose bytes are missing
+  fails its database, an unchanged generation is neither written nor
+  reloaded, and a candidate nginx refuses leaves the last good file in
+  place with Odoo still running. The new option **Apply Generated
+  Rewrites** (`literal_rewrite_auto`, default on) freezes application: the
+  scan and its report keep running and the rules already in place stay
+  live. The image gains `python3-yaml`, because the exception list that
+  ADR 0005 keeps applying is YAML and the container had no reader for it.
+  ADR 0008, issue #93.
 - A one-shot `odoo-rewrite-scan` command in the image prints, for every
   Odoo database, the asset bundle attachments it serves with their
   checksums, a per-database status, and whether a Rewrite scan is due. It

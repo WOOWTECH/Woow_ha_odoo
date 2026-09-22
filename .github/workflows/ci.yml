@@ -54,6 +54,7 @@ jobs:
           mapfile -t scripts < <(
             find "${ADDON_DIR}/rootfs/etc/cont-init.d" "${ADDON_DIR}/rootfs/etc/services.d" -type f
             echo "${ADDON_DIR}/rootfs/usr/local/bin/odoo-maintenance-bootstrap"
+            echo "${ADDON_DIR}/rootfs/usr/local/bin/odoo-rewrite-apply"
           )
           shellcheck --version | head -2
           shellcheck -s bash -e SC1008 "${scripts[@]}"
@@ -155,11 +156,32 @@ jobs:
         with:
           context: ${{ env.ADDON_DIR }}
           push: false
+          # Loaded into the local daemon so the step below can run the
+          # image; without this the build only fills the cache.
+          load: true
           build-args: |
             BUILD_FROM=${{ steps.base.outputs.from }}
           tags: woow-ha-odoo-amd64:ci
           cache-from: type=gha,scope=amd64
           cache-to: type=gha,scope=amd64,mode=max
+
+      # The Static tier cannot see inside the image, which is why the
+      # missing YAML reader lived until somebody ran the Rewrite scan on a
+      # host (ADR 0008). This runs the shipped code in the shipped image:
+      # the apply module imports, and it reads the shipped exception list.
+      - name: In-image contract (Rewrite scan)
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint python3 woow-ha-odoo-amd64:ci \
+            /usr/local/lib/rewrite_apply.py --help > /dev/null
+          docker run --rm --entrypoint python3 woow-ha-odoo-amd64:ci -c '
+          import sys
+          sys.path.insert(0, "/usr/local/lib")
+          import rewrite_apply
+          exceptions = rewrite_apply.load_exceptions()
+          assert exceptions, "the shipped exception list read as empty"
+          print(f"exception list: {len(exceptions)} entries")
+          '
 
   build-aarch64:
     name: build (aarch64)

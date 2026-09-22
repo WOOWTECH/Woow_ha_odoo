@@ -21,6 +21,12 @@ RUN apt-get update \
 # 2. Install PostgreSQL 16 and pin the exact Odoo build already deployed.
 #    Ingress changes must not silently upgrade a nightly Odoo package and
 #    trigger an unrelated database migration.
+#
+#    python3-yaml is here for the Rewrite scan: the exception list shipped
+#    in the image is YAML and still applies to Generated rewrites (ADR
+#    0005), and the container had no YAML reader at all (ADR 0008). The
+#    Debian package, not pip: nothing else in this image installs Python
+#    from outside the distribution.
 # ──────────────────────────────────────────────
 ARG ODOO_DEB_VERSION="18.0.20260914"
 ARG ODOO_DEB_SHA256="378a53702f9971722260d1182bfb7dd650e9c3b859f92b1c0d520a222e1bc3dd"
@@ -39,6 +45,7 @@ RUN apt-get update \
         jq \
         git \
         nginx \
+        python3-yaml \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/odoo.deb
 
@@ -69,8 +76,9 @@ RUN chmod a+rx /etc/cont-init.d/*.sh \
     && chmod a+rx /usr/local/bin/odoo-canonical-url \
     && chmod a+r /usr/local/lib/odoo-maintenance.py /usr/local/lib/odoo-maintenance-account.py \
     && chmod a+r /usr/local/lib/literal_rewrite_gate.py /usr/local/lib/literal_rewrite_exceptions.yaml \
-    && chmod a+r /usr/local/lib/rewrite_scan.py \
+    && chmod a+r /usr/local/lib/rewrite_scan.py /usr/local/lib/rewrite_apply.py \
     && chmod a+rx /usr/local/bin/odoo-rewrite-scan \
+    && chmod a+rx /usr/local/bin/odoo-rewrite-apply \
     && chmod a+rx /usr/local/bin/odoo-jsonrpc-filter \
     && chmod -R a+rX /opt/woow-server-addons
 
