@@ -18,9 +18,10 @@ name: Literal rewrite gate
 # same analysis run on the host and applies what it finds as Generated
 # rewrites, and the test host that served as the control group is being
 # stopped. This workflow stays as the outside-in version of that analysis,
-# on `workflow_dispatch` for whenever a control group exists again; pass the
-# host's Generated rewrite include file to the CLI with `--include-file` to
-# see it against the rules that host actually serves.
+# on `workflow_dispatch` for whenever a control group exists again. It runs
+# the CLI against the rules the image ships; to see a host that applied
+# Generated rewrites judged by the rules it actually serves, run the CLI by
+# hand with `--include-file <a copy of that host's include file>`.
 
 on:
   workflow_dispatch:

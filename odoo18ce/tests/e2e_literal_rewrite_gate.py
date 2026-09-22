@@ -174,6 +174,17 @@ def main(argv: list[str] | None = None) -> int:
     artifacts = Path(os.environ.get("E2E_ARTIFACT_DIR", "/tmp/odoo-literal-rewrite-gate"))
     artifacts.mkdir(parents=True, exist_ok=True)
 
+    # Read before collecting: a mistyped path should not cost a full login
+    # and bundle walk first.
+    rules = gate.rewrite_rules(TEMPLATE.read_text(encoding="utf-8"))
+    include_header = ""
+    if args.include_file:
+        if not args.include_file.is_file():
+            sys.exit(f"error: no Generated rewrite include file at {args.include_file}")
+        generated = gate.include_rules(args.include_file.read_text(encoding="utf-8"))
+        rules = gate.merge_rules(rules, generated)
+        include_header = f"include: {args.include_file} ({len(generated)} prefixes)"
+
     header: list[str] = []
     if args.from_dir:
         bundles = load_saved_bundles(args.from_dir)
@@ -185,13 +196,8 @@ def main(argv: list[str] | None = None) -> int:
         header.append(f"origin: {gate.mask(base)}")
         bundles = collect_bundles(base, login, password, artifacts)
 
-    rules = gate.rewrite_rules(TEMPLATE.read_text(encoding="utf-8"))
-    if args.include_file:
-        if not args.include_file.is_file():
-            sys.exit(f"error: no Generated rewrite include file at {args.include_file}")
-        generated = gate.include_rules(args.include_file.read_text(encoding="utf-8"))
-        rules = gate.merge_rules(rules, generated)
-        header.append(f"include: {args.include_file} ({len(generated)} prefixes)")
+    if include_header:
+        header.append(include_header)
     exceptions = gate.load_exceptions(EXCEPTIONS.read_text(encoding="utf-8"))
     report = gate.evaluate(bundles, rules, exceptions)
     text = gate.format_report(report, header)

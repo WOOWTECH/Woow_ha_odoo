@@ -82,10 +82,10 @@
   union the quote variants per prefix, and the CLI run with
   `--include-file` reports a `FAIL` prefix the file rewrites as covered.
   Issue #80.
-- New workflow `literal-rewrite-gate.yml` runs the gate nightly and on
-  demand against every origin in `ODOO_PUBLIC_URLS` with the
-  `ODOO_TEST_LOGIN` / `ODOO_TEST_PASSWORD` secrets, failing early with the
-  name of any missing secret. The perimeter check is unchanged.
+- New workflow `literal-rewrite-gate.yml` runs the gate on demand against
+  every origin in `ODOO_PUBLIC_URLS` with the `ODOO_TEST_LOGIN` /
+  `ODOO_TEST_PASSWORD` secrets, failing early with the name of any missing
+  secret.
 - New static-tier test `test_base_url_guard.py` drives the patched login
   path against a stand-in of Odoo's `res.users`: a `user_agent_env`
   carrying a `base_location` produces no `web.base.url` write while the
