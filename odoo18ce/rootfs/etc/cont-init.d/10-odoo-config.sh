@@ -153,6 +153,7 @@ fi
 PUBLIC_PROTO='https'
 PUBLIC_HOST_MAP=''
 DENY_STATUS='503'
+PUBLIC_URL=''
 if bashio::config.has_value 'public_url'; then
     PUBLIC_URL="$(bashio::config 'public_url')"
     PUBLIC_PROTO="${PUBLIC_URL%%://*}"
@@ -188,8 +189,64 @@ for LAN_CIDR in ${LAN_NETWORKS}; do
 done
 bashio::log.info "8069 origin: LAN tier = ${LAN_NETWORKS}"
 
+# Canonical URL for the Runtime shim (issue #70).
+#
+# Odoo 18 builds some outbound links in the browser, from the address in the
+# address bar: the Discuss invitation link is `window.location.origin` joined
+# to `/chat/<id>/<uuid>`, and `@web/core/utils/urls` falls back to the browser
+# protocol and host because Odoo 18 session info carries no origin. Through
+# Ingress that address is the Home Assistant host, so the link is useless to
+# the person it is sent to, and the lock the maintenance bootstrap puts on
+# web.base.url cannot reach it: the value never passes through the server.
+# The Runtime shim publishes the Canonical URL to the page instead, so a
+# Literal rewrite can use it as the base of one exact expression at a time.
+#
+# The rule that chooses the value exists once, in canonical_url() in the
+# maintenance library. The bootstrap calls it later, in services.d, for
+# web.base.url; this step calls the same function through
+# /usr/local/bin/odoo-canonical-url with the same three inputs. Neither side
+# derives the value on its own.
+#
+# Without public_url the value is the host's LAN address with the published
+# Odoo port, both read from the Supervisor (needs hassio_api). When the
+# Supervisor reports no address there is no Canonical URL, the shim publishes
+# an empty string, and every rewrite keeps the browser origin it uses today.
+CANONICAL_LAN_IPV4=''
+CANONICAL_PORT=''
+if [ -z "${PUBLIC_URL}" ]; then
+    CANONICAL_LAN_IPV4="$(bashio::network.ipv4_address 2>/dev/null || true)"
+    CANONICAL_PORT="$(bashio::addon.port 8069 2>/dev/null || true)"
+fi
+# A missing or broken helper costs the shim its value; it never costs the
+# operator the add-on, so `set -e` is kept away from this one command.
+CANONICAL_URL=''
+if ! CANONICAL_URL="$(
+    ODOO_MAINT_PUBLIC_URL="${PUBLIC_URL}" \
+    ODOO_MAINT_LAN_IPV4="${CANONICAL_LAN_IPV4}" \
+    ODOO_MAINT_PORT="${CANONICAL_PORT}" \
+    /usr/local/bin/odoo-canonical-url
+)"; then
+    bashio::log.warning "odoo-canonical-url failed; the Runtime shim publishes no Canonical URL"
+    CANONICAL_URL=''
+fi
+# The value is rendered into a JavaScript string literal that sits inside an
+# nginx quoted parameter. Only a bare http(s) origin may reach either, so a
+# value of any other shape is dropped rather than escaped; the shim then
+# publishes an empty string and nothing changes.
+if [ -n "${CANONICAL_URL}" ] \
+    && ! echo "${CANONICAL_URL}" | grep -Eq '^https?://[A-Za-z0-9._-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'; then
+    bashio::log.warning "Canonical URL is not a bare origin; the Runtime shim will not publish it"
+    CANONICAL_URL=''
+fi
+if [ -n "${CANONICAL_URL}" ]; then
+    bashio::log.info "Runtime shim Canonical URL = ${CANONICAL_URL}"
+else
+    bashio::log.warning "No Canonical URL; links the browser builds keep the browser origin"
+fi
+
 ADDON_VERSION="$(bashio::addon.version 2>/dev/null || echo unknown)"
 sed -e "s/%%WS_PORT%%/${WS_PORT}/g" \
+    -e "s#%%CANONICAL_URL%%#${CANONICAL_URL}#g" \
     -e "s#%%PUBLIC_PROTO%%#${PUBLIC_PROTO}#g" \
     -e "s#%%PUBLIC_HOST_MAP%%#${PUBLIC_HOST_MAP}#g" \
     -e "s#%%DENY_STATUS%%#${DENY_STATUS}#g" \

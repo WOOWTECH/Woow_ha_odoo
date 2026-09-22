@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added
+- Ingress: the Runtime shim now publishes the Canonical URL to the page as
+  a read-only `window.__WOOW_CANONICAL_URL__`. Odoo 18 builds some links
+  for people outside in the browser, from the address in the address bar,
+  and through Ingress that is the Home Assistant host, so the link is a
+  Home Assistant 404 for whoever receives it; the lock on `web.base.url`
+  cannot reach those values because they never pass through the server.
+  This change publishes the value only. It moves no link yet — each one is
+  moved onto that base by its own exact-expression rewrite, starting with
+  the Discuss invitation link. Without a Canonical URL (Ingress-only and
+  the Supervisor reports no LAN address) the global is empty and nothing
+  changes. The Public origin is untouched. The rule that chooses the value
+  stays in `canonical_url()` in the maintenance library, which the config
+  rendering now calls through `odoo-canonical-url` and the maintenance
+  bootstrap still calls for `web.base.url`. ADR 0006, issue #70.
+
 ### Fixed
 - Three Prefix escapes under Ingress found by the Literal rewrite gate
   once the parity plan's 25 applications were installed on the control
