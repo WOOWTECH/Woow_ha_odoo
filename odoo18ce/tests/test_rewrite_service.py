@@ -574,7 +574,7 @@ def test_an_adr_records_the_service_convention() -> None:
     adrs = sorted(ADR_DIR.glob("0009-*.md"))
     assert adrs, "issue #94 lands ADR 0009"
     text = adrs[0].read_text(encoding="utf-8")
-    assert "status: proposed" in text
+    assert "status: accepted" in text
     # What the ticket asked to be written down: how a failed scan is
     # retried, what repeated failure does, and what `finish` contains.
     for token in ("halt", "finish", "five minutes", "retr"):

@@ -607,6 +607,6 @@ def test_an_adr_records_the_decisions_this_ticket_took() -> None:
     adrs = sorted(ADR_DIR.glob("0008-*.md"))
     assert adrs, "issue #93 lands ADR 0008"
     text = adrs[0].read_text(encoding="utf-8")
-    assert "status: proposed" in text
+    assert "status: accepted" in text
     for token in ("python3-yaml", "nginx -t -c", "unix socket", "literal_rewrite_auto"):
         assert token in text, f"the ADR must record {token!r}"

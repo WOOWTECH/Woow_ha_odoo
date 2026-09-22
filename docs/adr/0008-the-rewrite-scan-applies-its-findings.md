@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-09-22
 ---
 
@@ -45,7 +45,7 @@ reader escaped.
 
 Issue #77 asked for the candidate to be validated "with `nginx -t` against
 the live configuration". That cannot work as written: the include path in
-the template is fixed text (`nginx.conf.template:342`), so `nginx -t`
+the template is fixed text (`nginx.conf.template`), so `nginx -t`
 against the live configuration validates the file already in place and
 never the candidate.
 
