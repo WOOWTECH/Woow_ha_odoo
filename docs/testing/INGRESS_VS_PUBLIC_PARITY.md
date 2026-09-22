@@ -317,7 +317,7 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 判定工具是 `U-A4` 的守門腳本 `odoo18ce/tests/e2e_literal_rewrite_gate.py`：登入 control group
 > 收集所有已載入 bundle，抽出根相對字面量，依消費方式分為 `FAIL`（整頁跳轉）、`WARN`（路徑判斷）、
 > `INFO`（shim 已攔截），再與 nginx 模板現行 `sub_filter` 規則求差集。清單外前綴的 `FAIL` 即擋門，
-> 除非 `odoo18ce/tests/literal_rewrite_exceptions.yaml` 登記了附理由的例外。
+> 除非 `odoo18ce/rootfs/usr/local/lib/literal_rewrite_exceptions.yaml` 登記了附理由的例外。
 > 裝完 app 後跑一次守門；`FAIL` 就在模板補該前綴的三種引號規則，或登記例外。
 > 每晚由 `.github/workflows/literal-rewrite-gate.yml` 自動執行。
 

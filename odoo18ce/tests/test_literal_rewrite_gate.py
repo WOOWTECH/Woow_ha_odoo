@@ -6,15 +6,31 @@ root-relative literals from a bundle, classifying each by how the bundle
 consumes it, parsing the prefixes the nginx template's Literal rewrite covers,
 and matching approved exceptions. No network and no live Odoo.
 """
+import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
 
-import literal_rewrite_gate as gate
-
 ROOT = Path(__file__).resolve().parents[1]
+LIB = ROOT / "rootfs/usr/local/lib/literal_rewrite_gate.py"
 TEMPLATE = (ROOT / "rootfs/etc/nginx/nginx.conf.template").read_text(encoding="utf-8")
-EXCEPTIONS_FILE = Path(__file__).resolve().parent / "literal_rewrite_exceptions.yaml"
+EXCEPTIONS_FILE = ROOT / "rootfs/usr/local/lib/literal_rewrite_exceptions.yaml"
+
+
+def load_gate():
+    spec = importlib.util.spec_from_file_location("literal_rewrite_gate", LIB)
+    module = importlib.util.module_from_spec(spec)
+    # The module annotates its dataclasses lazily, and dataclasses resolves
+    # those annotations through sys.modules, so it is registered first.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+# The fixtures below are built from the module, so it is loaded at import
+# time rather than through a fixture.
+gate = load_gate()
 
 # One bundle that exercises every classification branch. Written the way
 # Odoo's minified bundles read: no spaces, chained member access, template

@@ -49,11 +49,15 @@
   intercepts) and compares the prefixes against the `sub_filter` rules in
   the Ingress asset location of `nginx.conf.template`, parsed from the
   template itself. An unlisted prefix in a whole-page navigation fails the
-  run unless `tests/literal_rewrite_exceptions.yaml` records it with a
-  reason. Ingress tokens are masked in the output.
+  run unless `rootfs/usr/local/lib/literal_rewrite_exceptions.yaml`
+  records it with a reason. Ingress tokens are masked in the output.
 - The pure stages (extraction, classification, nginx rule parsing,
-  exception matching, evaluation) live in `tests/literal_rewrite_gate.py`
-  and are pinned by `test_literal_rewrite_gate.py` in the static tier.
+  exception matching, evaluation) ship in the image as
+  `rootfs/usr/local/lib/literal_rewrite_gate.py`, next to the maintenance
+  library, so the same code can serve inside the container and out. The
+  static tier pins them in `test_literal_rewrite_gate.py`, which loads the
+  module from the image the way the maintenance bootstrap tests do.
+  Issue #75.
 - New workflow `literal-rewrite-gate.yml` runs the gate nightly and on
   demand against every origin in `ODOO_PUBLIC_URLS` with the
   `ODOO_TEST_LOGIN` / `ODOO_TEST_PASSWORD` secrets, failing early with the

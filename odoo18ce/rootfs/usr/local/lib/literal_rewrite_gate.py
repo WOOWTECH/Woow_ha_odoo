@@ -10,8 +10,12 @@ deployment actually serves, whether any root-relative literal is used in one
 of those contexts without a matching rule.
 
 Everything here is a pure function over strings so the static tier can pin
-the behaviour with fixtures. `e2e_literal_rewrite_gate.py` is the Live-tier
-CLI that logs in, collects the bundles and calls these functions.
+the behaviour with fixtures. The module ships in the image next to the
+maintenance library so the same code can serve inside the container and out:
+`tests/e2e_literal_rewrite_gate.py` is the Live-tier CLI that logs in,
+collects the bundles and calls these functions, and
+`tests/test_literal_rewrite_gate.py` loads it by path, as the maintenance
+bootstrap tests load theirs.
 
 Levels, by how the bundle consumes the literal:
 
