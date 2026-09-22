@@ -214,7 +214,7 @@ L0  通道               ← nginx 監聽、header、壓縮、快取、緩衝、
 | `U-C2` | 控制面板 | RC-1 | 搜尋、篩選、分組、我的最愛、儲存搜尋、分頁器、排序、視圖切換、選用欄位 | 每個控制項行為與 public 相同 |
 | `U-C3` | 表單 widget 全覆蓋 | RC-1/3 | 對每種 widget 至少一個實例操作：many2one（含「建立並編輯」）、many2many_tags、one2many 內嵌、selection、date／datetime picker、monetary、priority、boolean_toggle、handle 拖曳排序、statusbar、progressbar、reference、domain 編輯器、color picker、percentage、float_time、daterange | 全部可操作且值正確寫回 |
 | `U-C4` | **複製到剪貼簿 widget** | **RC-3** | 對 `CopyClipboardChar`／`CopyClipboardURL`／`CopyClipboardButton` 逐一點擊 | 剪貼簿內容正確且出現成功提示；失敗即 **Important 以上**（見 `G-02`） |
-| `U-C5` | URL 類欄位顯示值 | **RC-9** | 讀取畫面上每個 URL 欄位、連結 `href`、分享網址欄位的**字面值** | 其值必須是 **public 基底**，不得為 `127.0.0.1`、不得含 ingress token |
+| `U-C5` | URL 類欄位顯示值 | **RC-9** | 讀取畫面上每個 URL 欄位、連結 `href`、分享網址欄位的**字面值** | 其值必須是 **Canonical URL**，不得為 `127.0.0.1`、不得含 ingress token |
 | `U-C6` | 富文本／HTML 編輯器 | RC-1/12 | 開啟 html 欄位編輯器，插入圖片、連結、表格、程式碼區塊，存檔後重載 | 內容一致；插入的圖片 `src` 帶正確前綴 |
 | `U-C7` | 二進位欄位上傳／下載／預覽 | RC-1/3 | 上傳圖片與 PDF，下載，開啟預覽器（FileViewer） | 上傳成功、下載檔案 SHA-256 與來源一致、預覽可翻頁/縮放 |
 | `U-C8` | 拖放上傳 | RC-3 | 把檔案拖進 chatter 與 binary 欄位 | 與 public 行為相同 |
@@ -260,7 +260,7 @@ L0  通道               ← nginx 監聽、header、壓縮、快取、緩衝、
 |---|---|---|---|---|
 | `U-E1` | `web.base.url` 不被登入覆寫 | **RC-9** | 記錄現值 → 以 admin 從 ingress 登入 → 重讀 | 值不變；若變成 ingress token URL 即 **Blocker（token 外洩）** |
 | `U-E2` | 郵件內連結 | RC-9 | 觸發任一寄信動作（邀請、通知、密碼重設），攔截 outgoing mail 內容 | 所有連結為 public 基底；**不得含 token** |
-| `U-E3` | 分享連結欄位 | RC-9 | 每個「分享」對話框中的 URL 欄位 | 值為 public 基底，且外部瀏覽器可開 |
+| `U-E3` | 分享連結欄位 | RC-9 | 每個「分享」對話框中的 URL 欄位 | 值為 **Canonical URL**，且外部瀏覽器可開 |
 | `U-E4` | 報表內連結與 QR | RC-9 | 產生含 QR／連結的 PDF，解碼 QR | 指向 public 基底 |
 | `U-E5` | 附件／檔案的絕對 URL | RC-9 | 取得附件的對外連結 | 同上 |
 | `U-E6` | 外部回呼入口 | **RC-10** | 金流 notify／webhook／郵件追蹤 pixel 的目標 URL | 必為 public 基底且對外可達；ingress 不可能承接 → `STRUCTURAL` |

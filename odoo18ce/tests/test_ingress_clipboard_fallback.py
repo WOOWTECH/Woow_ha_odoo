@@ -175,9 +175,16 @@ def clipboard_shim(template: str) -> str:
 
 def assert_single_splice(template: str) -> None:
     """The clipboard script is spliced in front of the prefix script, under its text/html gate."""
-    assert "'$ingress_clipboard_shim<script>" in map_block(template, RUNTIME_MAP), (
+    runtime_map = map_block(template, RUNTIME_MAP)
+    assert "'$ingress_clipboard_shim" in runtime_map, (
         "the Runtime shim map must splice $ingress_clipboard_shim in by variable reference"
     )
+    # Other scripts may be spliced in between (issue #70's Canonical URL
+    # script is), but the clipboard script keeps its place ahead of the
+    # prefix script so a copy button never runs before its fallback exists.
+    assert runtime_map.index("$ingress_clipboard_shim") < runtime_map.index(
+        "<script>window.__INGRESS_PATH__="
+    ), "the clipboard script must stay in front of the prefix script"
     references = [
         number
         for number, line in directive_lines(template)

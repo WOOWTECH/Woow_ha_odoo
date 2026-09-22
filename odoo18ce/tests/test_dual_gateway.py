@@ -294,10 +294,25 @@ def render_scenarios(test_dir: Path, include_text: str = "") -> dict:
         "public": dict(common, **{
             "%%PUBLIC_HOST_MAP%%": '"odoo-test.invalid" 1; "odoo-test.invalid:443" 1;',
             "%%DENY_STATUS%%": "444",
+            "%%CANONICAL_URL%%": "https://odoo-test.invalid",
         }),
         # public_url unset: the host map is empty, so no Host reaches the
         # public tier and every off-LAN caller falls through to the deny status.
-        "lanonly": dict(common, **{"%%PUBLIC_HOST_MAP%%": "", "%%DENY_STATUS%%": "503"}),
+        # The Canonical URL is then the host's LAN address with the published
+        # Odoo port (RFC 5737 documentation address).
+        "lanonly": dict(common, **{
+            "%%PUBLIC_HOST_MAP%%": "",
+            "%%DENY_STATUS%%": "503",
+            "%%CANONICAL_URL%%": "http://192.0.2.10:8069",
+        }),
+        # public_url unset and the Supervisor reported no LAN address: there
+        # is no Canonical URL at all, and the Runtime shim renders an empty
+        # global. nginx has to accept that value too (issue #70).
+        "lanonly-noaddr": dict(common, **{
+            "%%PUBLIC_HOST_MAP%%": "",
+            "%%DENY_STATUS%%": "503",
+            "%%CANONICAL_URL%%": "",
+        }),
     }
     rendered = {}
     for name, replacements in scenarios.items():

@@ -66,6 +66,7 @@ RUN chmod a+rx /etc/cont-init.d/*.sh \
     && chmod a+rx /etc/services.d/*/run \
     && chmod a+rx /etc/services.d/*/finish \
     && chmod a+rx /usr/local/bin/odoo-maintenance-bootstrap \
+    && chmod a+rx /usr/local/bin/odoo-canonical-url \
     && chmod a+r /usr/local/lib/odoo-maintenance.py /usr/local/lib/odoo-maintenance-account.py \
     && chmod a+r /usr/local/lib/literal_rewrite_gate.py /usr/local/lib/literal_rewrite_exceptions.yaml \
     && chmod a+rx /usr/local/bin/odoo-jsonrpc-filter \
