@@ -19,6 +19,18 @@
   bootstrap still calls for `web.base.url`. ADR 0006, issue #70.
 
 ### Fixed
+- Ingress: the three links Odoo builds in the browser for somebody
+  outside to open now carry the Canonical URL instead of the Home
+  Assistant host — the Discuss channel invitation link, the base shown
+  before a page's path in Website → Pages, and the address a page's Share
+  block hands to Facebook, X or WhatsApp. The share block was the worst of
+  the three: it posted the full Ingress URL, Supervisor token included.
+  Each one is moved by its own exact-expression rewrite, measured against
+  the bundles the control group serves with the parity plan's 25
+  applications installed and kept as a fixture; Odoo's shared URL helper is
+  left alone, because it also builds the in-Ingress addresses for images,
+  attachments and RPC. Without a Canonical URL nothing changes, and the
+  Public origin is untouched. ADR 0006, issue #70.
 - Three Prefix escapes under Ingress found by the Literal rewrite gate
   once the parity plan's 25 applications were installed on the control
   group: eCommerce's `redirect('/shop/cart')`, the payment flow's

@@ -332,6 +332,40 @@ http {
             sub_filter '"odoo:websocket_shared_worker"' '"odoo:websocket_shared_worker_%%INGRESS_CACHE_VERSION%%"';
             sub_filter '"odoo:websocket_worker"' '"odoo:websocket_worker_%%INGRESS_CACHE_VERSION%%"';
             sub_filter 'websocket_worker_bundle?v=' 'websocket_worker_bundle?woow_ingress=%%INGRESS_CACHE_VERSION%%&v=';
+            # Links the browser builds for somebody outside to open (issue
+            # #70, ADR 0006). These are absolute addresses, built in the page
+            # from whatever is in the address bar, so under Ingress they carry
+            # the Home Assistant host -- and, for the share snippet, the
+            # Ingress token itself. The Runtime shim publishes the Canonical
+            # URL as __WOOW_CANONICAL_URL__; each rule below moves one link
+            # onto that base and falls back to the browser origin when the
+            # global is empty, which is the behaviour without a Canonical URL.
+            #
+            # Every pattern is one exact expression, measured against the
+            # bundles this add-on's control group actually serves with the
+            # parity plan's 25 applications installed: each occurs exactly
+            # once per bundle and nowhere near an in-Ingress address. The
+            # bytes are kept as fixtures under tests/fixtures/bundles/ --
+            # an unmatched sub_filter is a silent no-op, so a rule written
+            # from a guess would never turn a test red.
+            #
+            # Discuss invitation link: `${window.location.origin}/chat/<id>/<uuid>`.
+            # /chat/ appears nowhere else in any served bundle.
+            sub_filter 'window.location.origin}/chat/' 'window.__WOOW_CANONICAL_URL__||window.location.origin}/chat/';
+            # Website page URL field: the base shown before the page path in
+            # the backend form (`this.serverUrl`), a display value only. The
+            # pattern carries the closing backtick and the semicolon, so it
+            # matches a template literal that is the whole statement and not
+            # an origin spliced into a larger in-Ingress URL.
+            sub_filter 'window.location.origin}/`;' 'window.__WOOW_CANONICAL_URL__||window.location.origin}/`;';
+            # Website share snippet (.s_share, .oe_share): the current page
+            # address handed to Facebook, X, WhatsApp and the rest. This one
+            # needs the path as well as the base, because under Ingress
+            # location.href carries the Supervisor token and posting it to a
+            # social network publishes it. The Ingress prefix is dropped and
+            # the Canonical URL put in front; with no Canonical URL the link
+            # stays exactly what it is today.
+            sub_filter 'const currentUrl=window.location.href;' 'const currentUrl=(function(){var B=window.__WOOW_CANONICAL_URL__||"",P="$safe_ingress_path",L=window.location;if(!B)return L.href;var p=L.pathname;if(P&&p.indexOf(P)===0)p=p.slice(P.length)||"/";return B+p+L.search+L.hash})();';
             # Generated rewrites (ADR 0005). The add-on writes this file from
             # its own Rewrite scan; the config-rendering init step creates it
             # empty so a fresh install starts. It holds prefix rules only, and
