@@ -209,6 +209,25 @@ def test_a_malformed_row_fails_its_database_rather_than_being_dropped() -> None:
         scan.read_bundle_rows(run_query, DB)
 
 
+def test_the_query_is_the_only_filter() -> None:
+    # The exclusions happen in postgres, so the module keeps every row the
+    # query returned, whatever it holds. A filter repeated here would make
+    # BUNDLE_ROWS_SQL no longer the authority on what is scanned, and the
+    # test above it would stop meaning anything.
+    #
+    # A source map is what the mimetype allow-list drops (application/json,
+    # unminified source, false FAIL findings), so it can never come back;
+    # an unminified bundle is what a dev_mode install serves and must be
+    # scanned. Neither is filtered here.
+    source_map = row(url="/web/assets/1/8c63e6a/web.assets_web.min.js.map",
+                     name="web.assets_web.min.js.map")
+    unminified = row(url="/web/assets/1/8c63e6a/web.assets_web.js",
+                     name="web.assets_web.js", checksum=SUM_B)
+    assert scan.read_bundle_rows(
+        fake_runner({DB: (source_map, unminified)}), DB
+    ) == [source_map, unminified]
+
+
 def test_a_name_holding_a_newline_or_a_pipe_still_reads_as_one_row() -> None:
     # `ir_attachment.name` is free text an operator can write anything into,
     # which is why the separators are the ASCII unit and record characters
