@@ -8,17 +8,22 @@ name: Literal rewrite gate
 # root-relative literal in a whole-page navigation whose prefix the nginx
 # Literal rewrite does not cover and no checked-in exception excuses.
 #
-# Same nightly slot as the perimeter check, and by hand. The perimeter
-# check stays credential-free; this workflow is the one that logs in.
-# A failure means a newly installed app introduced a Prefix escape under
-# Ingress: add a Literal rewrite rule in the three quote variants, or record
-# an exception with its reason in
+# By hand only. The perimeter check stays credential-free; this workflow is
+# the one that logs in. A failure means a newly installed app introduced a
+# Prefix escape under Ingress: add a Literal rewrite rule in the three quote
+# variants, or record an exception with its reason in
 # odoo18ce/rootfs/usr/local/lib/literal_rewrite_exceptions.yaml.
+#
+# No schedule any more (ADR 0005): the in-container Rewrite scan makes the
+# same analysis run on the host and applies what it finds as Generated
+# rewrites, and the test host that served as the control group is being
+# stopped. This workflow stays as the outside-in version of that analysis,
+# on `workflow_dispatch` for whenever a control group exists again. It runs
+# the CLI against the rules the image ships; to see a host that applied
+# Generated rewrites judged by the rules it actually serves, run the CLI by
+# hand with `--include-file <a copy of that host's include file>`.
 
 on:
-  schedule:
-    # 05:30 Asia/Taipei, alongside the perimeter check.
-    - cron: '30 21 * * *'
   workflow_dispatch:
 
 permissions:

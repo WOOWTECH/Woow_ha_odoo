@@ -9,13 +9,17 @@ name: Perimeter check
 #
 # Runs after each Release (dispatched by release.yml, because an event
 # created with GITHUB_TOKEN would not trigger this workflow on its own),
-# once a day, and by hand. A failure means either the perimeter opened or
-# the site is unreachable from the internet; both are worth an email.
+# and by hand. A failure means either the perimeter opened or the site is
+# unreachable from the internet; both are worth an email.
+#
+# No schedule any more (ADR 0005): the add-on's own start-time self-check
+# asks its database-manager route from the add-on network address with the
+# public Host, and the in-container Rewrite scan replaced the nightly
+# outside-in pair. The test host that served as the control group is being
+# stopped, so a nightly run would have nothing to check. `workflow_dispatch`
+# stays for whenever a control group exists again.
 
 on:
-  schedule:
-    # 05:30 Asia/Taipei, after the store's nightly sweep has settled.
-    - cron: '30 21 * * *'
   workflow_dispatch:
 
 permissions:

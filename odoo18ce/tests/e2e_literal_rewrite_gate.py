@@ -19,9 +19,15 @@ Environment, the same names as the other Live tests:
 
     python odoo18ce/tests/e2e_literal_rewrite_gate.py
     python odoo18ce/tests/e2e_literal_rewrite_gate.py --from-dir <artifact dir>/bundles
+    python odoo18ce/tests/e2e_literal_rewrite_gate.py --include-file generated-rewrites.conf
 
 `--from-dir` re-evaluates bundles saved by an earlier run without a browser,
 for example after editing the nginx template or the exception list.
+
+`--include-file` takes a copy of the Generated rewrite include file the host
+under test applied (ADR 0005) and counts its rules as covered alongside the
+template's, so a run against such a host reports what that host still leaves
+uncovered instead of the prefixes the add-on already fixed for itself.
 """
 from __future__ import annotations
 
@@ -158,10 +164,26 @@ def load_saved_bundles(directory: Path) -> dict[str, str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--from-dir", type=Path, help="evaluate bundles saved by an earlier run instead of collecting")
+    parser.add_argument(
+        "--include-file",
+        type=Path,
+        help="the Generated rewrite include file the host applied; its rules count as covered too",
+    )
     args = parser.parse_args(argv)
 
     artifacts = Path(os.environ.get("E2E_ARTIFACT_DIR", "/tmp/odoo-literal-rewrite-gate"))
     artifacts.mkdir(parents=True, exist_ok=True)
+
+    # Read before collecting: a mistyped path should not cost a full login
+    # and bundle walk first.
+    rules = gate.rewrite_rules(TEMPLATE.read_text(encoding="utf-8"))
+    include_header = ""
+    if args.include_file:
+        if not args.include_file.is_file():
+            sys.exit(f"error: no Generated rewrite include file at {args.include_file}")
+        generated = gate.include_rules(args.include_file.read_text(encoding="utf-8"))
+        rules = gate.merge_rules(rules, generated)
+        include_header = f"include: {args.include_file} ({len(generated)} prefixes)"
 
     header: list[str] = []
     if args.from_dir:
@@ -174,7 +196,8 @@ def main(argv: list[str] | None = None) -> int:
         header.append(f"origin: {gate.mask(base)}")
         bundles = collect_bundles(base, login, password, artifacts)
 
-    rules = gate.rewrite_rules(TEMPLATE.read_text(encoding="utf-8"))
+    if include_header:
+        header.append(include_header)
     exceptions = gate.load_exceptions(EXCEPTIONS.read_text(encoding="utf-8"))
     report = gate.evaluate(bundles, rules, exceptions)
     text = gate.format_report(report, header)
