@@ -214,10 +214,15 @@ def test_the_patch_is_applied_at_import_time_not_through_an_inherit() -> None:
     )
     assert "classmethod(" in source, "authenticate is a classmethod and has to stay one"
     # The patch runs while the module is imported, not from a hook that only
-    # a database install would reach.
-    assert any("patch_authenticate" in ast.dump(node) for node in tree.body), (
-        "__init__.py must apply the patch at module level"
-    )
+    # a database install would reach: a statement, not just a definition,
+    # has to call it.
+    statements = [node for node in tree.body if not isinstance(node, ast.FunctionDef)]
+    assert any(
+        isinstance(call.func, ast.Name) and call.func.id == "patch_authenticate"
+        for node in statements
+        for call in ast.walk(node)
+        if isinstance(call, ast.Call)
+    ), "__init__.py must call patch_authenticate at module level"
 
 
 def test_the_manifest_declares_a_module_that_is_never_installed() -> None:
