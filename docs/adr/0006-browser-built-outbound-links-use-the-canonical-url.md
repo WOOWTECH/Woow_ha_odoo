@@ -18,9 +18,12 @@ joins `window.location.origin` to `/chat/<id>/<uuid>`. The general
 carries no `origin` field, so it falls back to the browser's protocol and
 host. Under Ingress both are the Home Assistant host, and the path carries no
 Ingress prefix, so the link is a Home Assistant 404 for the person it was sent
-to. Measured on the `.6` host on 2026-09-17 (issue #70, and the reproduction
-in issue #60): `http://192.168.2.6:8123/chat/2/…` from the LAN entrance and
-`https://woowtech-ha-test-6.woowtech.io/chat/2/…` from the HTTPS entrance.
+to. Measured on the control group on 2026-09-17 (issue #70, and the
+reproduction in issue #60), from both Home Assistant entrances: the link was
+`<the HA LAN address>:8123/chat/2/…` over plain http and
+`https://woowtech-ha-test-6.woowtech.io/chat/2/…` over the tunnel, where it
+should have been `https://woowtech-odoo-test-6.woowtech.io/chat/2/…`. The
+host's LAN address is deliberately not recorded here (ADR 0003).
 
 The **Canonical URL** lock that the maintenance bootstrap applies to
 `web.base.url` (issues #57 and #67) cannot reach any of this. That lock
