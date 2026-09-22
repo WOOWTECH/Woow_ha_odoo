@@ -310,6 +310,14 @@ http {
             sub_filter '"odoo:websocket_shared_worker"' '"odoo:websocket_shared_worker_%%INGRESS_CACHE_VERSION%%"';
             sub_filter '"odoo:websocket_worker"' '"odoo:websocket_worker_%%INGRESS_CACHE_VERSION%%"';
             sub_filter 'websocket_worker_bundle?v=' 'websocket_worker_bundle?woow_ingress=%%INGRESS_CACHE_VERSION%%&v=';
+            # Generated rewrites (ADR 0005). The add-on writes this file from
+            # its own Rewrite scan; the config-rendering init step creates it
+            # empty so a fresh install starts. It holds prefix rules only, and
+            # never a prefix the rules above already cover, so the two sets
+            # never compete for the same literal -- which matters because
+            # sub_filter resolves overlapping patterns by its own match table
+            # and not by the order the rules are written in.
+            include /data/nginx-generated-rewrites.conf;
         }
 
         location / {

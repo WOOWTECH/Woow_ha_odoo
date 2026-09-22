@@ -197,6 +197,18 @@ sed -e "s/%%WS_PORT%%/${WS_PORT}/g" \
     -e "s#%%INGRESS_CACHE_VERSION%%#${ADDON_VERSION}#g" \
     /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
 
+# Generated rewrites (ADR 0005). The Ingress asset location includes this
+# file unconditionally, so nginx refuses to start while it is missing. Create
+# it empty on a fresh install; an existing one is the last good generation
+# the running add-on wrote, so it is never overwritten here.
+declare GENERATED_REWRITES="/data/nginx-generated-rewrites.conf"
+if [ ! -e "${GENERATED_REWRITES}" ]; then
+    bashio::log.info "Creating empty ${GENERATED_REWRITES}"
+    : > "${GENERATED_REWRITES}"
+    # umask 077 above would otherwise leave it readable to root only.
+    chmod 0644 "${GENERATED_REWRITES}"
+fi
+
 # default_db → db_name
 if bashio::config.has_value 'default_db'; then
     DEFAULT_DB=$(bashio::config 'default_db')

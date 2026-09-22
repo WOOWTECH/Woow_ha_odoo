@@ -7,10 +7,14 @@ consumes it, parsing the prefixes the nginx template's Literal rewrite covers,
 and matching approved exceptions. No network and no live Odoo.
 """
 import importlib.util
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
+
+from conftest import require_tool
 
 ROOT = Path(__file__).resolve().parents[1]
 LIB = ROOT / "rootfs/usr/local/lib/literal_rewrite_gate.py"
@@ -251,6 +255,131 @@ def test_coverage_respects_the_quote_variant():
 def test_css_url_literals_are_covered_by_the_generic_url_rule():
     for finding in gate.scan_bundle(CSS):
         assert gate.is_covered(finding, RULES), finding
+
+
+# --- generated include ----------------------------------------------------
+
+# website_sale's redirect to the cart, the shape that first made /shop/ a
+# Shipped rewrite. With no Shipped rules in play it is what the Rewrite scan
+# would generate for it.
+FAIL_BUNDLE = 'location.assign("/shop/cart")'
+GENERATED_FOR_SHOP = (
+    'sub_filter \'"/shop/\' \'"$safe_ingress_path/shop/\';\n'
+    'sub_filter "\'/shop/" "\'$safe_ingress_path/shop/";\n'
+    'sub_filter \'`/shop/\' \'`$safe_ingress_path/shop/\';\n'
+)
+
+
+def test_generate_include_writes_three_quote_variants_per_fail_prefix():
+    assert gate.generate_include(gate.scan_bundle(FAIL_BUNDLE), {}, set()) == GENERATED_FOR_SHOP
+
+
+@pytest.mark.parametrize("bundle", [
+    'browser.location.pathname.startsWith("/scoped_app")',  # WARN
+    'rpc("/discuss/channel/notify",{id:1});',               # INFO
+    ".a{background:url(/survey/static/c.png)}",             # INFO, and CSS
+])
+def test_generate_include_covers_navigations_only(bundle):
+    assert gate.generate_include(gate.scan_bundle(bundle), {}, set()) == ""
+
+
+def test_generate_include_never_repeats_a_prefix_the_template_rewrites():
+    bundle = (
+        'location.assign("/shop/cart");'       # a slashed Shipped rule
+        'location.assign("/odoo/discuss");'    # a bare Shipped rule, slashed literal
+        'location.replace("/web/login");'
+    )
+    assert gate.generate_include(gate.scan_bundle(bundle), RULES, set()) == ""
+
+
+def test_generate_include_skips_a_registered_exception():
+    findings = gate.scan_bundle(FAIL_BUNDLE)
+    assert gate.generate_include(findings, {}, {("/shop/", "FAIL")}) == ""
+    # An exception excuses exactly one level, as it does for the gate.
+    assert gate.generate_include(findings, {}, {("/shop/", "WARN")}) == GENERATED_FOR_SHOP
+
+
+def test_generate_include_is_byte_stable_for_the_same_input():
+    findings = gate.scan_bundle(
+        'location.assign("/forum");redirect("/livechat/start");location.assign("/forum");'
+    )
+    text = gate.generate_include(findings, RULES, set())
+    assert text.count("sub_filter") == 6  # /forum and /livechat/, three variants each
+    assert gate.generate_include(list(reversed(findings)), RULES, set()) == text
+    assert gate.generate_include(findings + findings, RULES, set()) == text
+
+
+def _wait_for_socket(process: subprocess.Popen, socket: Path) -> None:
+    for _ in range(100):
+        if socket.exists():
+            return
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            raise AssertionError(f"nginx harness exited: {stdout}{stderr}")
+        time.sleep(0.02)
+    raise AssertionError("nginx harness socket did not become ready")
+
+
+def test_nginx_rewrites_a_bundle_through_a_generated_include(tmp_path):
+    """A real nginx loading a generated file prefixes the navigation literal."""
+    nginx = require_tool("nginx")
+    curl = require_tool("curl")
+    ingress_prefix = "/api/hassio_ingress/static-test-token"
+
+    include = tmp_path / "generated-rewrites.conf"
+    include.write_text(gate.generate_include(gate.scan_bundle(FAIL_BUNDLE), {}, set()), encoding="utf-8")
+    bundle = tmp_path / "bundle.js"
+    bundle.write_text(FAIL_BUNDLE, encoding="utf-8")
+    upstream, gateway = tmp_path / "upstream.sock", tmp_path / "gateway.sock"
+    config = tmp_path / "nginx.conf"
+    config.write_text(
+        "\n".join((
+            "daemon off;",
+            "master_process off;",
+            f"pid {tmp_path / 'nginx.pid'};",
+            f"error_log {tmp_path / 'error.log'} notice;",
+            "events {}",
+            "http {",
+            "  access_log off;",
+            # The stub upstream stands in for Odoo serving an asset bundle.
+            f"  server {{ listen unix:{upstream};",
+            f"    location = /bundle.js {{ default_type application/javascript; alias {bundle}; }}",
+            "  }",
+            # The gateway is the Ingress asset location in miniature: the same
+            # sub_filter setup, with the generated file as its only rules.
+            f"  server {{ listen unix:{gateway};",
+            "    location = /bundle.js {",
+            f"      set $safe_ingress_path {ingress_prefix};",
+            f"      proxy_pass http://unix:{upstream}:/bundle.js;",
+            '      proxy_set_header Accept-Encoding "";',
+            "      sub_filter_once off;",
+            "      sub_filter_types application/javascript;",
+            f"      include {include};",
+            "    }",
+            "  }",
+            "}",
+        )),
+        encoding="utf-8",
+    )
+
+    process = subprocess.Popen(
+        [nginx, "-p", str(tmp_path), "-c", str(config)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        _wait_for_socket(process, gateway)
+        response = subprocess.run(
+            [curl, "--fail", "--silent", "--unix-socket", str(gateway), "http://localhost/bundle.js"],
+            check=True, capture_output=True, text=True,
+        ).stdout
+        assert response == f'location.assign("{ingress_prefix}/shop/cart")'
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
 
 
 # --- exceptions -----------------------------------------------------------
