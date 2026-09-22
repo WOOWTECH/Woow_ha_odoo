@@ -26,17 +26,29 @@ for example after editing the nginx template or the exception list.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import re
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
-import literal_rewrite_gate as gate
-
 HERE = Path(__file__).resolve().parent
+LIB = HERE.parent / "rootfs/usr/local/lib/literal_rewrite_gate.py"
 TEMPLATE = HERE.parent / "rootfs/etc/nginx/nginx.conf.template"
-EXCEPTIONS = HERE / "literal_rewrite_exceptions.yaml"
+EXCEPTIONS = HERE.parent / "rootfs/usr/local/lib/literal_rewrite_exceptions.yaml"
+
+
+def load_gate():
+    spec = importlib.util.spec_from_file_location("literal_rewrite_gate", LIB)
+    module = importlib.util.module_from_spec(spec)
+    # dataclasses resolves the module's lazy annotations through sys.modules.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+gate = load_gate()
 
 # The routes every run visits after login, before the app landing pages.
 # Extend this list when a surface loads a bundle none of these reach.

@@ -12,7 +12,8 @@ name: Literal rewrite gate
 # check stays credential-free; this workflow is the one that logs in.
 # A failure means a newly installed app introduced a Prefix escape under
 # Ingress: add a Literal rewrite rule in the three quote variants, or record
-# an exception with its reason in odoo18ce/tests/literal_rewrite_exceptions.yaml.
+# an exception with its reason in
+# odoo18ce/rootfs/usr/local/lib/literal_rewrite_exceptions.yaml.
 
 on:
   schedule:
