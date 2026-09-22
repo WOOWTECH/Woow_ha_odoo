@@ -18,6 +18,18 @@
   now supplies a `writeText` backed by `document.execCommand("copy")`
   whenever `navigator.clipboard` is absent; HA over https and the Public
   origin are untouched. Issue #60.
+- A database created between two add-on starts no longer takes its
+  Canonical URL from the first administrator login. Odoo writes
+  `web.base.url` from the request it authenticated whenever
+  `web.base.url.freeze` is unset, which is the state of every database the
+  database manager creates after a start; through Ingress the value it
+  wrote was the Home Assistant host, so every email, share, portal and
+  report link pointed at Home Assistant until the next restart. The image
+  now ships a server-wide module, `woow_base_url_guard`, that Odoo loads
+  into every process and installs in no database and that removes the
+  guess on every surface. The maintenance bootstrap stays the only writer
+  of the Canonical URL; writing the value explicitly from Settings or over
+  RPC is unaffected. Issue #67.
 
 ### Testing
 - New static-tier contract test `test_ingress_clipboard_fallback.py`
@@ -46,6 +58,14 @@
   demand against every origin in `ODOO_PUBLIC_URLS` with the
   `ODOO_TEST_LOGIN` / `ODOO_TEST_PASSWORD` secrets, failing early with the
   name of any missing secret. The perimeter check is unchanged.
+- New static-tier test `test_base_url_guard.py` drives the patched login
+  path against a stand-in of Odoo's `res.users`: a `user_agent_env`
+  carrying a `base_location` produces no `web.base.url` write while the
+  authentication result comes back unchanged, and the same stand-in is
+  shown to make the write when nothing guards it. The config-script
+  contract in `test_dual_gateway.py` now also pins the
+  `server_wide_modules` line and the module's directory on the rendered
+  `addons_path`. Issue #67.
 
 ## 0.4.2 — 2026-09-16
 

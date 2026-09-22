@@ -67,7 +67,8 @@ RUN chmod a+rx /etc/cont-init.d/*.sh \
     && chmod a+rx /etc/services.d/*/finish \
     && chmod a+rx /usr/local/bin/odoo-maintenance-bootstrap \
     && chmod a+r /usr/local/lib/odoo-maintenance.py /usr/local/lib/odoo-maintenance-account.py \
-    && chmod a+rx /usr/local/bin/odoo-jsonrpc-filter
+    && chmod a+rx /usr/local/bin/odoo-jsonrpc-filter \
+    && chmod -R a+rX /opt/woow-server-addons
 
 EXPOSE 8069 5691 8072
 

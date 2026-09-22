@@ -68,7 +68,9 @@ if bashio::var.true "${LIST_DB}"; then LIST_DB_VAL="True"; else LIST_DB_VAL="Fal
 if bashio::var.true "${WITHOUT_DEMO}"; then WITHOUT_DEMO_VAL="all"; else WITHOUT_DEMO_VAL="False"; fi
 
 # ---------- 3. Build addons_path ----------
-BASE_ADDONS="/usr/lib/python3/dist-packages/odoo/addons,/data/addons,/share/odoo_addons,/opt/woow-addons/addons"
+# /opt/woow-server-addons carries the add-on's own server-wide module and
+# has to be on the path for the server_wide_modules line below to import.
+BASE_ADDONS="/usr/lib/python3/dist-packages/odoo/addons,/data/addons,/share/odoo_addons,/opt/woow-addons/addons,/opt/woow-server-addons"
 if [ -n "${EXTRA_ADDONS}" ]; then
     ADDONS_PATH="${EXTRA_ADDONS},${BASE_ADDONS}"
 else
@@ -100,6 +102,14 @@ data_dir = ${DATA_DIR}
 
 ; --- Addons ---
 addons_path = ${ADDONS_PATH}
+
+; Odoo guesses web.base.url from the request an administrator logged in
+; from whenever web.base.url.freeze is unset, which is the state of every
+; database created between two starts. woow_base_url_guard removes that
+; guess in every process, so the maintenance bootstrap stays the only
+; writer of the Canonical URL. base and web are Odoo's own defaults and
+; have to be repeated because naming this option replaces them.
+server_wide_modules = base,web,woow_base_url_guard
 
 ; --- Logging ---
 logfile = ${LOG_DIR}/odoo-server.log
