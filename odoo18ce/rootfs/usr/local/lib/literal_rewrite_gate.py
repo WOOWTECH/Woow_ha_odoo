@@ -7,7 +7,9 @@ the Ingress `location ^~ /web/assets/` block, exists only for what the shim
 cannot reach: whole-page navigations and path comparisons written as string
 literals inside asset bundles. This module decides, for the bundles a
 deployment actually serves, whether any root-relative literal is used in one
-of those contexts without a matching rule.
+of those contexts without a matching rule, and turns what it finds into the
+Generated rewrites nginx includes from that block (`generate_include`, ADR
+0005).
 
 Everything here is a pure function over strings so the static tier can pin
 the behaviour with fixtures. The module ships in the image next to the
@@ -229,6 +231,69 @@ def is_covered(finding: Finding, rules: Mapping[str, frozenset[str]]) -> bool:
     if finding.prefix.endswith("/") and finding.quote in rules.get(finding.prefix[:-1], ()):
         return True
     return False
+
+
+#: Quote variants a Generated rewrite is written in, in the order the include
+#: file lists them. The same three the hand-written prefix rules use.
+GENERATED_QUOTES = ('"', "'", "`")
+
+
+def _shipped_covers(prefix: str, rules: Mapping[str, frozenset[str]]) -> bool:
+    """Does a Shipped rewrite already touch this prefix, in any quote variant?
+
+    Coarser than `is_covered`, which answers for one literal and the quote it
+    is written in. A Generated rewrite is emitted in all three variants at
+    once, so a prefix the template rewrites at all is left to the Shipped
+    rewrite rather than half-duplicated in the generated file.
+
+    The cost is a prefix the template rewrites in some variants but not all:
+    `/report/` ships in the `"` variant only, so a navigation written
+    `location.href='/report/x'` earns no Generated rewrite. The gate keeps
+    reporting it as an unregistered FAIL, and the fix is the missing Shipped
+    variant in the template, not a second rule for the same prefix here.
+    """
+    if prefix in rules:
+        return True
+    # A bare rule (`"/odoo`) already rewrites the slashed literal, the same
+    # direction `is_covered` allows; a slashed rule never covers the bare one.
+    return prefix.endswith("/") and prefix[:-1] in rules
+
+
+def generate_include(
+    findings: Iterable[Finding],
+    shipped_rules: Mapping[str, frozenset[str]],
+    exceptions: Iterable[tuple[str, str]],
+) -> str:
+    """The text of the nginx `include` file holding the Generated rewrites.
+
+    A prefix earns rules only when a bundle uses it in a whole-page navigation
+    (`FAIL`), no Shipped rewrite covers it, and it is not registered in the
+    exception list. Path comparisons (`WARN`) and everything the Runtime shim
+    intercepts (`INFO`) never do, per ADR 0004.
+
+    Pure and byte-stable: the same findings in any order, with repeats,
+    produce the same bytes, so a rescan that found nothing new writes nothing
+    new and nginx is not reloaded for an unchanged file.
+    """
+    excepted = set(exceptions)
+    prefixes = {
+        finding.prefix
+        for finding in findings
+        if finding.level == "FAIL"
+        and finding.key not in excepted
+        and not _shipped_covers(finding.prefix, shipped_rules)
+    }
+    lines: list[str] = []
+    for prefix in sorted(prefixes):
+        for quote in GENERATED_QUOTES:
+            # nginx quotes a directive argument with either quote character;
+            # use the one the argument itself does not contain.
+            outer = '"' if quote == "'" else "'"
+            lines.append(
+                f"sub_filter {outer}{quote}{prefix}{outer}"
+                f" {outer}{quote}$safe_ingress_path{prefix}{outer};\n"
+            )
+    return "".join(lines)
 
 
 # --- exceptions -----------------------------------------------------------
