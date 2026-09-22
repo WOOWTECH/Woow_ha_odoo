@@ -3,6 +3,19 @@
 ## Unreleased
 
 ### Added
+- The Rewrite scan now runs by itself. A new service scans once at start,
+  as soon as PostgreSQL is ready, and every five minutes after that, so an
+  application installed while the add-on is running has its navigation
+  prefixes rewritten within five minutes and without a restart. Every
+  round is written to the add-on log: the status of each database (`ok`,
+  `failed`, `no bundles`) by name, whether the scan was complete, and —
+  when bundles were read — what each one contains at each level, the
+  exception hits and the prefixes now in the include file, with every
+  Ingress token masked. A round that fails is a warning in the log and
+  nothing more: the rules already in place stay live, Odoo is untouched,
+  and the next round runs five minutes later. This is the first service in
+  the image that does not stop the container when it exits, because Odoo
+  must start and keep running whatever the scan does. ADR 0009, issue #94.
 - The Rewrite scan now applies what it finds: the navigation prefixes no
   shipped rule covers become an nginx `include` file, which is validated
   with `nginx -t` against a rendered configuration that loads the candidate

@@ -398,18 +398,30 @@ class GateReport:
         return 1 if any(b.unregistered_failures for b in self.bundles.values()) else 0
 
 
-def evaluate(
-    bundles: Mapping[str, str],
+def evaluate_findings(
+    bundles: Mapping[str, tuple[int, Iterable[Finding]]],
     rules: Mapping[str, frozenset[str]],
     exceptions: Iterable[tuple[str, str]],
 ) -> GateReport:
-    """Scan every bundle, drop covered literals, apply exceptions, decide."""
+    """Drop covered literals, apply exceptions, decide — over findings already taken.
+
+    Split out of `evaluate` for the caller that has scanned the bundles
+    itself and must not scan them twice. Inside the container both halves
+    of a round want the same findings: `generate_include` selects the rules
+    from them and the add-on log summarises them (`rewrite_apply`, issue
+    #94). A second `scan_bundle` pass over every bundle would double the
+    four seconds of analysis a round costs, which is the cost ADR 0007
+    measured and the whole reason a scan keeps a state at all.
+
+    Each bundle is given as `(size in bytes, its findings)`, because a
+    report prints the size and the findings no longer carry the text.
+    """
     exceptions = set(exceptions)
     report = GateReport(bundles={}, rules=rules, exceptions=exceptions)
-    for name, text in bundles.items():
-        bundle = BundleReport(name=name, size=len(text))
+    for name, (size, findings) in bundles.items():
+        bundle = BundleReport(name=name, size=size)
         seen_hits: set[tuple[str, str]] = set()
-        for finding in scan_bundle(text):
+        for finding in findings:
             if is_covered(finding, rules):
                 continue
             bundle.findings.append(finding)
@@ -421,6 +433,19 @@ def evaluate(
                 bundle.unregistered_failures.append(finding)
         report.bundles[name] = bundle
     return report
+
+
+def evaluate(
+    bundles: Mapping[str, str],
+    rules: Mapping[str, frozenset[str]],
+    exceptions: Iterable[tuple[str, str]],
+) -> GateReport:
+    """Scan every bundle, drop covered literals, apply exceptions, decide."""
+    return evaluate_findings(
+        {name: (len(text), scan_bundle(text)) for name, text in bundles.items()},
+        rules,
+        exceptions,
+    )
 
 
 def format_report(report: GateReport, header: Iterable[str] = ()) -> str:

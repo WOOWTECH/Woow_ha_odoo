@@ -41,6 +41,16 @@ include file already holds those rules. While application is off nothing
 is written and the cheap "nothing changed" skip is not taken either, so the
 report keeps saying what would be rewritten instead of going silent.
 
+`report` is the other half of a round, and the only half an operator ever
+sees (issue #94, ADR 0009). The s6 service runs this CLI every five
+minutes and what it prints *is* that round's entry in the add-on log, so a
+round that printed nothing would be an add-on that silently stopped
+updating its rules. Every round therefore says what each database answered and whether
+the scan was complete, and every round that actually read bundles adds the
+per-bundle, per-level summary with its exception hits. Every line goes
+through `gate.mask`, because a bundle can hold an Ingress token and the
+add-on log is copied into issues and screenshots.
+
 Only `validate`, `reload_nginx` and the file moves reach out of the
 process; the rest is pure over strings, so the Static tier drives all four
 refusals with a fake runner and a temporary filestore.
@@ -51,6 +61,7 @@ exception list, which ADR 0008 puts in the image.
 from __future__ import annotations
 
 import argparse
+import collections
 from dataclasses import dataclass, field, replace
 import itertools
 import os
@@ -196,18 +207,84 @@ def load_exceptions(path: str | os.PathLike = EXCEPTIONS_PATH) -> set:
     return gate.load_exceptions(Path(path).read_text(encoding="utf-8"))
 
 
-def build_include(texts: Mapping[tuple[str, str], str], rules: Mapping, exceptions: Iterable) -> str:
+def scan_bundles(texts: Mapping[tuple[str, str], str]) -> dict:
+    """The findings of every bundle, one regex pass each.
+
+    The pass is taken here, once, and both halves of a round are built from
+    what it returns: `build_include` selects the rules and
+    `evaluate_bundles` summarises the same findings for the log. Scanning
+    again for the second half would double the four seconds of analysis a
+    round costs, which is the cost ADR 0007 measured and the reason the
+    scan keeps a state at all.
+    """
+    return {key: gate.scan_bundle(text) for key, text in texts.items()}
+
+
+def build_include(scanned: Mapping[tuple[str, str], list], rules: Mapping, exceptions: Iterable) -> str:
     """The include text for these bundles: the union of their findings.
 
     The selection is `generate_include`'s alone -- navigation-level literals
     (`FAIL`) that no shipped rule covers and no exception excuses. This
     ticket adds no rule of its own, which is why `rewrite_apply.py` is not
     in `rewrite_scan.ANALYSIS_MODULES`: it cannot change what a scan finds.
+
+    Note that this takes `scan_bundles`' findings and not the bundle texts,
+    and that it is deliberately *not* built from the log summary's
+    `GateReport` instead. The summary drops what `is_covered` answers for
+    one literal and the quote it is written in; generation asks the coarser
+    `_shipped_covers` about the prefix. The two differ for a CSS `url(/x)`
+    literal, and reading the selection off the summary would quietly change
+    which rules a host gets.
     """
     findings: list = []
-    for text in texts.values():
-        findings.extend(gate.scan_bundle(text))
+    for bundle in scanned.values():
+        findings.extend(bundle)
     return gate.generate_include(findings, rules, exceptions)
+
+
+def bundle_label(key: tuple[str, str]) -> str:
+    """How one bundle is named in the log: its database and its URL.
+
+    The whole key, never the name. One database serves the same bundle name
+    under a website-scoped URL and an unscoped one with different content
+    (`rewrite_scan.BundleRow.key`), so a name-keyed summary would report
+    two different bundles as one.
+    """
+    database, url = key
+    return f"{database} {url}"
+
+
+def evaluate_bundles(
+    texts: Mapping[tuple[str, str], str],
+    scanned: Mapping[tuple[str, str], list],
+    rules: Mapping,
+    exceptions: Iterable,
+) -> "gate.GateReport":
+    """The same findings again, per bundle and per level, for the log.
+
+    `build_include` answers "which prefixes earn a rule" and throws the rest
+    away; this answers "what did each bundle actually contain", which is
+    what the round reports. Both are built from the one pass `scan_bundles`
+    took, and both measure coverage against the Shipped rewrites alone, so
+    a `FAIL` row in the summary is what earned an entry in the include
+    file.
+
+    Merging the Generated rewrites in first would make the log read as
+    though nothing was ever found -- every rule the add-on wrote would
+    cover the finding that earned it -- which is the same trap
+    `shipped_rules` avoids for generation.
+
+    The texts are still wanted for their length alone: a report prints each
+    bundle's size and a finding does not carry the bundle it came from.
+    """
+    return gate.evaluate_findings(
+        {
+            bundle_label(key): (len(texts[key]), findings)
+            for key, findings in scanned.items()
+        },
+        rules,
+        exceptions,
+    )
 
 
 def include_prefixes(text: str) -> tuple:
@@ -339,12 +416,21 @@ class ApplyResult:
     status: str
     detail: str = ""
     include_text: str = ""
+    # The prefixes the round leaves rewritten: the generation it produced,
+    # or -- for a round that generated nothing, because no pass was due or
+    # the scan was refused -- what the file on disk already held
+    # (`live_prefixes`). The exception is `application off`, where it is
+    # what *would* be rewritten, and the detail says so.
     prefixes: tuple = ()
     wrote: bool = False
     reloaded: bool = False
     state_saved: bool = False
     scan: "scan.ScanResult | None" = None
     verdict: "scan.ScanVerdict | None" = None
+    # None means no bundle was read this round, which is the ordinary case:
+    # the state said nothing moved, or the scan was refused before the
+    # bytes were opened. An empty report would claim a pass that never ran.
+    findings: "gate.GateReport | None" = None
 
     @property
     def healthy(self) -> bool:
@@ -444,6 +530,25 @@ def apply_include(
     )
 
 
+def live_prefixes(include_path: str | os.PathLike = scan.GENERATED_REWRITES_PATH) -> tuple:
+    """The prefixes the include file on disk rewrites right now.
+
+    What a round reports when it generated nothing of its own: an
+    up-to-date round and a refused one both leave the file exactly as it
+    was, and "which Generated rewrites are live" is the question an
+    operator is actually asking. Without it, every round after the first
+    application would stop naming them, and a host doing its job would read
+    like a host that had forgotten how.
+
+    An unreadable file answers nothing rather than raising: this is a line
+    of a log, and the round it belongs to has already said what it did.
+    """
+    try:
+        return include_prefixes(Path(include_path).read_text(encoding="utf-8"))
+    except OSError:
+        return ()
+
+
 def _incomplete(result) -> str:
     """Why nothing was applied, with the database that failed named."""
     reason = result.error or (
@@ -492,6 +597,7 @@ def apply_round(
     if not result.complete:
         return ApplyResult(
             STATUS_INCOMPLETE, _incomplete(result), scan=result,
+            prefixes=live_prefixes(include_path),
         )
 
     verdict = scan.scan_state(result.rows, previous_state, version=version)
@@ -503,18 +609,25 @@ def apply_round(
         return ApplyResult(
             STATUS_UP_TO_DATE,
             f"no pass was due ({verdict.reason}); the include file is untouched",
-            scan=result, verdict=verdict,
+            scan=result, verdict=verdict, prefixes=live_prefixes(include_path),
         )
 
     read = read_bundles(result, filestore)
     if not read.result.complete:
         return ApplyResult(
             STATUS_INCOMPLETE, _incomplete(read.result), scan=read.result, verdict=verdict,
+            prefixes=live_prefixes(include_path),
         )
 
     nginx_conf = Path(nginx_conf_path).read_text(encoding="utf-8")
-    text = build_include(read.texts, shipped_rules(nginx_conf), load_exceptions(exceptions_path))
+    rules = shipped_rules(nginx_conf)
+    exceptions = load_exceptions(exceptions_path)
+    # The one pass over the bytes, and the four seconds ADR 0007 prices.
+    # Both the include file and the round's summary are built from it.
+    scanned = scan_bundles(read.texts)
+    text = build_include(scanned, rules, exceptions)
     prefixes = include_prefixes(text)
+    findings = evaluate_bundles(read.texts, scanned, rules, exceptions)
 
     if not auto:
         return ApplyResult(
@@ -523,13 +636,14 @@ def apply_round(
             f"{include_path} is not touched. The scan found {len(prefixes)} "
             "prefixes that would be rewritten; rules already in place stay live",
             include_text=text, prefixes=prefixes, scan=read.result, verdict=verdict,
+            findings=findings,
         )
 
     outcome = apply_include(
         text, nginx_conf,
         include_path=include_path, pid_path=pid_path, runner=runner, running=running,
     )
-    outcome = replace(outcome, scan=read.result, verdict=verdict)
+    outcome = replace(outcome, scan=read.result, verdict=verdict, findings=findings)
 
     if outcome.agrees_with_disk and state_path is not None:
         # Only now: the file on disk holds the rules these bundles earn, so
@@ -541,10 +655,125 @@ def apply_round(
     return outcome
 
 
+# --- the log summary ----------------------------------------------------------
+
+def database_lines(result) -> list[str]:
+    """What each database answered, and whether the round may be believed.
+
+    Every database is named with its status, including the ones that
+    answered nothing, because the three outcomes mean different things and
+    only one of them is a problem: `no bundles` is a fresh database, `ok`
+    is a database that was read, and `failed` is a database that was not.
+
+    A round that was incomplete says so in two ways on purpose. `complete:
+    no` is the fact, and the sentence after it is the consequence, because
+    an operator reading "incomplete" alone cannot tell whether the rules on
+    disk moved. Without that sentence #93's refusal to apply an incomplete
+    scan looks from outside like an add-on that quietly stopped updating
+    its rules.
+    """
+    counts = collections.Counter(database.status for database in result.databases)
+    lines = [
+        f"  databases: {len(result.databases)} "
+        f"(ok {counts[scan.STATUS_OK]}, "
+        f"no bundles {counts[scan.STATUS_NO_BUNDLES]}, "
+        f"failed {counts[scan.STATUS_FAILED]}), "
+        f"bundles {len(result.rows)}, skipped {len(result.skipped)}, "
+        f"complete: {'yes' if result.complete else 'no'}"
+    ]
+    if result.error:
+        lines.append(f"  {result.error}")
+    for database in result.databases:
+        header = f"  {database.database}: {database.status}"
+        lines.append(f"{header} -- {database.error}" if database.error else header)
+    if not result.complete:
+        lines.append(
+            "  incomplete: this round read less than the whole cluster, so "
+            "no Generated rewrite was added or removed and the rules already "
+            "in place stay live"
+        )
+    return lines
+
+
+def finding_lines(findings) -> list[str]:
+    """One round's bundles, per bundle and per level, with its exception hits.
+
+    Coverage is measured against the Shipped rewrites alone, the way
+    `build_include` selects, so a `FAIL` row here is precisely what earns a
+    Generated rewrite and the `prefixes:` line below says which ones the
+    file now holds. A literal the template already rewrites is not a
+    finding and is not printed.
+
+    The gate's own `format_report` is not reused. It prints the outside-in
+    view of a host under the name the glossary reserves for that run, and
+    this is the in-container round going into the add-on log every five
+    minutes. `FAIL` and `WARN` are counted the way it counts them -- one
+    (bundle, prefix) pair each, exception hits excluded -- so the two
+    reports never disagree about how much was found at the levels that
+    decide anything. `INFO` is counted the same way here rather than as
+    distinct prefixes across bundles, because this report is one host's
+    round: "which bundle" is the useful half of an INFO count here and is
+    not there.
+
+    `FAIL` and `WARN` rows carry the snippet the finding was cut from,
+    because a prefix alone does not say which line of a minified bundle to
+    look at. `INFO` is listed as counts on one line: it is everything the
+    Runtime shim already intercepts, and a host serves a lot of it.
+    """
+    totals = {level: 0 for level in gate.LEVELS}
+    hits: set[tuple[str, str]] = set()
+    blocks: list[str] = []
+    for name, bundle in findings.bundles.items():
+        excused = {finding.key for finding in bundle.exception_hits}
+        hits.update(excused)
+        blocks.append(f"  == {name} ({bundle.size:,} B)")
+        if not bundle.findings:
+            blocks.append("       every root-relative literal is covered")
+            continue
+        for level in gate.LEVELS:
+            counts = bundle.counts(level)
+            totals[level] += sum(
+                1 for prefix in counts if (prefix, level) not in excused
+            )
+            if not counts:
+                continue
+            if level == "INFO":
+                listed = ", ".join(
+                    f"{prefix} x{count}" for prefix, count in sorted(counts.items())
+                )
+                blocks.append(f"       INFO      {listed}")
+                continue
+            shown: set[str] = set()
+            for finding in bundle.findings:
+                if finding.level != level or finding.prefix in shown:
+                    continue
+                shown.add(finding.prefix)
+                tag = "exception" if finding.key in excused else level
+                blocks.append(
+                    f"       {tag:<9} {finding.prefix:<20} "
+                    f"x{counts[finding.prefix]:<4} {finding.snippet}"
+                )
+    summary = (
+        f"  findings: {len(findings.bundles)} bundles, "
+        f"FAIL {totals['FAIL']}, WARN {totals['WARN']}, INFO {totals['INFO']} "
+        "uncovered by the Shipped rewrites"
+    )
+    lines = [summary, *blocks]
+    if hits:
+        listed = ", ".join(f"{prefix} {level}" for prefix, level in sorted(hits))
+        lines.append(f"  exception hits: {listed}")
+    return lines
+
+
 # --- the command --------------------------------------------------------------
 
 def report(outcome: ApplyResult, state_note: str, out=print) -> None:
-    """One round in the add-on log, Ingress tokens masked."""
+    """One round in the add-on log, Ingress tokens masked.
+
+    The masking is here rather than at each call site: a caller that forgot
+    would put an Ingress token in the add-on log, which is what gets copied
+    into an issue or a screenshot.
+    """
     def line(text: str = "") -> None:
         out(gate.mask(text))
 
@@ -552,9 +781,11 @@ def report(outcome: ApplyResult, state_note: str, out=print) -> None:
     line(f"  {outcome.detail}")
     line(f"  state: {state_note}" + (" (written)" if outcome.state_saved else ""))
     if outcome.scan is not None:
-        for database in outcome.scan.databases:
-            header = f"  {database.database}: {database.status}"
-            line(f"{header} -- {database.error}" if database.error else header)
+        for text in database_lines(outcome.scan):
+            line(text)
+    if outcome.findings is not None:
+        for text in finding_lines(outcome.findings):
+            line(text)
     if outcome.prefixes:
         line(f"  prefixes: {' '.join(outcome.prefixes)}")
 
