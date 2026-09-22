@@ -634,7 +634,7 @@ def test_an_adr_records_the_chosen_read_path() -> None:
     assert adrs, "issue #92 lands ADR 0007"
     text = adrs[0].read_text(encoding="utf-8")
     # Lowercase, as every ADR before it writes its status.
-    assert "status: proposed" in text
+    assert "status: accepted" in text
     # Read time, scan time and peak memory for both options, from the
     # measurement on the populated database.
     for token in ("odoo shell", "psql", "filestore", "peak", "4.71", "4.17"):

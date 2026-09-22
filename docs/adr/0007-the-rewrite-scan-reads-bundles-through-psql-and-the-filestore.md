@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-09-22
 ---
 
@@ -108,7 +108,9 @@ sentence in issue #74's Implementation Decisions.
   exception list applying to Generated rewrites, so whichever ticket builds
   the include file inside the container has to put PyYAML in the image or
   read the list another way. The scan and its CLI no longer fail on the
-  import alone, which is what this ticket needed.
+  import alone, which is what this ticket needed. ADR 0008 answered the
+  question this bullet left open: the image gains the Debian package
+  `python3-yaml`.
 - A row whose `store_fname` is NULL (`ir_attachment.location = db`, which
   the add-on never sets but an operator can) has no filestore bytes. It is
   reported as an unsupported-storage skip rather than read through
