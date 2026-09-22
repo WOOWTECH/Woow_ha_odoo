@@ -260,11 +260,21 @@ L0  通道               ← nginx 監聽、header、壓縮、快取、緩衝、
 |---|---|---|---|---|
 | `U-E1` | `web.base.url` 不被登入覆寫 | **RC-9** | 記錄現值 → 以 admin 從 ingress 登入 → 重讀 | 值不變；若變成 ingress token URL 即 **Blocker（token 外洩）** |
 | `U-E2` | 郵件內連結 | RC-9 | 觸發任一寄信動作（邀請、通知、密碼重設），攔截 outgoing mail 內容 | 所有連結為 public 基底；**不得含 token** |
-| `U-E3` | 分享連結欄位 | RC-9 | 每個「分享」對話框中的 URL 欄位 | 值為 **Canonical URL**，且外部瀏覽器可開 |
+| `U-E3` | 分享連結欄位 | RC-9 | 每個「分享」對話框中的 URL 欄位 | 值為 **Canonical URL**；可達性見下方註記 |
 | `U-E4` | 報表內連結與 QR | RC-9 | 產生含 QR／連結的 PDF，解碼 QR | 指向 public 基底 |
 | `U-E5` | 附件／檔案的絕對 URL | RC-9 | 取得附件的對外連結 | 同上 |
 | `U-E6` | 外部回呼入口 | **RC-10** | 金流 notify／webhook／郵件追蹤 pixel 的目標 URL | 必為 public 基底且對外可達；ingress 不可能承接 → `STRUCTURAL` |
 | `U-E7` | 匯出檔內的 URL | RC-9 | 檢查匯出的 xlsx／csv 內含連結欄位 | 同上 |
+
+> **`U-E3` 可達性註記**（2026-09-23，issue #101）：連結的字面值正確**不等於**外部瀏覽器打得開。
+> 能不能打開由被分享物件自己的存取控制決定，與 **Canonical URL** 無關，換成哪個基底都一樣。
+> Discuss 的邀請連結 `/chat/<channel_id>/<uuid>` 就是一例：Odoo 18 對每個
+> `channel_type = 'channel'` 自動把 `group_public_id`（Authorized Group）算成 Internal User，
+> 而該路由對不在這個群組裡的呼叫者一律回 404——未登入的訪客不在任何群組。
+> 因此 `U-E3` 的可達性**只在該物件允許匿名存取時**才列入判定。測 Discuss 時要先清掉
+> 頻道的 Authorized Group，並且**不可**拿內建的 `general` 或 `Administrators` 頻道來測：
+> 前者帶 Internal User，後者帶 Settings。2026-09-23 在控制組上三層實測（乾淨的原廠
+> Odoo 18、`.6` 的資料、以及經 **Public origin** 的未登入請求）都是同一個結論。
 
 ### F 群組 — 宿主環境（L0/L2）
 
