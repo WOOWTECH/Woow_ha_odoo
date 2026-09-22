@@ -26,6 +26,8 @@ We decided:
   `https://woowtech-odoo-test-6.woowtech.io` (host 192.168.2.6, database
   `odoo_test`), not production. Every Live-tier item that writes data
   (archive, delete, import, large upload) runs only there.
+  _Update 2026-09-22: the host answers on `192.168.50.192`. `.6` names the
+  deployment, not the address; the origin and the database are unchanged._
 - **The Odoo on the production host 192.168.2.189 was retired on
   2026-09-16** (commit 835ab58, issues #59 and #61). Its origin
   `https://woowtech-odooo.woowtech.io` was removed from the Cloudflare
