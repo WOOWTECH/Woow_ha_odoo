@@ -151,6 +151,16 @@ logged in from. Through Ingress that address is the Supervisor path
 `/api/hassio_ingress/<token>/...`, so one admin login would put the Ingress
 token into every outgoing email.
 
+Odoo no longer makes that guess here. The image ships a small server-wide
+module, `woow_base_url_guard`, that Odoo loads into every process and
+installs in no database; it removes the guess on every surface — Ingress,
+the Public origin and the LAN tier — including the administrator login the
+database manager performs after `create`, `duplicate` and `restore`. The
+add-on is the only component that sets the Canonical URL. A database
+created between two starts therefore keeps Odoo's install default until the
+next start, instead of the address the first administrator logged in from.
+Setting the value explicitly, in Settings or over RPC, is unaffected.
+
 On every start, before Odoo serves requests, the add-on therefore visits
 each Odoo database in its PostgreSQL and writes a Canonical URL:
 

@@ -19,6 +19,10 @@ CONFIG_SCRIPT = ROOT / "rootfs/etc/cont-init.d/10-odoo-config.sh"
 POSTGRES_INIT = ROOT / "rootfs/etc/cont-init.d/00-postgres-init.sh"
 TEMPLATE = ROOT / "rootfs/etc/nginx/nginx.conf.template"
 BOOTSTRAP = ROOT / "rootfs/usr/local/bin/odoo-maintenance-bootstrap"
+# Odoo imports this module in every process through server_wide_modules; it
+# is installed in no database. See tests/test_base_url_guard.py.
+SERVER_ADDONS_DIR = "/opt/woow-server-addons"
+GUARD_MODULE = "woow_base_url_guard"
 
 
 def read(path: Path) -> str:
@@ -77,6 +81,17 @@ def test_config_script_contract() -> None:
     assert "PUBLIC_HOST_MAP=''" in s
     assert "DENY_STATUS='503'" in s
     assert "DENY_STATUS='444'" in s
+    # Odoo's own web.base.url guess is disabled by a server-wide module, so
+    # the maintenance bootstrap stays the only writer of the Canonical URL.
+    assert f"server_wide_modules = base,web,{GUARD_MODULE}" in s
+    # The module is imported by name, so the directory holding it has to be
+    # on the rendered addons_path and has to ship in the image.
+    base_addons = re.search(r'^BASE_ADDONS="([^"]+)"', s, re.M)
+    assert base_addons, "BASE_ADDONS is not one double-quoted, comma-separated list"
+    assert SERVER_ADDONS_DIR in base_addons.group(1).split(",")
+    shipped = ROOT / "rootfs" / SERVER_ADDONS_DIR.lstrip("/") / GUARD_MODULE
+    assert (shipped / "__manifest__.py").is_file()
+    assert (shipped / "__init__.py").is_file()
 
 
 def test_nginx_template_contract() -> None:
