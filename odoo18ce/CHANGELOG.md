@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- A one-shot `odoo-rewrite-scan` command in the image prints, for every
+  Odoo database, the asset bundle attachments it serves with their
+  checksums, a per-database status, and whether a Rewrite scan is due. It
+  is the read half of the Generated rewrites in ADR 0005 and it only
+  reads: nothing is applied and no nginx rule changes yet. The bundles are
+  read with one `psql` query plus the filestore rather than by starting an
+  Odoo registry, which is about 60× cheaper per round and was measured
+  before the choice was made. ADR 0007, issue #92.
 - Ingress: the Runtime shim now publishes the Canonical URL to the page as
   a read-only `window.__WOOW_CANONICAL_URL__`. Odoo 18 builds some links
   for people outside in the browser, from the address in the address bar,

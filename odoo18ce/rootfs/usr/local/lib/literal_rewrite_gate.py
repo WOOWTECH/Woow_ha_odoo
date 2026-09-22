@@ -36,8 +36,6 @@ from dataclasses import dataclass, field
 import re
 from typing import Iterable, Mapping
 
-import yaml
-
 LEVELS = ("FAIL", "WARN", "INFO")
 _RANK = {level: index for index, level in enumerate(LEVELS)}
 
@@ -330,7 +328,23 @@ def generate_include(
 # --- exceptions -----------------------------------------------------------
 
 def load_exceptions(text: str) -> set[tuple[str, str]]:
-    """Parse the checked-in exception list: prefix, level and a reason each."""
+    """Parse the checked-in exception list: prefix, level and a reason each.
+
+    PyYAML is imported here rather than at the top of the module because
+    nothing installs it in the image: it is a test requirement only
+    (`release.yml:85`, `tests/requirements-test.txt:4`). The first caller
+    inside the container, `odoo-rewrite-scan` (issue #92), needs `mask()`
+    and the classification, not this function, and used to fail on the
+    import alone.
+
+    A later in-container caller does need the list -- ADR 0005 keeps the
+    shipped exceptions applying to Generated rewrites -- and will have to
+    put PyYAML in the image or read the list another way. Keeping the
+    import here is what leaves that a choice rather than a start-up
+    failure for everything that imports this module.
+    """
+    import yaml
+
     entries = yaml.safe_load(text) or []
     if not isinstance(entries, list):
         raise ValueError("the exception list must be a YAML sequence of entries")
