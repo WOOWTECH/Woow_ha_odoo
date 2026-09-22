@@ -78,7 +78,9 @@ Public 是**基準組**，Ingress 是**待測組**。所有比對方向都是「
 ### 2.2 受測範圍
 
 - **主機**：測試機 .6（add-on slug `1b7b4ce7_odoo18ce`，Public origin
-  `https://woowtech-odoo-test-6.woowtech.io`）
+  `https://woowtech-odoo-test-6.woowtech.io`）。這是一台實體機，以 SSH
+  進入；**位址不記錄在本 repo**，向維運者取得。`.6` 是名字不是位址，
+  它比當初取名時的網段活得久（主機於 2026-09-22 換過網段）
 - **DB**：`odoo_test`
 - **客戶端**：桌機 Chrome（Chromium 穩定版），1920×1080，**單一基準**
   - HA 手機 App WebView、行動版視窗、Safari／非 Chromium **本輪不納入**，
@@ -469,7 +471,7 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 # 靜態閘門（不需部署；需安裝 nginx 與 node）
 pytest odoo18ce/tests
 
-# 主機狀態勘查（SSH 進測試機 HAOS）
+# 主機狀態勘查（SSH 進測試機 HAOS；位址不記於本 repo，見 2.2）
 ha addons info 1b7b4ce7_odoo18ce
 docker exec app_1b7b4ce7_odoo18ce grep -n -A8 'listen 8069' /etc/nginx/nginx.conf
 docker exec -u postgres app_1b7b4ce7_odoo18ce \
