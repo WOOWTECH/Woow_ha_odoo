@@ -188,6 +188,32 @@ The `website` module is not installed on a database created by
 `default_db` (only `base` is); the domain is set on the first start after
 the module is installed.
 
+### Links the browser builds
+
+A few links are not built by the server at all. Odoo assembles them in the
+page, from the address in the address bar, and through Ingress that address
+is Home Assistant's — so the link is useless to whoever receives it, and
+`web.base.url` has no say in the matter. The add-on carries the Canonical
+URL into the Ingress page and moves these links onto it:
+
+| Where | What it is |
+|---|---|
+| Discuss → a channel → *Invite People* | The invitation link |
+| Website → *Pages* → a page | The address shown before the page's path |
+| A page's *Share* block (Facebook, X, WhatsApp, …) | The address handed to the social network |
+
+The share block matters beyond a broken link: without this, the address it
+posts is the full Ingress URL, Supervisor token included.
+
+Everything else keeps working the way it did. Links that Odoo's shared URL
+helper builds are **not** moved — that helper also builds the addresses for
+images, attachments and RPC calls, and moving it would send those out of
+Ingress and break the page. Where such a link needs to reach somebody
+outside, produce it from the Public origin. With no Canonical URL
+configured or discoverable (Ingress-only, and the Supervisor reports no LAN
+address) none of these links change at all; set `public_url` if they must
+work from outside.
+
 ## Custom Modules
 
 Place custom Odoo modules in `/share/odoo_addons/` (mapped from HA's shared
