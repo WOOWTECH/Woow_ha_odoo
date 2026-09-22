@@ -23,10 +23,16 @@ We decided:
   `web.base.url.freeze` on every start, so an admin login through Ingress
   can never write the Supervisor token into `web.base.url`.
 - **The control group is the test host's Public origin,**
-  `https://woowtech-odoo-test-6.woowtech.io` (host 192.168.2.6, database
-  `odoo_test`), not production. Every Live-tier item that writes data
-  (archive, delete, import, large upload) runs only there.
-- **The Odoo on the production host 192.168.2.189 was retired on
+  `https://woowtech-odoo-test-6.woowtech.io` (database `odoo_test`), not
+  production. Every Live-tier item that writes data (archive, delete,
+  import, large upload) runs only there. It is a real machine on the LAN,
+  reached over SSH as root; **its address is deliberately not recorded in
+  this repository** and is held with the operator's other host
+  credentials. `test-6` is a name, not an address — it outlived the LAN
+  address it was coined from (the host moved network on 2026-09-22), and
+  the Public origin did not change with it, so everything keyed on either
+  still reads as written.
+- **The Odoo on the production host was retired on
   2026-09-16** (commit 835ab58, issues #59 and #61). Its origin
   `https://woowtech-odooo.woowtech.io` was removed from the Cloudflare
   tunnel routing and from DNS, and from the `ODOO_PUBLIC_URLS` repository
