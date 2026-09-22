@@ -250,7 +250,9 @@ def test_an_unchanged_generation_is_neither_written_nor_reloaded(tmp_path: Path)
     runner = Runner()
     # What the previous pass would have written for the same bundle.
     text = apply.build_include(
-        {one.key: FORUM_BUNDLE}, apply.shipped_rules(rendered_conf()), apply.load_exceptions()
+        apply.scan_bundles({one.key: FORUM_BUNDLE}),
+        apply.shipped_rules(rendered_conf()),
+        apply.load_exceptions(),
     )
     assert "/forum/" in text, "the fixture must earn a rule for this test to mean anything"
     outcome, include = apply_round(
