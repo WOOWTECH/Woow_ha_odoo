@@ -194,16 +194,10 @@ def ingress_assets_block(template: str) -> str:
     return template[start:end]
 
 
-def rewrite_rules(template: str) -> dict[str, frozenset[str]]:
-    """Prefix -> quote variants the Literal rewrite substitutes it in.
-
-    Only plain prefix rules (``'"/web/'``) and the generic CSS ``url(/`` rules
-    are collected. Exact-expression patches (router, bus worker, settings
-    icon) are not prefix rules and are ignored. The CSS rules are recorded
-    under `CSS_URL_RULE` with the quote variants they cover.
-    """
+def _prefix_rules(text: str) -> dict[str, frozenset[str]]:
+    """Prefix -> quote variants, from every `sub_filter` directive in `text`."""
     variants: dict[str, set[str]] = {}
-    for match in _SUB_FILTER.finditer(ingress_assets_block(template)):
+    for match in _SUB_FILTER.finditer(text):
         source = match.group(1) if match.group(1) is not None else match.group(2)
         prefix_rule = _PREFIX_RULE.match(source)
         if prefix_rule:
@@ -213,6 +207,43 @@ def rewrite_rules(template: str) -> dict[str, frozenset[str]]:
         if css_rule:
             variants.setdefault(CSS_URL_RULE, set()).add(css_rule.group("quote"))
     return {prefix: frozenset(quotes) for prefix, quotes in variants.items()}
+
+
+def rewrite_rules(template: str) -> dict[str, frozenset[str]]:
+    """Prefix -> quote variants the Literal rewrite substitutes it in.
+
+    Only plain prefix rules (``'"/web/'``) and the generic CSS ``url(/`` rules
+    are collected. Exact-expression patches (router, bus worker, settings
+    icon) are not prefix rules and are ignored. The CSS rules are recorded
+    under `CSS_URL_RULE` with the quote variants they cover.
+    """
+    return _prefix_rules(ingress_assets_block(template))
+
+
+def include_rules(text: str) -> dict[str, frozenset[str]]:
+    """The same mapping for a Generated rewrite include file.
+
+    `generate_include` writes bare `sub_filter` lines with no enclosing
+    `location` block, so the file is read directly instead of through
+    `ingress_assets_block`. The rules mean what the Shipped ones mean: what
+    the file holds is what nginx substitutes on that host.
+    """
+    return _prefix_rules(text)
+
+
+def merge_rules(*rule_sets: Mapping[str, frozenset[str]]) -> dict[str, frozenset[str]]:
+    """The effective rules of several sources, quote variants unioned per prefix.
+
+    A host that applied Generated rewrites substitutes the template's rules
+    and the generated ones. Evaluating against the merge is what makes the
+    gate report that host rather than the image: a prefix the host already
+    covers is covered, not an unregistered FAIL reported a second time.
+    """
+    merged: dict[str, set[str]] = {}
+    for rules in rule_sets:
+        for prefix, quotes in rules.items():
+            merged.setdefault(prefix, set()).update(quotes)
+    return {prefix: frozenset(quotes) for prefix, quotes in merged.items()}
 
 
 def rewrite_prefixes(template: str) -> set[str]:

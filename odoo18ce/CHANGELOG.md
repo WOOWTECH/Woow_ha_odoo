@@ -31,6 +31,23 @@
   of the Canonical URL; writing the value explicitly from Settings or over
   RPC is unaffected. Issue #67.
 
+### Changed
+- The two Live-tier workflows, the Perimeter check and the Literal rewrite
+  gate, no longer run on the nightly schedule; both are dispatch-only. The
+  add-on now does both jobs on the host itself — the start-time self-check
+  for the database-manager routes, the in-container Rewrite scan for the
+  Literal rewrite — and the test host that served as the control group is
+  being stopped, so a scheduled run would have had nothing to run against.
+  `workflow_dispatch` stays on both for whenever a control group exists
+  again, and release.yml still dispatches the perimeter check after a
+  Release. ADR 0005, issue #80.
+- The Literal rewrite gate CLI takes `--include-file`, a copy of the
+  Generated rewrite include file the host under test applied, and merges
+  its rules with the template's before evaluating. A run against a host
+  that applied Generated rewrites then reports 0 unregistered `FAIL`
+  instead of re-reporting the prefixes the add-on already covers there.
+  Issue #80.
+
 ### Testing
 - New static-tier contract test `test_ingress_clipboard_fallback.py`
   executes the whole Runtime shim in a node `vm` context against a DOM
@@ -58,6 +75,13 @@
   static tier pins them in `test_literal_rewrite_gate.py`, which loads the
   module from the image the way the maintenance bootstrap tests do.
   Issue #75.
+- New static-tier contract test `test_workflow_triggers.py`: the Perimeter
+  check and the Literal rewrite gate declare `workflow_dispatch` and no
+  `schedule`. `test_literal_rewrite_gate.py` gains the effective-rules
+  cases — the include file parses as bare `sub_filter` lines, merged rules
+  union the quote variants per prefix, and the CLI run with
+  `--include-file` reports a `FAIL` prefix the file rewrites as covered.
+  Issue #80.
 - New workflow `literal-rewrite-gate.yml` runs the gate nightly and on
   demand against every origin in `ODOO_PUBLIC_URLS` with the
   `ODOO_TEST_LOGIN` / `ODOO_TEST_PASSWORD` secrets, failing early with the

@@ -269,6 +269,11 @@ GENERATED_FOR_SHOP = (
     'sub_filter \'`/shop/\' \'`$safe_ingress_path/shop/\';\n'
 )
 
+# A navigation on a prefix no Shipped rewrite covers, so a host's Rewrite
+# scan generates rules for it and its include file is what makes the gate
+# pass on that host.
+FAIL_BUNDLE_FORUM = 'location.assign("/forum")'
+
 
 def test_generate_include_writes_three_quote_variants_per_fail_prefix():
     assert gate.generate_include(gate.scan_bundle(FAIL_BUNDLE), {}, set()) == GENERATED_FOR_SHOP
@@ -307,6 +312,73 @@ def test_generate_include_is_byte_stable_for_the_same_input():
     assert text.count("sub_filter") == 6  # /forum and /livechat/, three variants each
     assert gate.generate_include(list(reversed(findings)), RULES, set()) == text
     assert gate.generate_include(findings + findings, RULES, set()) == text
+
+
+# --- the effective rules of a host that applied Generated rewrites --------
+
+def test_include_rules_read_the_bare_lines_the_generated_file_holds():
+    """The include has no `location` block around it, unlike the template."""
+    assert gate.include_rules(GENERATED_FOR_SHOP) == {"/shop/": frozenset(gate.GENERATED_QUOTES)}
+
+
+def test_merge_rules_unions_the_quote_variants_of_each_prefix():
+    merged = gate.merge_rules(RULES, gate.include_rules(GENERATED_FOR_SHOP), {"/forum": frozenset({'"'})})
+    assert merged["/shop/"] == RULES["/shop/"] | frozenset(gate.GENERATED_QUOTES)
+    assert merged["/web/"] == RULES["/web/"]
+    assert merged["/forum"] == frozenset({'"'})
+
+
+def test_merged_rules_cover_a_fail_prefix_the_generated_file_rewrites():
+    bundle = 'location.assign("/forum")'
+    generated = gate.include_rules(gate.generate_include(gate.scan_bundle(bundle), RULES, set()))
+    report = gate.evaluate({"a.min.js": bundle}, gate.merge_rules(RULES, generated), set())
+    assert report.exit_code == 0
+    assert report.bundles["a.min.js"].levels == {}
+
+
+# --- the CLI ---------------------------------------------------------------
+
+def load_cli():
+    spec = importlib.util.spec_from_file_location("e2e_literal_rewrite_gate", ROOT / "tests/e2e_literal_rewrite_gate.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_cli_reports_an_included_fail_prefix_as_covered(tmp_path, monkeypatch):
+    """A run against a host that applied Generated rewrites reports that host.
+
+    Without the include file the gate re-reports the prefix the add-on has
+    already fixed for itself; with it, the same bundles come out clean.
+    """
+    cli = load_cli()
+    bundles = tmp_path / "bundles"
+    bundles.mkdir()
+    (bundles / "web.assets_web.min.js").write_text(FAIL_BUNDLE_FORUM, encoding="utf-8")
+    artifacts = tmp_path / "artifacts"
+    monkeypatch.setenv("E2E_ARTIFACT_DIR", str(artifacts))
+
+    assert cli.main(["--from-dir", str(bundles)]) == 1
+
+    include = tmp_path / "generated-rewrites.conf"
+    include.write_text(
+        gate.generate_include(gate.scan_bundle(FAIL_BUNDLE_FORUM), RULES, set()), encoding="utf-8"
+    )
+    assert cli.main(["--from-dir", str(bundles), "--include-file", str(include)]) == 0
+    report = (artifacts / "literal-rewrite-gate.txt").read_text(encoding="utf-8")
+    assert "unregistered FAIL 0" in report
+    assert str(include) in report
+
+
+def test_cli_refuses_an_include_file_that_is_not_there(tmp_path, monkeypatch):
+    cli = load_cli()
+    bundles = tmp_path / "bundles"
+    bundles.mkdir()
+    (bundles / "web.assets_web.min.js").write_text(FAIL_BUNDLE_FORUM, encoding="utf-8")
+    monkeypatch.setenv("E2E_ARTIFACT_DIR", str(tmp_path / "artifacts"))
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["--from-dir", str(bundles), "--include-file", str(tmp_path / "absent.conf")])
+    assert "absent.conf" in str(exit_info.value)
 
 
 def _wait_for_socket(process: subprocess.Popen, socket: Path) -> None:
