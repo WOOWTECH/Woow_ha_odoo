@@ -44,7 +44,7 @@ backup_exclude:
   - "**/logs"
   - "**/sessions"
 
-# ---------- options schema (22 fields) ----------
+# ---------- options schema (23 fields) ----------
 schema:
   # Required
   admin_passwd: "password"
@@ -69,6 +69,7 @@ schema:
   public_url: "url?"
   proxy_mode: "bool?"
   lan_networks: "str?"
+  literal_rewrite_auto: "bool?"
 
   # Modules
   odoo_extra_addons: "str?"
@@ -115,6 +116,11 @@ options:
   # The Cloudflare tunnel arrives from the add-on network and is never matched
   # by these, so it keeps the restricted public tier.
   lan_networks: "192.168.0.0/16 10.0.0.0/8 172.16.0.0/12"
+  # The Rewrite scan applies what it finds as nginx Generated rewrites
+  # (ADR 0005). Turn this off to freeze the rules where they are: the scan
+  # and its report keep running, so the log still says what would have been
+  # rewritten, and the rules already in place stay live.
+  literal_rewrite_auto: true
   dev_mode: false
   log_level: "info"
   without_demo: true
