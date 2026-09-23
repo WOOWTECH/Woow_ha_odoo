@@ -12,7 +12,6 @@ The service scripts are read as text, the way `test_rewrite_service.py`
 reads the Rewrite scan's.
 """
 import http.server
-import inspect
 import importlib.machinery
 import importlib.util
 import socket
@@ -174,6 +173,17 @@ def test_a_silent_listener_is_no_answer() -> None:
         assert check.probe("127.0.0.1", PUBLIC_HOST, port=port, timeout=0.5) is None
 
 
+def test_a_host_http_client_cannot_encode_is_no_answer() -> None:
+    """An internationalised public_url host is not latin-1; that is a failed
+    check to report, not a traceback that skips the notification."""
+    server = Server(404)
+    try:
+        assert check.probe("127.0.0.1", "商店.invalid", port=server.port) is None
+    finally:
+        server.close()
+    assert server.seen == [], "the request was never sent"
+
+
 # --- the command --------------------------------------------------------------
 
 class Recorder:
@@ -250,13 +260,15 @@ def test_a_notifier_that_raises_still_fails_the_check() -> None:
     assert any("boom" in line for line in logged)
 
 
-def test_the_notification_goes_through_the_rewrite_scan_adapter() -> None:
+def test_the_notification_goes_through_the_rewrite_scan_adapter(monkeypatch) -> None:
     """The failure notification is #78's, not a second Supervisor client,
-    and its log lines name the self-check rather than the Rewrite scan."""
-    assert inspect.signature(check.main).parameters["notifier"].default is apply.notify
+    and its log lines name the self-check rather than the Rewrite scan.
+    Without a token the adapter says so instead of calling out."""
+    monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
     logged = []
-    assert apply.notify(("t", "b"), notification_id=check.NOTIFICATION_ID,
-                        token="", log=logged.append, source="Self-check") is False
+    code = check.main(["--address", ADDRESS], prober=Recorder(200),
+                      out=lambda _: None, log=logged.append)
+    assert code == 1
     assert logged == ["Self-check: no SUPERVISOR_TOKEN, so the notification was not sent"]
 
 
@@ -273,6 +285,7 @@ def test_the_service_sources_the_check_from_the_supervisor_address() -> None:
 
 def test_the_service_waits_for_nginx_before_the_check() -> None:
     run_script = code_of(SERVICE_DIR / "run")
+    assert "SECONDS + 600" in run_script, "the wait is bounded by the clock"
     wait = run_script.index("http://127.0.0.1:8069/")
     assert wait < run_script.index("self_check.py")
 

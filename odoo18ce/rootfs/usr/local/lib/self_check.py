@@ -41,18 +41,17 @@ from __future__ import annotations
 import argparse
 import http.client
 from pathlib import Path
-import socket
 import sys
 from typing import Callable
 
-# `notify` ships beside this module. Imported by name rather than by path so
-# the Static tier, which loads these modules out of the repository, gets one
-# copy of each.
+# `notify` ships beside this module in `rewrite_apply`. Imported by name
+# rather than by path so the Static tier, which loads these modules out of the
+# repository, gets one copy of each; and only when a check has failed, so the
+# check itself never depends on the Rewrite scan importing cleanly (ADR 0009:
+# the scan must never be what stops the add-on).
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
-
-import rewrite_apply as apply           # noqa: E402  (after the path fix above)
 
 #: The database manager's route. Any path under `/web/database/` meets the
 #: same location; this is the one an operator would open.
@@ -103,7 +102,10 @@ def probe(address: str, host: str, *, port: int = ORIGIN_PORT,
     try:
         connection.request("GET", ROUTE, headers={"Host": host or address})
         return connection.getresponse().status
-    except (OSError, http.client.HTTPException):
+    except (OSError, http.client.HTTPException, ValueError):
+        # ValueError covers a Host or address http.client cannot encode.
+        # That is a failed check to report, never a traceback that skips
+        # the notification.
         return None
     finally:
         connection.close()
@@ -133,7 +135,7 @@ def failure_notification(status: int | None, public_url_set: bool, detail: str) 
     return title, body
 
 
-def main(argv=None, prober: Callable = probe, notifier: Callable = apply.notify,
+def main(argv=None, prober: Callable = probe, notifier: Callable | None = None,
          out: Callable[[str], None] = print,
          log: Callable[[str], None] = lambda text: print(text, file=sys.stderr)) -> int:
     """Run the self-check once. Prints one line; exits 0 on pass, 1 on fail.
@@ -175,6 +177,9 @@ def main(argv=None, prober: Callable = probe, notifier: Callable = apply.notify,
     detail = f"Requested {where}: {describe(status)}, expected {expected(public_url_set)}."
     out(f"Self-check failed: {detail} The add-on stops.")
     try:
+        if notifier is None:
+            import rewrite_apply  # noqa: PLC0415 - see the note at the top
+            notifier = rewrite_apply.notify
         notifier(failure_notification(status, public_url_set, detail),
                  notification_id=NOTIFICATION_ID, log=log, source="Self-check")
     except Exception as error:      # noqa: BLE001 - the stop must not depend on it

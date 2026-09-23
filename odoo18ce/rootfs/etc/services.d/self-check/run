@@ -31,10 +31,14 @@ fi
 # HTTP status says it is. nginx waits up to 120 seconds for Odoo and halts
 # the container when Odoo is not there, so a nginx still silent after ten
 # minutes is not coming, and the check below then fails on no answer.
+# Bounded by the clock, not a count: a connection that hangs instead of
+# being refused takes the full curl timeout on every try. Without `-f`, curl
+# exits 0 on any HTTP status and non-zero only when nothing answered.
 bashio::log.info "Self-check: waiting for nginx to answer on 8069..."
-for _ in $(seq 1 600); do
-    CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:8069/web/login || true)"
-    if [ -n "${CODE}" ] && [ "${CODE}" != "000" ]; then
+DEADLINE=$((SECONDS + 600))
+until curl -s -o /dev/null --max-time 2 http://127.0.0.1:8069/web/login; do
+    if [ "${SECONDS}" -ge "${DEADLINE}" ]; then
+        bashio::log.error "Self-check: nginx did not answer on 8069 within 600 seconds"
         break
     fi
     sleep 1
