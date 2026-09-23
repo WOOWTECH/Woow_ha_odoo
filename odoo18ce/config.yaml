@@ -14,6 +14,10 @@ init: false
 # install still gets a Canonical URL instead of an Ingress token. The
 # default role covers the two /info endpoints used.
 hassio_api: true
+# The Rewrite scan creates a Home Assistant persistent notification when it
+# adds Generated rewrites or a step fails (ADR 0005, issue #78). That is
+# Home Assistant's own API through the Supervisor proxy, which needs this.
+homeassistant_api: true
 
 ingress: true
 ingress_port: 5691
