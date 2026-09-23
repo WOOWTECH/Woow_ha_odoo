@@ -85,6 +85,16 @@
   service's own failure line no longer claims the file kept its old rules.
   And a round that added rules before nginx was up says they take effect
   when nginx starts rather than that they are live now. Issue #120.
+- The start-time self-check no longer stops a correct install because the
+  Supervisor answered empty once. It read the add-on's own network address
+  a single time at boot, and bashio caches an empty answer for the life of
+  the container, so one late Supervisor reply became a failed check, a
+  notification and a stopped add-on. The read is now retried for up to
+  30 seconds, two seconds apart, with bashio's cache flushed in between
+  (`/usr/local/lib/supervisor-read.sh`, shared with the LAN-address reads
+  of issue #108). An address that never comes still fails the check, and
+  the log now says the add-on waited. On pass the service logs one line;
+  the "waiting for nginx" line moved to debug. Issue #119.
 - A database created through the database manager on a host with no
   Canonical URL no longer has Odoo's install default,
   `http://localhost:8070`, locked in as its `web.base.url`. The start-up

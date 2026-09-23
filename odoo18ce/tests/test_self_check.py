@@ -276,7 +276,8 @@ def test_the_notification_goes_through_the_rewrite_scan_adapter(monkeypatch) -> 
 
 def test_the_service_sources_the_check_from_the_supervisor_address() -> None:
     run_script = code_of(SERVICE_DIR / "run")
-    assert 'ADDRESS="$(bashio::addon.ip_address' in run_script
+    assert 'ADDRESS="$(woow::supervisor.read 30 2 "addons.self.ip_address addons.self.info"' in run_script
+    assert "bashio::addon.ip_address" in run_script
     call = run_script.split("self_check.py", 1)[1].split(")", 1)[0]
     assert '--address "${ADDRESS}"' in call
     assert "127.0.0.1" not in call
@@ -304,3 +305,94 @@ def test_a_failed_check_stops_the_container() -> None:
 
 def test_the_module_is_readable_in_the_image() -> None:
     assert "chmod a+r /usr/local/lib/self_check.py" in DOCKERFILE.read_text(encoding="utf-8")
+
+
+# --- the service, driven ------------------------------------------------------
+# The script is run by bash with bashio, curl, python3 and sleep stubbed. A
+# stub `sleep` advances bash's SECONDS instead of waiting, so the 30-second
+# budget passes in no time; the `sleep infinity` a pass ends in is an `exec`,
+# which bypasses functions, so a no-op `sleep` executable is put on PATH.
+
+import os
+import subprocess
+import tempfile
+
+from conftest import require_tool
+
+SERVICE_STUBS = r"""
+LOG="$1"; ARGS="$2"; ANSWER_AFTER="$3"; VERDICT="$4"; COUNTER="$5"
+bashio::log.info()    { printf 'INFO %s\n'  "$1" >> "${LOG}"; }
+bashio::log.warning() { printf 'WARN %s\n'  "$1" >> "${LOG}"; }
+bashio::log.error()   { printf 'ERROR %s\n' "$1" >> "${LOG}"; }
+bashio::log.debug()   { printf 'DEBUG %s\n' "$1" >> "${LOG}"; }
+bashio::log.trace()   { :; }
+bashio::cache.flush() { printf 'FLUSH %s\n' "$1" >> "${LOG}"; }
+bashio::config.has_value() { [ "$1" = public_url ]; }
+bashio::config() { printf 'https://odoo-test.invalid'; }
+bashio::addon.ip_address() {
+    local n; n=$(( $(cat "${COUNTER}") + 1 )); printf '%s' "${n}" > "${COUNTER}"
+    if [ "${n}" -ge "${ANSWER_AFTER}" ]; then printf '172.30.33.4'; fi
+}
+curl() { return 0; }
+python3() { printf '%s\n' "$@" > "${ARGS}"; printf 'verdict line'; return "${VERDICT}"; }
+sleep() { SECONDS=$((SECONDS + ${1%.*})); }
+"""
+
+
+def drive_service(answer_after: int, verdict: int = 0) -> tuple[int, list[str], list[str], int]:
+    """Run services.d/self-check/run; return exit code, log lines, python3 argv, reads."""
+    bash = require_tool("bash")
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_bin = Path(tmp) / "bin"
+        fake_bin.mkdir()
+        (fake_bin / "sleep").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (fake_bin / "sleep").chmod(0o755)
+        log, args, counter = Path(tmp) / "log", Path(tmp) / "args", Path(tmp) / "reads"
+        log.touch()
+        args.touch()
+        counter.write_text("0", encoding="utf-8")
+        # The script ends in `exec` or `exit`, so nothing after `source` runs;
+        # everything observed is written by the stubs as they go.
+        script = (
+            f'set -- "{log.as_posix()}" "{args.as_posix()}" {answer_after} {verdict} '
+            f'"{counter.as_posix()}"\n'
+            f"{SERVICE_STUBS}\n"
+            f'source "{(SERVICE_DIR / "run").as_posix()}"\n'
+        )
+        env = dict(os.environ, PATH=f"{fake_bin.as_posix()}{os.pathsep}{os.environ['PATH']}",
+                   WOOW_LIB_DIR=LIB_DIR.as_posix())
+        result = subprocess.run([bash, "-c", script], capture_output=True, text=True,
+                                timeout=60, env=env)
+        lines = log.read_text(encoding="utf-8").splitlines()
+        reads = int(counter.read_text(encoding="utf-8"))
+        return result.returncode, lines, args.read_text(encoding="utf-8").split(), reads
+
+
+def test_the_service_waits_for_the_supervisor_address_and_then_checks_once() -> None:
+    code, lines, argv, reads = drive_service(answer_after=3)
+    assert code == 0, lines
+    assert reads == 3
+    assert argv[argv.index("--address") + 1] == "172.30.33.4"
+    assert [l for l in lines if l.startswith("FLUSH ")] == \
+        ["FLUSH addons.self.ip_address", "FLUSH addons.self.info"] * 2
+    assert [l for l in lines if l.startswith("INFO ")] == ["INFO verdict line"], \
+        "on pass, one info line from the service and nothing else"
+
+
+def test_an_address_that_never_comes_is_named_once_and_still_refused() -> None:
+    code, lines, argv, reads = drive_service(answer_after=999, verdict=1)
+    assert code == 1
+    assert argv[argv.index("--address") + 1] == "--public-url", "an empty address is handed on, not loopback"
+    waited = [l for l in lines if l.startswith("WARN ") and "30" in l]
+    assert len(waited) == 1, lines
+    assert "no add-on address" in waited[0]
+    assert 2 <= reads <= 20, "bounded by the budget, not by a count"
+    assert lines[-1] == "ERROR verdict line"
+
+
+def test_an_address_on_the_first_read_costs_no_wait_and_no_extra_line() -> None:
+    code, lines, argv, reads = drive_service(answer_after=1)
+    assert code == 0
+    assert reads == 1
+    assert [l for l in lines if l.startswith(("FLUSH ", "WARN "))] == []
+    assert [l for l in lines if l.startswith("INFO ")] == ["INFO verdict line"]

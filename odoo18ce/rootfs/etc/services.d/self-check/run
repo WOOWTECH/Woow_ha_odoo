@@ -9,17 +9,30 @@
 # this script finds the inputs, waits, and acts on the answer.
 #
 # On pass it logs one info line and then sleeps, because an s6 service that
-# exits is restarted and would check again. On fail the module has already
+# exits is restarted and would check again; the wait for nginx is logged at
+# debug so that line stays the only one. On fail the module has already
 # sent the notification; this logs the error and exits, and `finish` stops
 # the container, so the operator finds a stopped add-on with the cause.
 # ==============================================================================
 set -uo pipefail
 
+# The helper lives in the image; the Static tier points WOOW_LIB_DIR at the
+# tree to drive this script outside it.
+# shellcheck disable=SC1091
+. "${WOOW_LIB_DIR:-/usr/local/lib}/supervisor-read.sh"
+
 # ---------- 1. The add-on-network address, from the Supervisor ----------
 # Not loopback: 127.0.0.0/8 is LAN tier in the nginx template and would reach
-# the database manager on every correct install. An empty answer is handed
-# on as it is, and the module fails the check on it.
-ADDRESS="$(bashio::addon.ip_address 2>/dev/null || true)"
+# the database manager on every correct install. The Supervisor can answer
+# empty for a moment at boot and bashio caches that answer, so the read is
+# retried for a bounded time with the cache flushed in between (issue #119;
+# the budget is the one decided on #108). An answer that never comes is
+# handed on as it is, and the module fails the check on it.
+ADDRESS="$(woow::supervisor.read 30 2 "addons.self.ip_address addons.self.info" \
+    bashio::addon.ip_address)" || true
+if [ -z "${ADDRESS}" ]; then
+    bashio::log.warning "Self-check: the Supervisor reported no add-on address after waiting 30 seconds; the check runs without one"
+fi
 
 PUBLIC_URL=''
 if bashio::config.has_value 'public_url'; then
@@ -34,7 +47,7 @@ fi
 # Bounded by the clock, not a count: a connection that hangs instead of
 # being refused takes the full curl timeout on every try. Without `-f`, curl
 # exits 0 on any HTTP status and non-zero only when nothing answered.
-bashio::log.info "Self-check: waiting for nginx to answer on 8069..."
+bashio::log.debug "Self-check: waiting for nginx to answer on 8069..."
 DEADLINE=$((SECONDS + 600))
 until curl -s -o /dev/null --max-time 2 http://127.0.0.1:8069/web/login; do
     if [ "${SECONDS}" -ge "${DEADLINE}" ]; then

@@ -55,6 +55,7 @@ jobs:
             find "${ADDON_DIR}/rootfs/etc/cont-init.d" "${ADDON_DIR}/rootfs/etc/services.d" -type f
             echo "${ADDON_DIR}/rootfs/usr/local/bin/odoo-maintenance-bootstrap"
             echo "${ADDON_DIR}/rootfs/usr/local/bin/odoo-rewrite-apply"
+            echo "${ADDON_DIR}/rootfs/usr/local/lib/supervisor-read.sh"
           )
           shellcheck --version | head -2
           shellcheck -s bash -e SC1008 "${scripts[@]}"
