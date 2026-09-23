@@ -1,0 +1,52 @@
+#!/usr/bin/with-contenv bashio
+# ==============================================================================
+# The start-time self-check (issue #79, ADR 0005).
+#
+# Once nginx answers, request the database-manager route the way the
+# Cloudflare tunnel does: from the container's add-on-network address, on
+# the published origin port, with the public host as `Host` when public_url
+# is set. `/usr/local/lib/self_check.py` holds the request and the verdict;
+# this script finds the inputs, waits, and acts on the answer.
+#
+# On pass it logs one info line and then sleeps, because an s6 service that
+# exits is restarted and would check again. On fail the module has already
+# sent the notification; this logs the error and exits, and `finish` stops
+# the container, so the operator finds a stopped add-on with the cause.
+# ==============================================================================
+set -uo pipefail
+
+# ---------- 1. The add-on-network address, from the Supervisor ----------
+# Not loopback: 127.0.0.0/8 is LAN tier in the nginx template and would reach
+# the database manager on every correct install. An empty answer is handed
+# on as it is, and the module fails the check on it.
+ADDRESS="$(bashio::addon.ip_address 2>/dev/null || true)"
+
+PUBLIC_URL=''
+if bashio::config.has_value 'public_url'; then
+    PUBLIC_URL="$(bashio::config 'public_url')"
+fi
+
+# ---------- 2. Wait until nginx answers ----------
+# Loopback is fine here: this only asks whether the listener is up, and any
+# HTTP status says it is. nginx waits up to 120 seconds for Odoo and halts
+# the container when Odoo is not there, so a nginx still silent after ten
+# minutes is not coming, and the check below then fails on no answer.
+bashio::log.info "Self-check: waiting for nginx to answer on 8069..."
+for _ in $(seq 1 600); do
+    CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:8069/web/login || true)"
+    if [ -n "${CODE}" ] && [ "${CODE}" != "000" ]; then
+        break
+    fi
+    sleep 1
+done
+
+# ---------- 3. The request and the verdict ----------
+STATUS=0
+MESSAGE="$(python3 /usr/local/lib/self_check.py \
+    --address "${ADDRESS}" --public-url "${PUBLIC_URL}")" || STATUS=$?
+if [ "${STATUS}" -eq 0 ]; then
+    bashio::log.info "${MESSAGE}"
+    exec sleep infinity
+fi
+bashio::log.error "${MESSAGE:-Self-check failed (exit ${STATUS}); the add-on stops.}"
+exit 1
