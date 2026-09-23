@@ -183,6 +183,49 @@ jobs:
           print(f"exception list: {len(exceptions)} entries")
           '
 
+      # woow_base_url_guard raises ImportError when an Odoo nightly moves
+      # res.users.authenticate, but Odoo's server-wide loader only logs that
+      # and serves unguarded, and the Static tier tests the guard against a
+      # stand-in that never moves (issue #88). So Odoo in this image loads
+      # the server-wide modules the add-on renders, and the probe asks it
+      # whether authenticate carries the guard's flag. The second run leaves
+      # the guard out of --load and has to come back unguarded, which shows
+      # the check can go red. No database, Supervisor or credential is used.
+      - name: In-image contract (Canonical URL guard)
+        run: |
+          set -euo pipefail
+          config="${ADDON_DIR}/rootfs/etc/cont-init.d/10-odoo-config.sh"
+          modules="$(sed -nE 's/^server_wide_modules = (.+)$/\1/p' "${config}")"
+          if [[ ",${modules}," != *,woow_base_url_guard,* ]]; then
+            echo "::error::server_wide_modules in ${config} does not name woow_base_url_guard"
+            exit 1
+          fi
+          without_guard="$(tr ',' '\n' <<< "${modules}" | grep -vx woow_base_url_guard | paste -sd,)"
+
+          check_guard() {
+            docker run --rm -i --user odoo --entrypoint /usr/bin/odoo woow-ha-odoo-amd64:ci \
+              shell --addons-path=/opt/woow-server-addons --load="$1" \
+              < "${ADDON_DIR}/tests/in_image/base_url_guard_applied.py" 2>&1 || true
+          }
+
+          out="$(check_guard "${modules}")"
+          echo "${out}"
+          if ! grep -qx 'base-url-guard: applied' <<< "${out}"; then
+            echo "::error::woow_base_url_guard is not applied to res.users.authenticate in" \
+              "the built image, so Odoo guesses web.base.url from the first administrator" \
+              "login. Odoo logs the cause above as 'Failed to load server-wide module'."
+            exit 1
+          fi
+
+          out="$(check_guard "${without_guard}")"
+          if ! grep -qx 'base-url-guard: not applied' <<< "${out}"; then
+            echo "${out}"
+            echo "::error::the guard check did not report 'not applied' with" \
+              "woow_base_url_guard left out of --load=${without_guard}; it cannot go red"
+            exit 1
+          fi
+          echo "mutation: --load=${without_guard} reports the guard not applied, as it must"
+
   build-aarch64:
     name: build (aarch64)
     needs: static

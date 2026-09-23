@@ -142,6 +142,15 @@
   Issue #80.
 
 ### Testing
+- The PR gate now fails when the Canonical URL guard is not applied. The
+  `build (amd64)` job, which every pull request runs, including the Odoo
+  nightly bumps, starts `odoo shell` in the image it just built, with the
+  server-wide modules the add-on renders and no database, and checks that
+  `res.users.authenticate` carries `woow_base_url_guard`'s flag. It runs a
+  second time without the guard in `--load` and must then report it not
+  applied. Before, a nightly that moved `authenticate` merged green: the
+  guard's `ImportError` does not stop Odoo, whose server-wide loader logs
+  it and serves unguarded. Issue #88.
 - New static-tier contract test `test_ingress_clipboard_fallback.py`
   executes the whole Runtime shim in a node `vm` context against a DOM
   stand-in and pins the clipboard fallback: absent clipboard resolves

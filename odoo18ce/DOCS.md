@@ -161,6 +161,12 @@ created between two starts therefore keeps Odoo's install default until the
 next start, instead of the address the first administrator logged in from.
 Setting the value explicitly, in Settings or over RPC, is unaffected.
 
+The module does not stop Odoo when it cannot apply itself. Should an Odoo
+build move the login code it patches, Odoo logs `Failed to load server-wide
+module` and serves without the guard. That is caught before release instead:
+every pull request, including the weekly Odoo nightly bump, starts Odoo in
+the image it builds and fails when the guard is not applied.
+
 On every start, before Odoo serves requests, the add-on therefore visits
 each Odoo database in its PostgreSQL and writes a Canonical URL:
 
