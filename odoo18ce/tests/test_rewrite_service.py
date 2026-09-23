@@ -134,6 +134,12 @@ class Runner:
         return subprocess.CompletedProcess(command, 0, "", "test is successful\n")
 
 
+def matching_state(*rows):
+    """A previous state that agrees with these rows and the shipped generation inputs."""
+    inputs = apply.generation_inputs(apply.shipped_rules(rendered_conf()), apply.load_exceptions())
+    return scan.state_from_rows(rows, "0" * 64, inputs=inputs)
+
+
 def round_lines(tmp_path: Path, scan_result, *, state_note="no previous state", **keywords):
     """One whole round, as the lines the add-on log would carry."""
     include = tmp_path / "nginx-generated-rewrites.conf"
@@ -312,7 +318,7 @@ def test_a_round_that_needed_no_pass_still_reports_its_databases(tmp_path: Path)
     """
     one = row()
     store = filestore(tmp_path, (one, BUNDLE))
-    state = scan.state_from_rows([one], "0" * 64)
+    state = matching_state(one)
     outcome, lines = round_lines(
         tmp_path, scan.ScanResult((ok(DB, one),)), filestore=store, previous_state=state,
     )
@@ -357,7 +363,7 @@ def test_a_round_that_generated_nothing_still_names_the_live_prefixes(
         nginx_conf_path=conf,
         version="0" * 64,
         filestore=store,
-        previous_state=scan.state_from_rows([one], "0" * 64),
+        previous_state=matching_state(one),
         state_path=tmp_path / "state.json",
         runner=Runner(),
         running=lambda: False,
