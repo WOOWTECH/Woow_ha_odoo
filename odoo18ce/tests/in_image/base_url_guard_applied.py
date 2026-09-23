@@ -10,11 +10,13 @@ the patch and pass by itself.
 
 Two things the flag alone does not prove (issue #121):
 
-* the class the guard patched is the one the registry resolves. Odoo builds
-  a model from every class declaring its ``_name``, later declarations
-  overriding earlier ones, so the ``authenticate`` that runs is the one on
-  the last class in ``res_users`` that declares it. A later class the guard
-  never saw carries the guess back, flag or no flag;
+* the class the guard patched is the last one in ``res_users`` declaring
+  ``authenticate``. Odoo builds a model from every class declaring its
+  ``_name``, later declarations overriding earlier ones, so within that
+  module the last declaration is the one the registry runs. A later class
+  the guard never saw carries the guess back, flag or no flag. Overrides in
+  other modules are not read here: the guess lives in ``res_users``, and an
+  override elsewhere reaches it through ``super()``;
 * the wrapper still fits upstream. ``functools.wraps`` keeps the original
   under ``__wrapped__``; if a nightly changed its parameters the guard still
   installs and every login raises ``TypeError``.
@@ -33,7 +35,8 @@ METHOD = "authenticate"
 
 
 def registry_users(res_users):
-    """The class whose ``authenticate`` the registry's ``res.users`` runs.
+    """The class whose ``authenticate`` the registry's ``res.users`` runs,
+    among those declared in Odoo's ``res_users`` module.
 
     The last class in module order that declares the method in its own
     namespace: Odoo's model class puts later declarations ahead of earlier
@@ -56,28 +59,61 @@ def guarded(res_users) -> bool:
     return users is not None and getattr(users.authenticate, GUARDED_FLAG, False)
 
 
-def parameter_names(function):
-    """Parameter names after the class argument, as the function declares them."""
-    signature = inspect.signature(function, follow_wrapped=False)
-    return [name for name in signature.parameters][1:]
+def forwarded_names(wrapper):
+    """The positional parameters the wrapper declares, after the class one.
+
+    Read from the code object: ``functools.wraps`` copies the original's
+    ``__dict__`` onto the wrapper, and a ``__signature__`` in there would make
+    ``inspect.signature`` describe the original instead of the wrapper.
+    """
+    code = wrapper.__code__
+    return list(code.co_varnames[1:code.co_argcount])
+
+
+def upstream_fit(forwarded, original):
+    """A sentence naming how the original does not take what the wrapper
+    forwards by position, or None when every call the wrapper makes is one
+    the original accepts.
+
+    Each forwarded name has to be the original's next positional parameter
+    (same name, same order, accepted by position). Parameters the original
+    takes beyond those have to be optional, or it would want more than the
+    wrapper sends.
+    """
+    positional = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    upstream = list(inspect.signature(original).parameters.values())[1:]
+    def describe(p):
+        if p.kind is p.VAR_POSITIONAL:
+            return f"*{p.name}"
+        if p.kind is p.VAR_KEYWORD:
+            return f"**{p.name}"
+        name = p.name if p.default is p.empty else f"{p.name}={p.default!r}"
+        return f"{name} (keyword-only)" if p.kind is p.KEYWORD_ONLY else name
+
+    taken = [describe(p) for p in upstream]
+    described = f"wrapper forwards {forwarded} by position, upstream authenticate takes {taken}"
+    for index, name in enumerate(forwarded):
+        if index >= len(upstream):
+            return described
+        parameter = upstream[index]
+        if parameter.name != name or parameter.kind not in positional:
+            return described
+    for parameter in upstream[len(forwarded):]:
+        if parameter.kind in positional and parameter.default is parameter.empty:
+            return described
+        if parameter.kind is parameter.KEYWORD_ONLY and parameter.default is parameter.empty:
+            return described
+    return None
 
 
 def signature_mismatch(res_users):
-    """A sentence naming the mismatch between the wrapper and upstream, or None.
-
-    The wrapper forwards its parameters by position to the original it
-    wrapped; the two lists have to be the same names in the same order.
-    """
+    """A sentence naming the mismatch between the wrapper and upstream, or None."""
     users = registry_users(res_users)
     wrapper = vars(users)[METHOD].__func__
     original = getattr(wrapper, "__wrapped__", None)
     if original is None:
         return "the guarded authenticate keeps no __wrapped__ original to compare against"
-    forwarded = parameter_names(wrapper)
-    upstream = parameter_names(original)
-    if forwarded == upstream:
-        return None
-    return f"wrapper forwards {forwarded}, upstream authenticate takes {upstream}"
+    return upstream_fit(forwarded_names(wrapper), original)
 
 
 def main(res_users, out=sys.stdout) -> int:
