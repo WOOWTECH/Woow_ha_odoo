@@ -349,3 +349,167 @@ def test_the_guard_probe_is_shown_to_go_red_without_the_guard() -> None:
     assert "--load" in run
     assert run.count("check_guard") >= 3, "one definition, the real run and the mutation"
     assert "::error::" in run and "guard" in run.lower()
+
+
+# --- The gate proves more than the flag (issue #121) --------------------------
+#
+# The flag says the guard installed. It does not say the wrapper still fits
+# upstream's authenticate, nor that the class it patched is the one the
+# registry resolves. Either lets a nightly merge green with the guess back
+# or every login broken.
+
+def probe_report(namespace):
+    import io
+
+    out = io.StringIO()
+    status = load_probe().main(namespace, out)
+    return status, out.getvalue()
+
+
+def flagged(function) -> bool:
+    # The probe's spelling is asserted equal to the guard's above.
+    return getattr(function, load_probe().GUARDED_FLAG, False)
+
+
+def users_declaring(authenticate):
+    """A res.users stand-in whose authenticate is the given function."""
+    return type("Users", (), {"_name": "res.users", "authenticate": classmethod(authenticate)})
+
+
+def test_the_probe_reports_applied_with_status_zero_when_the_wrapper_fits() -> None:
+    declared, _, _ = odoo_users()
+    install_guard(declared)
+    status, report = probe_report(res_users_namespace(declared))
+    assert status == 0
+    assert report.splitlines() == ["base-url-guard: applied"]
+
+
+def test_the_probe_reports_not_applied_with_a_non_zero_status() -> None:
+    declared, _, _ = odoo_users()
+    status, report = probe_report(res_users_namespace(declared))
+    assert status != 0
+    assert report.splitlines() == ["base-url-guard: not applied"]
+
+
+def test_the_probe_fails_when_upstream_no_longer_takes_what_the_wrapper_forwards() -> None:
+    """A nightly changes authenticate's parameters. The guard still installs
+    and sets its flag, so the flag alone would pass, and every login would
+    then raise TypeError. The probe has to read the upstream signature."""
+
+    def authenticate(cls, db, credential, user_agent_env, request_context):
+        return AUTH_INFO
+
+    users = users_declaring(authenticate)
+    install_guard(users)
+    assert flagged(users.authenticate)
+    status, report = probe_report(res_users_namespace(users))
+    assert status != 0
+    lines = report.splitlines()
+    mismatch = [line for line in lines if line.startswith("base-url-guard: signature mismatch")]
+    assert len(mismatch) == 1
+    assert "request_context" in mismatch[0] and "user_agent_env" in mismatch[0]
+    assert "base-url-guard: applied" not in lines
+
+
+def test_the_probe_fails_when_upstream_stops_taking_a_forwarded_parameter_by_position() -> None:
+    """Same names, but user_agent_env became keyword-only: the wrapper still
+    forwards it by position, so the flag is on and the login raises."""
+
+    def authenticate(cls, db, credential, *, user_agent_env=None):
+        return AUTH_INFO
+
+    users = users_declaring(authenticate)
+    install_guard(users)
+    with __import__("pytest").raises(TypeError):
+        users.authenticate("odoo_test", CREDENTIAL, ingress_env())
+    status, report = probe_report(res_users_namespace(users))
+    assert status != 0
+    assert "keyword-only" in report
+
+
+def test_an_upstream_that_adds_an_optional_parameter_still_fits() -> None:
+    """A trailing parameter with a default takes nothing away from the
+    wrapper's call; that nightly must not be blocked."""
+
+    def authenticate(cls, db, credential, user_agent_env, request_context=None):
+        return AUTH_INFO
+
+    users = users_declaring(authenticate)
+    install_guard(users)
+    assert users.authenticate("odoo_test", CREDENTIAL, ingress_env()) is AUTH_INFO
+    status, report = probe_report(res_users_namespace(users))
+    assert status == 0
+    assert report.splitlines() == ["base-url-guard: applied"]
+
+
+def test_the_probe_reads_the_wrapper_itself_not_a_signature_copied_from_upstream() -> None:
+    """functools.wraps copies __dict__, so a __signature__ upstream carries
+    would make inspect.signature describe upstream on both sides."""
+    import inspect
+
+    def authenticate(cls, db, credential, user_agent_env, request_context):
+        return AUTH_INFO
+
+    authenticate.__signature__ = inspect.signature(authenticate)
+    users = users_declaring(authenticate)
+    install_guard(users)
+    assert flagged(users.authenticate)
+    status, report = probe_report(res_users_namespace(users))
+    assert status != 0
+    assert "signature mismatch" in report
+
+
+def test_the_probe_checks_the_class_the_registry_resolves_not_the_first_one_flagged() -> None:
+    """Upstream adds a later res.users class that redefines authenticate. The
+    guard patched the earlier one and the registry uses the later one: the
+    guess is back while a flag is still there to find."""
+    declared, _, _ = odoo_users()
+    install_guard(declared)
+    namespace = res_users_namespace(declared)
+
+    class UsersRedefined(declared):
+        _name = "res.users"
+
+        @classmethod
+        def authenticate(cls, db, credential, user_agent_env):
+            return AUTH_INFO
+
+    namespace.UsersRedefined = UsersRedefined
+    assert flagged(namespace.Users.authenticate)
+    status, report = probe_report(namespace)
+    assert status != 0
+    assert report.splitlines() == ["base-url-guard: not applied"]
+
+
+def test_a_later_class_that_only_inherits_authenticate_keeps_the_guard() -> None:
+    """UsersView declares no authenticate of its own, and comes last in the
+    namespace; the registry resolves the patched one through it."""
+    declared, _, _ = odoo_users()
+    install_guard(declared)
+    namespace = res_users_namespace(declared)
+    assert list(vars(namespace))[-1] == "UsersView"
+    assert load_probe().guarded(namespace) is True
+
+
+def test_the_guard_probe_step_cannot_run_forever() -> None:
+    job, run = guard_step()
+    # A nightly that makes `odoo shell` wait on a database would otherwise
+    # hold the job for GitHub's 360-minute default.
+    assert job.get("timeout-minutes") == 30
+    assert run.count("timeout -k 30 300 docker run") == 1, "the one docker run goes through a timeout"
+
+
+def test_the_guard_probe_step_blames_the_container_when_the_probe_never_reports() -> None:
+    _, run = guard_step()
+    # docker run failing (image missing, odoo crashing, the timeout) leaves
+    # no `base-url-guard:` line at all. That is reported as what it is, not
+    # as the guard being missing.
+    assert "grep -q '^base-url-guard: '" in run
+    assert "not the guard" in run.lower()
+    # Both runs echo their output before anything judges it, so a container
+    # failure on the mutation run leaves something to read as well.
+    assert run.count('echo "${out}"') == 2
+    assert run.index('echo "${out}"', run.index("without_guard}\")")) < run.rindex("probe_reported")
+    # A wrapper that no longer fits upstream gets its own error.
+    assert "signature mismatch" in run
+    assert run.count("::error::") >= 5
