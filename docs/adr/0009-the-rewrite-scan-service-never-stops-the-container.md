@@ -156,3 +156,23 @@ add-on log is what gets pasted into an issue or a screenshot.
 - Whether s6 honours a three-second `finish` in this base image, and what
   the log looks like over a full five-minute cycle on a real host, is
   confirmed on a live container before this ships (#81).
+
+## Postscript (2026-09-23)
+
+Confirmed on the test host (Home Assistant OS 16.1, Supervisor 2026.09.2,
+base image `bookworm-2026.08.0`, a local build of `main` at 6a8b7e0):
+
+- A halt is prompt. When the start-time self-check failed on purpose (a
+  `lan_networks` entry inside the add-on network), the log read
+  `Self-check failed … The add-on stops.` and `halting container…` in the
+  same second, `legacy-services: stopping` in that second, and every
+  service's exit — the Rewrite scan's among them, logged once as
+  `exited (exit code: 256); Odoo is untouched and the service is
+  restarted` — by the next. The Rewrite scan's `finish` did not hold the
+  stop and did not stop anything itself.
+- Over a cycle on a host serving ten bundles with the state agreeing, a
+  round is the four-line block this ADR predicted (`up to date`, `no pass
+  was due (no change across 10 bundles)`, the state line, the databases
+  line) plus the per-database status and the `prefixes:` line; the rounds
+  that scanned printed a block per bundle. The add-on log is otherwise the
+  self-check's one-per-minute `GET /web/login` probes from loopback.
