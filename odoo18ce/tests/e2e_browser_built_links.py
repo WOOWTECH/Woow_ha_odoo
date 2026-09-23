@@ -343,11 +343,11 @@ def run_supervisor():
         common = {"name": expression["name"], "program": program, "prefix": PROBE_PREFIX}
         cases.append({**common, "canonical": canonical, "origin": PROBE_ORIGIN,
                       "expected": canonical + expression["suffix"]})
-        # Without a Canonical URL every rewrite keeps the browser origin, which
-        # is the behaviour on a host that has none (ADR 0006).
-        fallback = PROBE_ORIGIN + (PROBE_PREFIX if expression["suffix"].startswith("/shop/") else "")
+        # Without a Canonical URL every rewrite keeps the browser origin, and
+        # none of them keeps the Ingress prefix: the share snippet drops it
+        # either way rather than hand a Supervisor token to a social network.
         cases.append({**common, "canonical": "", "origin": PROBE_ORIGIN,
-                      "expected": fallback + expression["suffix"]})
+                      "expected": PROBE_ORIGIN + expression["suffix"]})
 
     result = subprocess.run(
         [node, "-e", NODE_HARNESS, json.dumps(cases)],

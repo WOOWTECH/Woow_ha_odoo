@@ -71,6 +71,11 @@ LINKS = {
         # network along with the address; that is what the rewrite removes.
         "before": HA_ORIGIN + INGRESS_PREFIX + "/shop/lamp?utm=x#reviews",
         "after": CANONICAL + "/shop/lamp?utm=x#reviews",
+        # The one rewrite that does not simply keep today's behaviour when
+        # there is no Canonical URL: the link stays on the browser origin, as
+        # broken as it was, but the Supervisor token is gone. Handing a token
+        # to a third party is not a behaviour worth preserving.
+        "empty": HA_ORIGIN + "/shop/lamp?utm=x#reviews",
     },
 }
 
@@ -176,14 +181,34 @@ def test_the_rewrite_moves_the_link_onto_the_canonical_url(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", LINKS)
-def test_without_a_canonical_url_the_link_is_what_it_is_today(name: str) -> None:
-    """Ingress-only with no LAN address: every rewrite keeps the browser origin."""
+def test_without_a_canonical_url_the_link_keeps_the_browser_origin(name: str) -> None:
+    """Ingress-only with no LAN address: every rewrite keeps the browser origin.
+
+    That is today's behaviour for two of the three. The share snippet also
+    drops the Ingress prefix, because the alternative is posting a Supervisor
+    token to a social network; its `empty` value says so.
+    """
     link = LINKS[name]
+    expected = link.get("empty", link["before"])
+    assert expected.startswith(HA_ORIGIN), "the fallback must stay on the browser origin"
     run([{
         "name": name,
         "scenario": NO_CANONICAL,
         "program": program(link, rewritten(link)),
-        "expected": link["before"],
+        "expected": expected,
+    }])
+
+
+def test_the_share_snippet_never_publishes_the_token_even_without_a_canonical_url() -> None:
+    """The reason the share snippet is allowed to differ from today's behaviour."""
+    link = LINKS["Website share snippet"]
+    assert INGRESS_PREFIX in link["before"], "today's link carries the token"
+    assert INGRESS_PREFIX not in link["empty"], "the rewritten one must not, with or without a base"
+    run([{
+        "name": "Website share snippet",
+        "scenario": NO_CANONICAL,
+        "program": program(link, rewritten(link)),
+        "expected": link["empty"],
     }])
 
 

@@ -55,6 +55,16 @@
   bootstrap still calls for `web.base.url`. ADR 0006, issue #70.
 
 ### Fixed
+- Ingress: a page's Share block no longer posts the Supervisor token to
+  Facebook, X or WhatsApp on a host with no Canonical URL. The rewrite
+  already moved the link onto that base; it now drops the Ingress prefix
+  whether or not the base exists, because the alternative was handing a
+  credential to a third party in exactly the deployment shapes where it is
+  easiest to end up — an uplink that is a bridge, bond, WWAN or tun device,
+  an interface NetworkManager does not manage, IPv6-only networking, or a
+  DHCP lease that arrives after the add-on starts. Without a Canonical URL
+  the link still points at the Home Assistant host and still does not work;
+  it simply carries no token. ADR 0006 amendment, issues #70 and #108.
 - Ingress: the three links Odoo builds in the browser for somebody
   outside to open now carry the Canonical URL instead of the Home
   Assistant host — the Discuss channel invitation link, the base shown
