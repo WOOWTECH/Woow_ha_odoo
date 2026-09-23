@@ -116,7 +116,7 @@ def apply(env, db_name: str, canonical: Optional[str]) -> Decision:
     elif is_install_default(stored):
         summary = (
             f"WARNING no Canonical URL and the stored {BASE_URL_KEY}={stored} is Odoo's "
-            "install default; it was not frozen and the value is unprotected"
+            "install default; it was not kept as a Canonical URL and the value is unprotected"
         )
     else:
         summary = f"WARNING no Canonical URL and no stored {BASE_URL_KEY}; the value is unprotected"

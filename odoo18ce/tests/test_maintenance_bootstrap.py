@@ -4,7 +4,7 @@ The bootstrap runs once per add-on start, before Odoo serves requests, and
 pipes ``rootfs/usr/local/lib/odoo-maintenance.py`` into ``odoo shell`` once
 per database. The decision functions in that file are pure, so the whole
 matrix -- ``public_url`` set/unset x ``default_db`` set/unset x stored value
-clean/leaked/absent x LAN address available/unavailable -- runs here without
+clean/leaked/install default/absent x LAN address available/unavailable -- runs here without
 a live Odoo or Supervisor.
 """
 import importlib.util
@@ -102,6 +102,12 @@ def test_other_values_are_not_the_install_default(lib, value) -> None:
     assert not lib.is_install_default(value)
 
 
+def test_install_default_follows_the_configured_http_port(lib) -> None:
+    config = (ROOT / "rootfs/etc/cont-init.d/10-odoo-config.sh").read_text(encoding="utf-8")
+    port = lib.INSTALL_DEFAULT_URL.rsplit(":", 1)[1]
+    assert f"http_port = {port}\n" in config
+
+
 # --- Per-database decision ----------------------------------------------------
 
 @pytest.mark.parametrize("stored", [CLEAN, LEAKED, "", None, False])
@@ -119,8 +125,8 @@ def test_without_canonical_url_an_absent_value_is_left_unprotected(lib, stored) 
 
 
 def test_without_canonical_url_the_install_default_is_not_frozen(lib) -> None:
-    # Freezing it would lock an address nobody can open until someone unfreezes
-    # it by hand; left unprotected, the next start with a LAN address writes.
+    # Nobody chose it, so it is not kept as a Canonical URL: no freeze, and the
+    # next start that has one writes it.
     assert lib.decide(None, INSTALL_DEFAULT) == lib.Decision("unprotected", None, False, None, False)
 
 
