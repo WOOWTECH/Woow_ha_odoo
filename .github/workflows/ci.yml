@@ -139,6 +139,10 @@ jobs:
     name: build (amd64)
     needs: static
     runs-on: ubuntu-latest
+    # The guard probe below starts Odoo in the built image. A nightly that
+    # makes `odoo shell` wait on something would otherwise hold this job for
+    # GitHub's 360-minute default (issue #121). Builds here run in minutes.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -188,9 +192,11 @@ jobs:
       # and serves unguarded, and the Static tier tests the guard against a
       # stand-in that never moves (issue #88). So Odoo in this image loads
       # the server-wide modules the add-on renders, and the probe asks it
-      # whether authenticate carries the guard's flag. The second run leaves
-      # the guard out of --load and has to come back unguarded, which shows
-      # the check can go red. No database, Supervisor or credential is used.
+      # whether the authenticate its registry resolves carries the guard's
+      # flag and whether the wrapper still fits upstream's parameters (issue
+      # #121). The second run leaves the guard out of --load and has to come
+      # back unguarded, which shows the check can go red. No database,
+      # Supervisor or credential is used.
       - name: In-image contract (Canonical URL guard)
         run: |
           set -euo pipefail
@@ -202,22 +208,47 @@ jobs:
           fi
           without_guard="$(tr ',' '\n' <<< "${modules}" | grep -vx woow_base_url_guard | paste -sd,)"
 
+          # Prints the probe's output; the exit status is the container's
+          # (124 when the 300 s timeout cut it), for the caller to read.
           check_guard() {
-            docker run --rm -i --user odoo --entrypoint /usr/bin/odoo woow-ha-odoo-amd64:ci \
+            timeout 300 docker run --rm -i --user odoo --entrypoint /usr/bin/odoo woow-ha-odoo-amd64:ci \
               shell --addons-path=/opt/woow-server-addons --load="$1" \
-              < "${ADDON_DIR}/tests/in_image/base_url_guard_applied.py" 2>&1 || true
+              < "${ADDON_DIR}/tests/in_image/base_url_guard_applied.py" 2>&1
           }
 
-          out="$(check_guard "${modules}")"
+          # The probe always prints a `base-url-guard:` line when it ran at
+          # all. None means odoo shell never reached it: that is a container
+          # failure, reported as one, not the guard.
+          probe_reported() {
+            if ! grep -q '^base-url-guard: ' <<< "$1"; then
+              echo "::error::odoo shell in the built image exited ${2} before the guard probe" \
+                "reported (124 is the 300 s timeout); this is a container failure, not the guard." \
+                "Its output is above."
+              exit 1
+            fi
+          }
+
+          status=0
+          out="$(check_guard "${modules}")" || status=$?
           echo "${out}"
+          probe_reported "${out}" "${status}"
+          if grep -q '^base-url-guard: signature mismatch' <<< "${out}"; then
+            echo "::error::woow_base_url_guard wraps res.users.authenticate with parameters that" \
+              "upstream no longer takes; the guard installs, and every login would raise TypeError." \
+              "The mismatch is named in the probe line above."
+            exit 1
+          fi
           if ! grep -qx 'base-url-guard: applied' <<< "${out}"; then
-            echo "::error::woow_base_url_guard is not applied to res.users.authenticate in" \
-              "the built image, so Odoo guesses web.base.url from the first administrator" \
-              "login. Odoo logs the cause above as 'Failed to load server-wide module'."
+            echo "::error::woow_base_url_guard is not applied to the res.users.authenticate the" \
+              "registry resolves in the built image, so Odoo guesses web.base.url from the first" \
+              "administrator login. A moved seam shows above as 'Failed to load server-wide module';" \
+              "a later res.users class redefining authenticate shows nothing."
             exit 1
           fi
 
-          out="$(check_guard "${without_guard}")"
+          status=0
+          out="$(check_guard "${without_guard}")" || status=$?
+          probe_reported "${out}" "${status}"
           if ! grep -qx 'base-url-guard: not applied' <<< "${out}"; then
             echo "${out}"
             echo "::error::the guard check did not report 'not applied' with" \

@@ -165,6 +165,15 @@
   applied. Before, a nightly that moved `authenticate` merged green: the
   guard's `ImportError` does not stop Odoo, whose server-wide loader logs
   it and serves unguarded. Issue #88.
+- The Canonical URL guard gate proves more than the flag. The in-image
+  probe now checks the `res.users` class the registry resolves (the last
+  one declaring `authenticate`), not the first flagged one, and compares
+  the wrapper's parameters with the upstream `authenticate` it wrapped, so
+  a nightly that redefines the method later in the module or changes its
+  parameters goes red instead of shipping the guess back or breaking every
+  login. `build (amd64)` has a 15-minute limit, each `docker run` a 300 s
+  one, and a container that never reaches the probe is reported as a
+  container failure, not as the guard missing. Issue #121.
 - New static-tier contract test `test_ingress_clipboard_fallback.py`
   executes the whole Runtime shim in a node `vm` context against a DOM
   stand-in and pins the clipboard fallback: absent clipboard resolves
