@@ -900,16 +900,19 @@ def notify(
     token: str | None = None,
     opener: Callable = urllib.request.urlopen,
     log: Callable[[str], None] = print,
+    source: str = "Rewrite scan",
 ) -> bool:
     """Create the persistent notification through the Supervisor.
 
     A failure is logged and never raised: a notification that could not be
-    sent must not change what the round did or how it exits.
+    sent must not change what the round did or how it exits. `source` names
+    the caller in those log lines; the start-time self-check sends its
+    failure through here too (issue #79).
     """
     if token is None:
         token = os.environ.get("SUPERVISOR_TOKEN", "")
     if not token:
-        log("Rewrite scan: no SUPERVISOR_TOKEN, so the notification was not sent")
+        log(f"{source}: no SUPERVISOR_TOKEN, so the notification was not sent")
         return False
     title, message = note
     request = urllib.request.Request(
@@ -924,7 +927,7 @@ def notify(
         with opener(request, timeout=NOTIFY_TIMEOUT_SECONDS):
             pass
     except Exception as error:      # noqa: BLE001 - reported, never raised
-        log(gate.mask(f"Rewrite scan: the notification could not be sent: {error}"))
+        log(gate.mask(f"{source}: the notification could not be sent: {error}"))
         return False
     return True
 

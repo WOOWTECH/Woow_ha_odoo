@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- The add-on now checks at every start that its database manager is closed
+  to the Cloudflare tunnel. Once nginx answers, it requests
+  `/web/database/manager` the way the tunnel does: from its own add-on
+  network address (learned from the Supervisor, never loopback, which is
+  LAN tier), on port 8069, with the host of `public_url` as `Host`. It
+  starts normally on `404` with `public_url` set, or on `503` without it,
+  and logs one line. On any other answer — `200`, a 5xx, or none at all —
+  it logs an error naming the status and the route, sends a Home Assistant
+  notification, and stops the container. This replaces the nightly
+  Perimeter check's outside view. ADR 0005, issue #79.
 - The Rewrite scan now tells you in Home Assistant when it acts. A round
   that adds Generated rewrites creates a persistent notification naming the
   new prefixes, and a round whose generation, validation or reload failed

@@ -77,6 +77,7 @@ RUN chmod a+rx /etc/cont-init.d/*.sh \
     && chmod a+r /usr/local/lib/odoo-maintenance.py /usr/local/lib/odoo-maintenance-account.py \
     && chmod a+r /usr/local/lib/literal_rewrite_gate.py /usr/local/lib/literal_rewrite_exceptions.yaml \
     && chmod a+r /usr/local/lib/rewrite_scan.py /usr/local/lib/rewrite_apply.py \
+    && chmod a+r /usr/local/lib/self_check.py \
     && chmod a+rx /usr/local/bin/odoo-rewrite-scan \
     && chmod a+rx /usr/local/bin/odoo-rewrite-apply \
     && chmod a+rx /usr/local/bin/odoo-jsonrpc-filter \
