@@ -53,23 +53,25 @@ fi
 
 # ---------- 2. Canonical URL inputs ----------
 # Without public_url the Canonical URL is the host's LAN address with the
-# published Odoo port. The address is the one cont-init settled on this
-# start and published as WOOW_LAN_IPV4 (issue #108): it waited for the
-# Supervisor there, and this side reuses the answer rather than asking
-# again, so one start has one LAN address on both sides (ADR 0006). The bare
-# read below only runs when nothing was published — this script run by hand,
-# outside a start — and it waits for nothing.
+# published Odoo port. Both are what cont-init settled on this start and
+# published as WOOW_LAN_IPV4 and WOOW_LAN_PORT under WOOW_CANONICAL_SETTLED=1
+# (issue #108): it waited for the Supervisor there and already said so when
+# nothing came, and this side reuses the answer rather than asking again, so
+# one start has one address and one port on both sides (ADR 0006). The bare
+# reads below only run when nothing was published — this script run by
+# hand, outside a start — and they wait for nothing.
 LAN_IPV4=""
 PUBLISHED_PORT=""
 if [ -z "${PUBLIC_URL}" ]; then
-    if [ "${WOOW_LAN_IPV4+set}" = set ]; then
-        LAN_IPV4="${WOOW_LAN_IPV4}"
+    if [ "${WOOW_CANONICAL_SETTLED:-}" = 1 ]; then
+        LAN_IPV4="${WOOW_LAN_IPV4:-}"
+        PUBLISHED_PORT="${WOOW_LAN_PORT:-}"
     else
         LAN_IPV4="$(bashio::network.ipv4_address 2>/dev/null || true)"
-    fi
-    PUBLISHED_PORT="$(bashio::addon.port 8069 2>/dev/null || true)"
-    if [ -z "${LAN_IPV4}" ]; then
-        bashio::log.warning "public_url is unset and the Supervisor reported no host LAN address"
+        PUBLISHED_PORT="$(bashio::addon.port 8069 2>/dev/null || true)"
+        if [ -z "${LAN_IPV4}" ]; then
+            bashio::log.warning "public_url is unset and the Supervisor reported no host LAN address"
+        fi
     fi
 fi
 

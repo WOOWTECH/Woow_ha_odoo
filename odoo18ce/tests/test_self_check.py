@@ -370,7 +370,8 @@ def drive_service(answer_after: int, verdict: int = 0,
         )
         env = dict(os.environ, PATH=f"{fake_bin.as_posix()}{os.pathsep}{os.environ['PATH']}",
                    WOOW_LIB_DIR=lib_dir.as_posix())
-        result = subprocess.run([bash, "-c", script], capture_output=True, text=True,
+        result = subprocess.run([bash, "-c", script], capture_output=True,
+                                encoding="utf-8", errors="replace",
                                 timeout=60, env=env)
         lines = log.read_text(encoding="utf-8").splitlines()
         reads = int(counter.read_text(encoding="utf-8"))

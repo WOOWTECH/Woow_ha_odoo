@@ -80,10 +80,12 @@
   for the life of the container, so a DHCP lease that landed a few seconds
   late left the Runtime shim with no Canonical URL and `web.base.url`
   unwritten until the next restart. The read now waits up to 30 seconds,
-  two seconds apart, with bashio's cache flushed in between, and the value
-  it settles on is handed to the maintenance bootstrap through the
-  container environment, so one start has one LAN address on both sides
-  and the bootstrap never asks the Supervisor on its own. When no address
+  two seconds apart, with bashio's cache flushed in between; the published
+  port is read again only while the Supervisor request itself fails; and
+  the address and port the start settles on are handed to the maintenance
+  bootstrap through the container environment, so one start has one LAN
+  address and one port on both sides and the bootstrap never asks the
+  Supervisor on its own. When no address
   comes, the start takes the no-Canonical-URL path it always took, and the
   log says the add-on waited. With `public_url` set nothing waits. Hosts
   that never have an IPv4 address (a bridge, bond, WWAN or tun uplink, an

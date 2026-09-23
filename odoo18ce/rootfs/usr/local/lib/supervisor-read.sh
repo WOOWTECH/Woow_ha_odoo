@@ -21,12 +21,17 @@
 # is logged, so "the Supervisor said nothing" and "the Supervisor could not
 # be asked" (no token, no socket, an API error) read differently.
 #
-# What this does not bound is one read that hangs: bashio's curl has no
+# `woow::supervisor.read_until_ok` is the variant for a read whose empty
+# answer is a real answer — a port that is not published — and that only
+# needs another try when the Supervisor request itself failed.
+#
+# What neither bounds is one read that hangs: bashio's curl has no
 # --max-time, so a Supervisor that accepts the connection and never
 # answers holds the read, as it held the single read before this helper.
 #
 # Usage:
-#   woow::supervisor.read BUDGET POLL "KEY..." COMMAND [ARG...]
+#   woow::supervisor.read          BUDGET POLL "KEY..." COMMAND [ARG...]
+#   woow::supervisor.read_until_ok BUDGET POLL "KEY..." COMMAND [ARG...]
 #     BUDGET   seconds to keep trying (decided on #108: 30)
 #     POLL     seconds between attempts (decided on #108: 2)
 #     KEY...   bashio cache keys to flush between attempts, space-separated:
@@ -49,24 +54,35 @@ woow::supervisor.now() {
     printf '%s' "${SECONDS}"
 }
 
-woow::supervisor.read() {
-    local budget=$1 poll=$2 keys=$3
-    shift 3
-    local started value='' key error
+# Flush the given cache keys. In a subshell: bashio's flush ends the shell
+# on a filesystem error, and that must not end the script it was called from.
+woow::supervisor.flush() {
+    local key
+    for key in $1; do
+        ( bashio::cache.flush "${key}" ) || true
+    done
+}
+
+# One retry loop for both reads. $1 is the acceptance test: `value` accepts
+# on a value, `ok` accepts on the command's exit status.
+woow::supervisor._retry() {
+    local accept=$1 budget=$2 poll=$3 keys=$4
+    shift 4
+    local started value='' status error
     started="$(woow::supervisor.now)"
     error="$(mktemp)"
     while :; do
-        value="$("$@" 2>"${error}" || true)"
-        if woow::supervisor.is_value "${value}"; then
+        status=0
+        value="$("$@" 2>"${error}")" || status=$?
+        case "${accept}" in
+            value) woow::supervisor.is_value "${value}" && status=0 || status=1 ;;
+        esac
+        if [ "${status}" -eq 0 ]; then
             rm -f "${error}"
             printf '%s' "${value}"
             return 0
         fi
-        # In a subshell: bashio's flush ends the shell on a filesystem error,
-        # and that must not end the service script it was called from.
-        for key in ${keys}; do
-            ( bashio::cache.flush "${key}" ) || true
-        done
+        woow::supervisor.flush "${keys}"
         # Whole seconds, so "past the budget" rather than "at it": the wait
         # is then never shorter than asked, at most a poll longer.
         if [ $(( $(woow::supervisor.now) - started )) -gt "${budget}" ]; then
@@ -81,40 +97,64 @@ woow::supervisor.read() {
     return 1
 }
 
+woow::supervisor.read() {
+    woow::supervisor._retry value "$@"
+}
+
+woow::supervisor.read_until_ok() {
+    woow::supervisor._retry ok "$@"
+}
+
 # ------------------------------------------------------------------------------
 # Hand a value from cont-init to the services (issue #108, ADR 0006).
 #
 # s6-overlay reads /run/s6/container_environment/NAME into the environment
 # of every `with-contenv` script that starts later, so a value settled once
 # in cont-init is the value the maintenance bootstrap sees, and neither side
-# derives it twice. The Static tier points WOOW_CONTAINER_ENV_DIR elsewhere.
+# derives it twice. An empty file means "unset" to s6-envdir, which is why
+# the settle step below publishes a marker beside the values. The file is
+# made world-readable whatever the caller's umask, because s6-envdir stops
+# on a file it cannot read. The Static tier points WOOW_CONTAINER_ENV_DIR
+# elsewhere.
 #
 #   woow::supervisor.publish NAME VALUE
 # ------------------------------------------------------------------------------
 woow::supervisor.publish() {
     local dir="${WOOW_CONTAINER_ENV_DIR:-/run/s6/container_environment}"
-    mkdir -p "${dir}"
-    printf '%s' "$2" > "${dir}/$1"
+    mkdir -p "${dir}" \
+        && printf '%s' "$2" > "${dir}/$1" \
+        && chmod 0644 "${dir}/$1"
 }
 
 # ------------------------------------------------------------------------------
-# The host's LAN IPv4 address for the Canonical URL, settled once per start.
+# The Canonical URL's two Supervisor inputs, settled once per start.
 #
-# Waits for `bashio::network.ipv4_address` with the budget decided on #108
-# (30 s, 2 s), prints what it got — possibly nothing — and publishes that
-# same value as WOOW_LAN_IPV4 for the bootstrap, so a start ends with one
-# LAN address on both sides, or none on both. An address that never comes
-# is one warning here; the caller's own "no Canonical URL" line follows.
+# Without public_url the Canonical URL is the host's LAN IPv4 address with
+# the published Odoo port. Both come from the Supervisor. The address is
+# waited for with the budget decided on #108 (30 s, 2 s); the port is read
+# again only while the request itself fails, because "no port published"
+# is an empty answer that is final. Whatever was settled — possibly nothing —
+# is set in WOOW_LAN_IPV4 and WOOW_LAN_PORT for the caller and published
+# under the same names with WOOW_CANONICAL_SETTLED=1, so the bootstrap
+# reuses this start's answer and never asks on its own. An address that
+# never comes is one warning here; the caller's own "no Canonical URL" line
+# follows. Returns 1 when there is no address, 0 otherwise.
 # ------------------------------------------------------------------------------
-woow::supervisor.lan_ipv4_settle() {
-    local budget=30 poll=2 value='' status=0
-    value="$(woow::supervisor.read "${budget}" "${poll}" \
+woow::supervisor.settle_canonical_inputs() {
+    local budget=30 poll=2 status=0
+    WOOW_LAN_IPV4="$(woow::supervisor.read "${budget}" "${poll}" \
         "network.interface.default.info.ipv4.address network.interface.default.info" \
-        bashio::network.ipv4_address)" || status=$?
-    if [ -z "${value}" ]; then
+        bashio::network.ipv4_address)" || status=1
+    if [ -z "${WOOW_LAN_IPV4}" ]; then
         bashio::log.warning "The Supervisor reported no host LAN address after waiting at least ${budget} seconds; this start has no Canonical URL from it"
     fi
-    woow::supervisor.publish WOOW_LAN_IPV4 "${value}"
-    printf '%s' "${value}"
+    WOOW_LAN_PORT="$(woow::supervisor.read_until_ok "${budget}" "${poll}" \
+        "addons.self.network.8069-tcp addons.self.info" \
+        bashio::addon.port 8069)" || true
+    if ! woow::supervisor.publish WOOW_LAN_IPV4 "${WOOW_LAN_IPV4}" \
+        || ! woow::supervisor.publish WOOW_LAN_PORT "${WOOW_LAN_PORT}" \
+        || ! woow::supervisor.publish WOOW_CANONICAL_SETTLED 1; then
+        bashio::log.warning "The settled Canonical URL inputs could not be published to the container environment; the maintenance bootstrap will read them itself"
+    fi
     return "${status}"
 }
