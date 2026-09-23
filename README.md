@@ -49,7 +49,9 @@ pytest odoo18ce/tests
 ```
 
 The live tier (`odoo18ce/tests/e2e_*.py`) needs a deployed Odoo and
-credentials from the environment; it is run by hand, never by CI.
+credentials from the environment; it is run by hand, never by CI. To run an
+unreleased branch on a real host, build it as a local add-on; see
+[docs/testing/LOCAL_BUILD_ON_HOST.md](docs/testing/LOCAL_BUILD_ON_HOST.md).
 
 A **Release** is a version bump in `odoo18ce/config.yaml` merged to `main`
 (with a matching CHANGELOG section and no `## Unreleased` left). It

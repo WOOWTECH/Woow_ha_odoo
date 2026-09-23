@@ -14,6 +14,8 @@
 > `docs/testing/COMMERCIAL_PREDEPLOY.md`（商務流程雙面向）、
 > `docs/plans/2026-09-05-odoo-developer-mode-delta-tdd.md`（開發者模式差集）。
 > 三者是**流程縱向**，本文件是**能力橫向**；本文件的 `U-xx` 項目庫供三者共用。
+> 要在 .6 上驗一個尚未 Release 的 branch，先依 `docs/testing/LOCAL_BUILD_ON_HOST.md`
+> 建出本地 add-on。
 
 ---
 
