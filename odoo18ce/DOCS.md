@@ -192,7 +192,7 @@ the module is installed.
 
 A few links are not built by the server at all. Odoo assembles them in the
 page, from the address in the address bar, and through Ingress that address
-is Home Assistant's — so the link is useless to whoever receives it, and
+is Home Assistant's — so the link points at the wrong host, and
 `web.base.url` has no say in the matter. The add-on carries the Canonical
 URL into the Ingress page and moves these links onto it:
 
@@ -211,8 +211,18 @@ images, attachments and RPC calls, and moving it would send those out of
 Ingress and break the page. Where such a link needs to reach somebody
 outside, produce it from the Public origin. With no Canonical URL
 configured or discoverable (Ingress-only, and the Supervisor reports no LAN
-address) none of these links change at all; set `public_url` if they must
-work from outside.
+address) none of these links change at all; set `public_url` to give them an
+address that resolves from outside your network.
+
+A correct address is not the same thing as an openable one. Whether the
+person you send it to can open the page is decided by what you are sharing,
+not by the address: Odoo 18 gives every Discuss channel an **Authorized
+Group** — Internal User, unless you clear it — and the invitation link
+answers "not found" to anyone outside that group, a logged-out visitor
+included. That is Odoo's access control doing its job, and no setting here
+changes it. To share a channel with someone who has no account, clear that
+channel's Authorized Group first; the built-in `general` and
+`Administrators` channels cannot be shared this way at all.
 
 ## Custom Modules
 
