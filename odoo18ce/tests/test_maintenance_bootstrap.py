@@ -227,7 +227,7 @@ def test_bootstrap_processes_every_database_and_never_requires_default_db() -> N
     assert "bashio::network.ipv4_address" not in script
     assert "bashio::addon.port" not in script
     assert "woow::supervisor" not in script
-    assert "not settled by cont-init" in script
+    assert "published no settled Canonical URL inputs" in script
     # public_url without default_db used to be a start-up failure.
     assert "default_db is required" not in script
     # A failed database listing is reported, not mistaken for "no database".

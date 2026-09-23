@@ -67,7 +67,7 @@ if [ -z "${PUBLIC_URL}" ]; then
         LAN_IPV4="${WOOW_LAN_IPV4:-}"
         PUBLISHED_PORT="${WOOW_LAN_PORT:-}"
     else
-        bashio::log.warning "maintenance: the Canonical URL inputs were not settled by cont-init this start; no LAN address is used"
+        bashio::log.warning "maintenance: cont-init published no settled Canonical URL inputs this start (it did not settle them, or could not publish them); no LAN address is used"
     fi
 fi
 

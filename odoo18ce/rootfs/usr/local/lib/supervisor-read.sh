@@ -79,21 +79,29 @@ woow::supervisor._retry() {
         status=0
         value="$("$@" 2>"${error}")" || status=$?
         case "${accept}" in
-            value) woow::supervisor.is_value "${value}" && status=0 || status=1 ;;
+            value)
+                # An answer that is not a value is retried, and bashio's
+                # cache of it flushed so the Supervisor is really asked.
+                if woow::supervisor.is_value "${value}"; then
+                    status=0
+                else
+                    status=1
+                    woow::supervisor.flush "${keys}"
+                fi
+                ;;
+            # ok: the command's own status decides, and bashio caches only
+            # a request that succeeded, so there is nothing to flush.
         esac
         if [ "${status}" -eq 0 ]; then
             rm -f "${error}"
             printf '%s' "${value}"
             return 0
         fi
-        # bashio caches only a request that succeeded, so there is nothing
-        # to flush after one that failed: the flush belongs to `value` mode.
-        if [ "${accept}" = value ]; then
-            woow::supervisor.flush "${keys}"
-        fi
         # Whole seconds, so "past the budget" rather than "at it": the wait
-        # is then never shorter than asked, at most a poll longer.
-        if [ $(( $(woow::supervisor.now) - started )) -gt "${budget}" ]; then
+        # is then never shorter than asked, at most a poll longer. A budget
+        # of nothing is one attempt and no poll.
+        if [ "${budget}" -le 0 ] \
+            || [ $(( $(woow::supervisor.now) - started )) -gt "${budget}" ]; then
             break
         fi
         sleep "${poll}"
@@ -121,9 +129,10 @@ woow::supervisor.read_until_ok() {
 # in cont-init is the value the maintenance bootstrap sees, and neither side
 # derives it twice. An empty file means "unset" to s6-envdir, which is why
 # the settle step below publishes a marker beside the values. The file is
-# made world-readable whatever the caller's umask, because s6-envdir stops
-# on a file it cannot read. The Static tier points WOOW_CONTAINER_ENV_DIR
-# elsewhere.
+# made world-readable whatever the caller's umask (cont-init runs under
+# 077), so a with-contenv reader that is not root — none today — is not
+# stopped by s6-envdir on a file it cannot read. The Static tier points
+# WOOW_CONTAINER_ENV_DIR elsewhere.
 #
 #   woow::supervisor.publish NAME VALUE
 # ------------------------------------------------------------------------------
@@ -170,7 +179,12 @@ woow::supervisor.settle_canonical_inputs() {
     if ! woow::supervisor.publish WOOW_LAN_IPV4 "${WOOW_LAN_IPV4}" \
         || ! woow::supervisor.publish WOOW_LAN_PORT "${WOOW_LAN_PORT}" \
         || ! woow::supervisor.publish WOOW_CANONICAL_SETTLED 1; then
-        bashio::log.warning "The settled Canonical URL inputs could not be published to the container environment; the maintenance bootstrap will have no LAN address this start"
+        # The bootstrap will see no marker and use no LAN address; this side
+        # drops what it settled on too, so both sides stay equal (ADR 0006).
+        bashio::log.warning "The settled Canonical URL inputs could not be published to the container environment; this start uses no LAN address on either side"
+        WOOW_LAN_IPV4=''
+        WOOW_LAN_PORT=''
+        status=1
     fi
     return "${status}"
 }

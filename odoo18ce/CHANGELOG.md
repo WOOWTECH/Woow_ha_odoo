@@ -85,9 +85,9 @@
   the address and port the start settles on are handed to the maintenance
   bootstrap through the container environment, so one start has one LAN
   address and one port on both sides and the bootstrap never asks the
-  Supervisor on its own. When no address
-  comes, the start takes the no-Canonical-URL path it always took, and the
-  log says the add-on waited. With `public_url` set nothing waits. Hosts
+  Supervisor on its own. When no address comes, the start takes the
+  no-Canonical-URL path it always took, and the log says the add-on
+  waited. With `public_url` set nothing waits. Hosts
   that never have an IPv4 address (a bridge, bond, WWAN or tun uplink, an
   unmanaged interface, IPv6-only) pay the 30 seconds once per start, and
   so does a Supervisor that cannot be asked at all: the address and the
