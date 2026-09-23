@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.3 — 2026-09-23
 
 ### Added
 - The add-on now checks at every start that its database manager is closed
