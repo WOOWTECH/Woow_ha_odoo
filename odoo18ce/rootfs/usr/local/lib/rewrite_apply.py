@@ -70,6 +70,7 @@ from __future__ import annotations
 import argparse
 import collections
 from dataclasses import dataclass, field, replace
+import hashlib
 import itertools
 import json
 import os
@@ -553,11 +554,12 @@ def live_prefixes(include_path: str | os.PathLike = scan.GENERATED_REWRITES_PATH
     like a host that had forgotten how.
 
     An unreadable file answers nothing rather than raising: this is a line
-    of a log, and the round it belongs to has already said what it did.
+    of a log, and the round it belongs to has already said what it did. A
+    file that is not UTF-8 is unreadable too; the round regenerates it.
     """
     try:
         return include_prefixes(Path(include_path).read_text(encoding="utf-8"))
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return ()
 
 
@@ -796,9 +798,10 @@ STEP_RELOAD = "reload"
 #: token every add-on is given. It needs `homeassistant_api` in config.yaml.
 NOTIFY_URL = "http://supervisor/core/api/services/persistent_notification/create"
 NOTIFY_TIMEOUT_SECONDS = 10
-#: One id per event, so a failure that repeats every round replaces its own
-#: notification instead of stacking one every five minutes, and never
-#: replaces the one that named the rules that were added.
+#: The notification ids (`notification_id`). A failure that repeats every
+#: round replaces its own notification instead of stacking one every five
+#: minutes; each set of added rules gets its own, so neither a failure nor a
+#: later addition replaces the notification that named them.
 NOTIFICATION_IDS = {
     EVENT_ADDED: "odoo18ce_generated_rewrites_added",
     EVENT_FAILED: "odoo18ce_generated_rewrites_failed",
@@ -810,9 +813,19 @@ class RoundEvent:
     """Something a round did that the operator is told about."""
 
     kind: str
-    prefixes: tuple = ()     # EVENT_ADDED: the prefixes this round added
+    # The prefixes this round added. A failed reload carries them too: the
+    # file is in place and the state saved, so no later round names them.
+    prefixes: tuple = ()
     step: str = ""           # EVENT_FAILED: which step failed
     detail: str = ""
+
+
+def notification_id(event: RoundEvent) -> str:
+    """The id Home Assistant keys the notification on (`NOTIFICATION_IDS`)."""
+    if event.kind != EVENT_ADDED:
+        return NOTIFICATION_IDS[event.kind]
+    digest = hashlib.sha256(" ".join(event.prefixes).encode("utf-8")).hexdigest()
+    return f"{NOTIFICATION_IDS[EVENT_ADDED]}_{digest[:12]}"
 
 
 def round_event(outcome: ApplyResult, before: Iterable = (), auto: bool = True) -> RoundEvent | None:
@@ -830,13 +843,14 @@ def round_event(outcome: ApplyResult, before: Iterable = (), auto: bool = True) 
         return RoundEvent(EVENT_FAILED, step=STEP_GENERATION, detail=outcome.detail)
     if outcome.status == STATUS_INVALID:
         return RoundEvent(EVENT_FAILED, step=STEP_VALIDATION, detail=outcome.detail)
+    if outcome.status != STATUS_APPLIED:
+        return None
+    known = set(before)
+    added = tuple(prefix for prefix in outcome.prefixes if prefix not in known)
     if outcome.reload_failed:
-        return RoundEvent(EVENT_FAILED, step=STEP_RELOAD, detail=outcome.detail)
-    if outcome.status == STATUS_APPLIED:
-        known = set(before)
-        added = tuple(prefix for prefix in outcome.prefixes if prefix not in known)
-        if added:
-            return RoundEvent(EVENT_ADDED, prefixes=added)
+        return RoundEvent(EVENT_FAILED, prefixes=added, step=STEP_RELOAD, detail=outcome.detail)
+    if added:
+        return RoundEvent(EVENT_ADDED, prefixes=added)
     return None
 
 
@@ -847,14 +861,26 @@ def notification(event: RoundEvent) -> tuple[str, str]:
     could carry an Ingress token; a notification is as easily screenshotted
     as the log.
     """
+    listed = "\n".join(f"- `{prefix}`" for prefix in event.prefixes)
     if event.kind == EVENT_ADDED:
         title = "Woow Odoo: Generated rewrites added"
         body = (
             "The Rewrite scan found navigation prefixes no Shipped rewrite "
-            "covers and now rewrites them under Ingress:\n\n"
-            + "\n".join(f"- `{prefix}`" for prefix in event.prefixes)
-            + "\n\nThe add-on log has the bundles they were found in. "
+            f"covers and now rewrites them under Ingress:\n\n{listed}\n\n"
+            "The add-on log has the bundles they were found in. "
             "Set `literal_rewrite_auto` to false to freeze the rules."
+        )
+    elif event.step == STEP_RELOAD:
+        # The one failure after which the file has moved: it is valid and in
+        # place, and the state is saved, so no later round retries.
+        title = "Woow Odoo: Generated rewrite reload failed"
+        body = (
+            "The Rewrite scan wrote a new Generated rewrite file that nginx "
+            "accepted, but the reload failed, so the new rules are not live "
+            "yet. nginx loads them at its next start; restarting the add-on "
+            "does that now. Odoo is untouched."
+            + (f"\n\nPrefixes added:\n\n{listed}" if event.prefixes else "")
+            + f"\n\n{event.detail}"
         )
     else:
         title = f"Woow Odoo: Generated rewrite {event.step} failed"
@@ -870,10 +896,10 @@ def notification(event: RoundEvent) -> tuple[str, str]:
 def notify(
     note: tuple[str, str],
     *,
+    notification_id: str,
     token: str | None = None,
     opener: Callable = urllib.request.urlopen,
     log: Callable[[str], None] = print,
-    notification_id: str = NOTIFICATION_IDS[EVENT_ADDED],
 ) -> bool:
     """Create the persistent notification through the Supervisor.
 
@@ -908,7 +934,7 @@ def send_notification(event: RoundEvent | None, notifier: Callable, log: Callabl
     if event is None:
         return
     try:
-        notifier(notification(event), notification_id=NOTIFICATION_IDS[event.kind], log=log)
+        notifier(notification(event), notification_id=notification_id(event), log=log)
     except Exception as error:      # noqa: BLE001 - a broken adapter must not end the round
         log(gate.mask(f"Rewrite scan: the notification could not be sent: {error}"))
 

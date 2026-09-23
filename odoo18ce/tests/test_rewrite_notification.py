@@ -196,6 +196,12 @@ def test_a_failed_reload_is_a_failed_reload(tmp_path: Path) -> None:
     event = apply.round_event(outcome, before)
     assert event.kind == apply.EVENT_FAILED
     assert event.step == apply.STEP_RELOAD
+    # The file is in place and the state saved, so no later round will
+    # announce these rules: the failure has to.
+    assert event.prefixes == ("/forum/",)
+    title, body = apply.notification(event)
+    assert "/forum/" in body
+    assert "next start" in body
 
 
 def test_nginx_not_running_yet_is_not_a_failed_reload(tmp_path: Path) -> None:
@@ -211,6 +217,12 @@ def test_an_added_notification_lists_the_prefixes() -> None:
     title, body = apply.notification(apply.RoundEvent(apply.EVENT_ADDED, prefixes=("/forum/", "/livechat/")))
     assert "added" in title.lower()
     assert "/forum/" in body and "/livechat/" in body
+
+
+def test_a_failed_generation_or_validation_says_the_rules_stayed() -> None:
+    for step in (apply.STEP_GENERATION, apply.STEP_VALIDATION):
+        _, body = apply.notification(apply.RoundEvent(apply.EVENT_FAILED, step=step))
+        assert "stay as they are" in body and "five minutes" in body
 
 
 def test_a_failed_notification_names_the_step() -> None:
@@ -253,7 +265,8 @@ class Opener:
 def test_the_adapter_creates_a_persistent_notification_through_the_supervisor() -> None:
     opener = Opener()
     logged: list[str] = []
-    sent = apply.notify(("Title", "Body"), token="supervisor-token", opener=opener, log=logged.append)
+    sent = apply.notify(("Title", "Body"), notification_id="the_id", token="supervisor-token",
+                        opener=opener, log=logged.append)
     assert sent
     (request, timeout), = opener.requests
     assert request.full_url == "http://supervisor/core/api/services/persistent_notification/create"
@@ -261,14 +274,14 @@ def test_the_adapter_creates_a_persistent_notification_through_the_supervisor() 
     assert request.get_header("Authorization") == "Bearer supervisor-token"
     payload = json.loads(request.data)
     assert payload["title"] == "Title" and payload["message"] == "Body"
-    assert payload["notification_id"]
+    assert payload["notification_id"] == "the_id"
     assert timeout
 
 
 def test_a_failure_to_notify_is_logged_and_not_raised() -> None:
     logged: list[str] = []
     opener = Opener(urllib.error.URLError(f"refused at /api/hassio_ingress/{TOKEN}/x"))
-    assert not apply.notify(("Title", "Body"), token="t", opener=opener, log=logged.append)
+    assert not apply.notify(("Title", "Body"), notification_id="x", token="t", opener=opener, log=logged.append)
     assert logged and "notification" in logged[0]
     assert TOKEN not in "\n".join(logged)
 
@@ -276,7 +289,7 @@ def test_a_failure_to_notify_is_logged_and_not_raised() -> None:
 def test_no_supervisor_token_is_logged_and_nothing_is_sent() -> None:
     logged: list[str] = []
     opener = Opener()
-    assert not apply.notify(("Title", "Body"), token="", opener=opener, log=logged.append)
+    assert not apply.notify(("Title", "Body"), notification_id="x", token="", opener=opener, log=logged.append)
     assert opener.requests == []
     assert logged
 
@@ -338,7 +351,7 @@ def test_main_notifies_a_round_that_added_a_rule(tmp_path: Path) -> None:
     assert code == 0
     ((title, body), notification_id), = sent
     assert "/forum/" in body
-    assert notification_id == apply.NOTIFICATION_IDS[apply.EVENT_ADDED]
+    assert notification_id.startswith(apply.NOTIFICATION_IDS[apply.EVENT_ADDED])
 
 
 def test_main_notifies_a_failed_round(tmp_path: Path) -> None:
@@ -351,7 +364,21 @@ def test_main_notifies_a_failed_round(tmp_path: Path) -> None:
 
 def test_the_two_events_never_replace_each_other() -> None:
     """A failure every five minutes must not overwrite the rules that were added."""
-    assert apply.NOTIFICATION_IDS[apply.EVENT_ADDED] != apply.NOTIFICATION_IDS[apply.EVENT_FAILED]
+    added = apply.notification_id(apply.RoundEvent(apply.EVENT_ADDED, prefixes=("/forum/",)))
+    failed = apply.notification_id(apply.RoundEvent(apply.EVENT_FAILED, step=apply.STEP_RELOAD))
+    assert added != failed
+
+
+def test_a_later_round_that_adds_rules_keeps_the_earlier_notification() -> None:
+    first = apply.notification_id(apply.RoundEvent(apply.EVENT_ADDED, prefixes=("/a/",)))
+    second = apply.notification_id(apply.RoundEvent(apply.EVENT_ADDED, prefixes=("/b/",)))
+    assert first != second
+
+
+def test_a_repeated_failure_replaces_its_own_notification() -> None:
+    one = apply.notification_id(apply.RoundEvent(apply.EVENT_FAILED, step=apply.STEP_GENERATION, detail="a"))
+    two = apply.notification_id(apply.RoundEvent(apply.EVENT_FAILED, step=apply.STEP_VALIDATION, detail="b"))
+    assert one == two
 
 
 def test_main_notifies_a_generation_that_raised_and_still_fails(tmp_path: Path) -> None:
@@ -385,3 +412,10 @@ def test_a_broken_adapter_does_not_change_the_round(tmp_path: Path) -> None:
     code, _, lines = run_main(tmp_path, notify_raises=True)
     assert code == 0
     assert any("notification could not be sent" in line for line in lines)
+
+
+def test_an_include_file_that_is_not_utf8_does_not_stop_the_round(tmp_path: Path) -> None:
+    """The round regenerates the file, so a corrupted one must not end it first."""
+    include = tmp_path / "nginx-generated-rewrites.conf"
+    include.write_bytes(b"\xff\xfe not utf-8")
+    assert apply.live_prefixes(include) == ()
