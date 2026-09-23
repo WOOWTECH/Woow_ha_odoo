@@ -121,3 +121,23 @@ report as soon as nothing changed.
 - Whether unix sockets are sufficient inside the container, or whether
   something else in the rendered configuration also collides with the
   running nginx, is confirmed on a live container before this ships.
+
+## Postscript (2026-09-23)
+
+Confirmed on the test host (Home Assistant OS 16.1, Supervisor 2026.09.2,
+a local build of `main` at 6a8b7e0), running #81's runbook:
+
+- With nginx serving on 8069, 8072 and 5691, a forced round whose
+  generation differed from the file validated the candidate, wrote three
+  prefixes and reloaded: the add-on log shows `signal 1 (SIGHUP) received
+  … reconfiguring` from the master one second after the round's
+  `and nginx was reloaded`. The validation collided with nothing.
+- At the first round after a start, before nginx was up, the same
+  generation was written with `nginx is not running yet, so it was not
+  reloaded`, and nginx loaded it at its start. Both branches above hold.
+- One shape this ADR did not name: a pass is due on a bundle change or an
+  `analysis_version` change, not on a change of the Shipped rewrites. When
+  the Shipped rules that a host had generated came back (the shape of a
+  Release shipping them), the generated duplicates stayed in the include
+  file until a forced round removed them, silently, as removals are. That
+  is #135.

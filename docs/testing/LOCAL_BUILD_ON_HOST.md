@@ -119,6 +119,9 @@ ha addons update local_odoo18ce    # CLI 會逾時，見陷阱 d
   ```
 
 - **原因：** 這是 Supervisor 的行為，我們改不了，只能每次更新後重設。
+- **不一定會發生：** 2026-09-23 在 Supervisor 2026.09.2 上連續三次 `ha addons update`，
+  8169/8172 的對應都留著，沒有掉。所以更新後先看 `ha addons info local_odoo18ce`
+  的 `network:`，掉了才重設；把這一步當檢查，不當必然。
 - **處置：** `ha apps options` **沒有** `--network` 旗標，CLI 做不到；走 Supervisor
   API（在 SSH add-on 的 shell 裡，`$SUPERVISOR_TOKEN` 已存在）：
 
@@ -152,6 +155,14 @@ ha addons update local_odoo18ce    # CLI 會逾時，見陷阱 d
 瓶頸是 `deb.debian.org` 的頻寬（約 75 KB/s），不是 CPU。這正是
 [ADR 0001](../adr/0001-distribution-follows-release-tags.md) 不再讓使用者在自己
 的裝置上建置的原因；開始前請預留時間。
+
+**同一台主機的第二次起就快得多：** Docker 會重用前一次建置的 layer，只有 `rootfs/`
+變動時，`ha addons update` 約 **20 秒**就完成（2026-09-23 同一台主機量測，同一個
+慢速鏡像站），CLI 也不會逾時。72 分鐘是從零開始、或 Dockerfile 前段（apt 那幾層）
+有變動時的數字。
+
+**容器名稱：** Supervisor 2026.09 起容器叫 `app_local_odoo18ce`（不再是 `addon_…`），
+`docker exec`、`docker logs` 用這個名字。
 
 **預期警告：** 本地建置期間會出現 `addon_config` 的 legacy map 型別警告；它不代表
 失敗，改名見 #126。`build.yaml` 已棄用的警告不會再出現：#124 之後 base image 的
