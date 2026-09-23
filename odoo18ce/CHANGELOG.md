@@ -74,6 +74,24 @@
   bootstrap still calls for `web.base.url`. ADR 0006, issue #70.
 
 ### Fixed
+- A LAN address that arrives a moment after the add-on starts no longer
+  costs that start its Canonical URL. Without `public_url`, the address
+  came from one Supervisor read at boot, and bashio caches an empty answer
+  for the life of the container, so a DHCP lease that landed a few seconds
+  late left the Runtime shim with no Canonical URL and `web.base.url`
+  unwritten until the next restart. The read now waits up to 30 seconds,
+  two seconds apart, with bashio's cache flushed in between; the published
+  port is read again only while the Supervisor request itself fails; and
+  the address and port the start settles on are handed to the maintenance
+  bootstrap through the container environment, so one start has one LAN
+  address and one port on both sides and the bootstrap never asks the
+  Supervisor on its own. When no address comes, the start takes the
+  no-Canonical-URL path it always took, and the log says the add-on
+  waited. With `public_url` set nothing waits. Hosts
+  that never have an IPv4 address (a bridge, bond, WWAN or tun uplink, an
+  unmanaged interface, IPv6-only) pay the 30 seconds once per start, and
+  so does a Supervisor that cannot be asked at all: the address and the
+  port share the one budget. Issue #108.
 - The Rewrite scan's Home Assistant notification now covers every step of
   a round. A state file or a database scan that raised used to end the
   round with a traceback and no notification; both now notify, naming the

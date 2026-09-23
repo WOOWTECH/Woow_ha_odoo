@@ -11,6 +11,7 @@ The helper is a bash function, so it is driven by bash: sourced into a shell
 whose `bashio::*` functions are stubs, and observed through what it prints,
 what it returns and which cache keys it flushed.
 """
+import os
 import subprocess
 from pathlib import Path
 
@@ -53,6 +54,27 @@ placeholder_until() {
     n=$(( $(cat "${COUNTER}") + 1 )); printf '%s' "${n}" > "${COUNTER}"
     if [ "${n}" -ge "${until}" ]; then printf '%s' "${value}"; else printf '%s' "${placeholder}"; fi
 }
+# The two Canonical URL reads under the test's control: the address answers
+# after N empty attempts; the port request fails N times, then answers
+# (possibly empty: a port that is not published). The directory s6 hands
+# services their environment from is a temporary one, removed on exit with
+# the counters.
+bashio::network.ipv4_address() {
+    if [ "${LAN_REFUSED:-0}" = 1 ]; then refused; return; fi
+    read_after "${LAN_AFTER:-1}" 192.0.2.10/24
+}
+PORT_COUNTER="$(mktemp)"; printf '0' > "${PORT_COUNTER}"
+bashio::addon.port() {
+    local n; n=$(( $(cat "${PORT_COUNTER}") + 1 )); printf '%s' "${n}" > "${PORT_COUNTER}"
+    if [ "${n}" -lt "${PORT_OK_AFTER:-1}" ]; then
+        printf 'Failed to get addon info from Supervisor API\n' >&2; return 1
+    fi
+    printf '%s' "${PORT_VALUE-8069}"
+}
+export WOOW_CONTAINER_ENV_DIR; WOOW_CONTAINER_ENV_DIR="$(mktemp -d)"
+# Expanded now, so a test that points WOOW_CONTAINER_ENV_DIR elsewhere still
+# leaves the directory mktemp made removed.
+trap "rm -rf '${WOOW_CONTAINER_ENV_DIR}' '${COUNTER}' '${SLEPT}' '${PORT_COUNTER}'" EXIT
 """
 
 
@@ -61,7 +83,7 @@ def run_helper(script: str) -> subprocess.CompletedProcess:
     posix_helper = HELPER.as_posix()
     return subprocess.run(
         [bash, "-c", f'source "{posix_helper}"\n{STUBS}\n{script}'],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, encoding="utf-8", errors="replace", timeout=60,
     )
 
 
@@ -139,3 +161,133 @@ def test_the_helper_is_readable_in_the_image() -> None:
 def test_the_helper_is_in_the_shellcheck_gate() -> None:
     ci = (ROOT.parent / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert 'rootfs/usr/local/lib/supervisor-read.sh"' in ci.split("shellcheck -s bash", 1)[0]
+
+
+# --- a read whose empty answer is final --------------------------------------
+
+def test_read_until_ok_retries_a_failed_request_and_accepts_an_empty_answer() -> None:
+    result = run_helper(
+        'PORT_OK_AFTER=3 PORT_VALUE=""; '
+        'v="$(woow::supervisor.read_until_ok 30 2 "addons.self.network.8069-tcp addons.self.info" '
+        'bashio::addon.port 8069)"; echo "rc=$? value=[${v}] attempts=$(cat "${PORT_COUNTER}")"'
+    )
+    assert result.stdout.strip() == "rc=0 value=[] attempts=3", result.stderr
+    assert flushed(result) == [], "bashio caches only a request that succeeded; nothing to flush"
+    assert "WARN" not in result.stderr
+
+
+def test_read_until_ok_gives_up_and_names_the_refusal() -> None:
+    result = run_helper(
+        'PORT_OK_AFTER=999; '
+        'v="$(woow::supervisor.read_until_ok 30 2 "addons.self.network.8069-tcp addons.self.info" '
+        'bashio::addon.port 8069)"; echo "rc=$? value=[${v}] attempts=$(cat "${PORT_COUNTER}")"'
+    )
+    assert result.stdout.strip() == "rc=1 value=[] attempts=17", result.stderr
+    warnings = [l for l in result.stderr.splitlines() if l.startswith("WARN ")]
+    assert len(warnings) == 1 and "Failed to get addon info" in warnings[0]
+
+
+# --- the Canonical URL inputs, settled once per start ------------------------
+# cont-init settles the host's LAN address and the published port for the
+# Canonical URL and publishes them to the container environment; the
+# maintenance bootstrap reads them from there (issue #108, ADR 0006: one value
+# per start, derived once).
+
+def published(result: subprocess.CompletedProcess) -> dict[str, str | None]:
+    out: dict[str, str | None] = {}
+    for line in result.stdout.splitlines():
+        if line.startswith("PUBLISHED "):
+            name, _, value = line[len("PUBLISHED "):].partition("=")
+            out[name] = None if value == "<none>" else value
+    return out
+
+
+SETTLE = (
+    'woow::supervisor.settle_canonical_inputs; rc=$?; '
+    'echo "ipv4=[${WOOW_LAN_IPV4}] port=[${WOOW_LAN_PORT}] rc=${rc} '
+    'attempts=$(cat "${COUNTER}") slept=$(cat "${SLEPT}")"; '
+    'echo "PORT_ATTEMPTS=$(cat "${PORT_COUNTER}")"; '
+    'for n in WOOW_LAN_IPV4 WOOW_LAN_PORT WOOW_CANONICAL_SETTLED; do '
+    'f="${WOOW_CONTAINER_ENV_DIR}/${n}"; '
+    'if [ -e "$f" ]; then echo "PUBLISHED ${n}=$(cat "$f")"; else echo "PUBLISHED ${n}=<none>"; fi; done'
+)
+
+
+def test_a_lan_address_that_arrives_late_is_settled_once_and_published() -> None:
+    result = run_helper("LAN_AFTER=3; " + SETTLE)
+    assert "ipv4=[192.0.2.10/24] port=[8069] rc=0 attempts=3 slept=4" in result.stdout, result.stderr
+    assert published(result) == {
+        "WOOW_LAN_IPV4": "192.0.2.10/24", "WOOW_LAN_PORT": "8069", "WOOW_CANONICAL_SETTLED": "1",
+    }
+    assert flushed(result) == [
+        "network.interface.default.info.ipv4.address", "network.interface.default.info",
+    ] * 2
+    assert "WARN" not in result.stderr
+
+
+def test_a_lan_address_that_never_arrives_is_one_warning_and_a_settled_empty_publication() -> None:
+    result = run_helper("LAN_AFTER=999; " + SETTLE)
+    assert "ipv4=[] port=[8069] rc=1 attempts=17 slept=32" in result.stdout, result.stderr
+    # The marker is what tells the bootstrap not to ask again: to s6-envdir an
+    # empty file is an unset variable, so the empty value alone would not.
+    assert published(result) == {
+        "WOOW_LAN_IPV4": "", "WOOW_LAN_PORT": "8069", "WOOW_CANONICAL_SETTLED": "1",
+    }
+    warnings = [l for l in result.stderr.splitlines() if l.startswith("WARN ")]
+    assert len(warnings) == 1 and "30 seconds" in warnings[0] and "LAN" in warnings[0], result.stderr
+
+
+def test_the_inputs_on_the_first_read_cost_no_wait() -> None:
+    result = run_helper("LAN_AFTER=1; " + SETTLE)
+    assert "ipv4=[192.0.2.10/24] port=[8069] rc=0 attempts=1 slept=0" in result.stdout, result.stderr
+    assert published(result)["WOOW_CANONICAL_SETTLED"] == "1"
+    assert flushed(result) == [] and "WARN" not in result.stderr
+
+
+def test_an_unpublished_port_is_settled_as_empty_without_waiting() -> None:
+    result = run_helper('LAN_AFTER=1 PORT_VALUE=""; ' + SETTLE)
+    assert "ipv4=[192.0.2.10/24] port=[] rc=0 attempts=1 slept=0" in result.stdout, result.stderr
+    assert published(result)["WOOW_LAN_PORT"] == ""
+
+
+def test_a_supervisor_that_cannot_be_asked_costs_one_budget_not_two() -> None:
+    # Both reads fail throughout (no hassio_api, no token, Supervisor down).
+    # The address spends the budget; the port gets what is left of it.
+    result = run_helper('LAN_REFUSED=1 PORT_OK_AFTER=999; ' + SETTLE)
+    assert "ipv4=[] port=[] rc=1" in result.stdout, result.stderr
+    fields = dict(part.split("=") for part in result.stdout.splitlines()[0].split() if "=" in part)
+    assert int(fields["slept"]) == 32, "one shared budget, at most one poll over, not two budgets"
+    assert published(result)["WOOW_CANONICAL_SETTLED"] == "1"
+    port_attempts = int(result.stdout.split("PORT_ATTEMPTS=", 1)[1].split()[0])
+    assert port_attempts == 1, "a spent budget is one attempt for the port, no poll"
+    warnings = [l for l in result.stderr.splitlines() if l.startswith("WARN ")]
+    # The address refusal, the no-address line, the port refusal: each once.
+    assert len(warnings) == 3, result.stderr
+    assert sum("Failed to get addon info" in w for w in warnings) == 2
+
+
+def test_the_budget_is_owned_by_the_helper() -> None:
+    result = run_helper('echo "${WOOW_SUPERVISOR_BUDGET} ${WOOW_SUPERVISOR_POLL}"')
+    assert result.stdout.strip() == "30 2", "the #108 decision, in one place"
+
+
+def test_a_publication_that_fails_is_one_warning_and_the_values_still_come_back() -> None:
+    # A file where the directory should be: mkdir -p fails on it. The trap
+    # still removes the directory mktemp made, because it was expanded then.
+    result = run_helper(
+        'LAN_AFTER=1; : > "${WOOW_CONTAINER_ENV_DIR}/blocked"; '
+        'WOOW_CONTAINER_ENV_DIR="${WOOW_CONTAINER_ENV_DIR}/blocked/env"; ' + SETTLE
+    )
+    # Both sides end equal: nothing published, and nothing kept here either.
+    assert "ipv4=[] port=[] rc=1" in result.stdout, result.stderr
+    warnings = [l for l in result.stderr.splitlines() if l.startswith("WARN ")]
+    assert len(warnings) == 1 and "could not be published" in warnings[0]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="file modes are not POSIX on Windows")
+def test_a_published_value_is_readable_by_every_service_whatever_the_umask() -> None:
+    result = run_helper(
+        'umask 077; woow::supervisor.publish WOOW_LAN_IPV4 x; '
+        'stat -c %a "${WOOW_CONTAINER_ENV_DIR}/WOOW_LAN_IPV4"'
+    )
+    assert result.stdout.strip() == "644", result.stderr

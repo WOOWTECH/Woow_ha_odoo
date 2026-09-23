@@ -370,7 +370,8 @@ def drive_service(answer_after: int, verdict: int = 0,
         )
         env = dict(os.environ, PATH=f"{fake_bin.as_posix()}{os.pathsep}{os.environ['PATH']}",
                    WOOW_LIB_DIR=lib_dir.as_posix())
-        result = subprocess.run([bash, "-c", script], capture_output=True, text=True,
+        result = subprocess.run([bash, "-c", script], capture_output=True,
+                                encoding="utf-8", errors="replace",
                                 timeout=60, env=env)
         lines = log.read_text(encoding="utf-8").splitlines()
         reads = int(counter.read_text(encoding="utf-8"))
@@ -393,6 +394,7 @@ def test_an_address_that_never_comes_is_named_once_and_still_refused() -> None:
     assert code == 1
     assert argv[argv.index("--address") + 1] == "--public-url", "an empty address is handed on, not loopback"
     waited = [l for l in lines if l.startswith("WARN ") and "30 seconds" in l]
+    # The 30 comes from the helper's default, sourced by the script.
     assert len(waited) == 1, lines
     assert "no add-on address" in waited[0]
     assert 2 <= reads <= 20, "bounded by the budget, not by a count"
@@ -417,6 +419,7 @@ def test_a_missing_helper_stops_the_service_with_the_cause_and_no_check() -> Non
 
 def test_the_budget_is_one_number_in_the_service() -> None:
     run_script = code_of(SERVICE_DIR / "run")
-    assert "SUPERVISOR_BUDGET=30" in run_script and "SUPERVISOR_POLL=2" in run_script
+    assert 'SUPERVISOR_BUDGET="${WOOW_SUPERVISOR_BUDGET}"' in run_script, "the helper owns the number"
+    assert 'SUPERVISOR_POLL="${WOOW_SUPERVISOR_POLL}"' in run_script
     assert "after waiting at least ${SUPERVISOR_BUDGET} seconds" in run_script
     assert "30 seconds" not in run_script, "the message and the call share the number"
