@@ -72,29 +72,38 @@ def require_env(name: str) -> str:
     return value
 
 
-def bundle_name(url: str) -> str:
-    """`web.assets_web.min.js` from its full URL, without the origin or query."""
+def bundle_path(url: str) -> str:
+    """`/web/assets/1/8c63e6a/web.assets_web.min.js` from its full URL.
+
+    A bundle is identified by its URL path, not its file name: Odoo serves
+    one name under a website-scoped `/web/assets/1/<unique>/<name>` and an
+    unscoped `/web/assets/<unique>/<name>` with different content, and both
+    need scanning (issue #98). The in-container Rewrite scan keys its rows
+    the same way (#92). Whatever precedes `/web/assets/` -- an Ingress
+    prefix and its token -- is dropped, and so are the origin and query.
+    """
     path = urlsplit(url).path
-    return path.rsplit("/", 1)[-1] or path
+    index = path.find("/web/assets/")
+    return path[index:] if index >= 0 else path
 
 
 def safe_filename(name: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]+", "_", name)
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", name).lstrip("_")
 
 
 def collect_bundles(base: str, login: str, password: str, artifacts: Path) -> dict[str, str]:
-    """Log in and return {bundle name: body} for every bundle the routes load."""
+    """Log in and return {bundle path: body} for every bundle the routes load."""
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
     ignore_https = os.environ.get("IGNORE_HTTPS_ERRORS", "0") == "1"
-    seen: dict[str, str] = {}      # bundle name -> url, first sighting wins
+    seen: dict[str, str] = {}      # bundle path -> url, first sighting wins
 
     def url(path: str) -> str:
         return f"{base}/{path.lstrip('/')}" if path != "/" else f"{base}/"
 
     def on_response(response):
         if response.status == 200 and BUNDLE_URL.search(response.url):
-            seen.setdefault(bundle_name(response.url), response.url)
+            seen.setdefault(bundle_path(response.url), response.url)
 
     def visit(page, path: str, label: str):
         page.goto(url(path), wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
@@ -141,20 +150,27 @@ def collect_bundles(base: str, login: str, password: str, artifacts: Path) -> di
         bundles: dict[str, str] = {}
         bundle_dir = artifacts / "bundles"
         bundle_dir.mkdir(parents=True, exist_ok=True)
-        for name, bundle_url in sorted(seen.items()):
+        saved: dict[str, str] = {}   # file name -> the bundle path it holds
+        for path, bundle_url in sorted(seen.items()):
             response = page.request.get(bundle_url)
-            assert response.ok, f"{name}: HTTP {response.status} on re-fetch"
+            assert response.ok, f"{path}: HTTP {response.status} on re-fetch"
             text = response.text()
-            bundles[name] = text
+            bundles[path] = text
+            # One file per path, so two bundles sharing a name never
+            # overwrite each other's copy.
+            filename = safe_filename(path)
+            assert saved.setdefault(filename, path) == path, f"{path} and {saved[filename]} both save as {filename}"
             # The saved copy is masked: against an Ingress base the bundles
             # carry the token in every rewritten literal, and the artifact
             # is uploaded on failure.
-            (bundle_dir / safe_filename(name)).write_text(gate.mask(text), encoding="utf-8")
+            (bundle_dir / filename).write_text(gate.mask(text), encoding="utf-8")
         browser.close()
     return bundles
 
 
 def load_saved_bundles(directory: Path) -> dict[str, str]:
+    """{file name: body}; a run saves one file per bundle path, so the
+    file name tells apart two bundles that share a name."""
     files = sorted(p for p in directory.iterdir() if p.suffix in {".js", ".css"})
     if not files:
         sys.exit(f"error: no .js or .css bundles in {directory}")

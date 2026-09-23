@@ -148,6 +148,14 @@
   Issue #80.
 
 ### Testing
+- The Literal rewrite gate now identifies a bundle by its URL path, from
+  `/web/assets/` on, instead of its file name. Odoo serves one name under a
+  website-scoped `/web/assets/1/<unique>/<name>` and an unscoped
+  `/web/assets/<unique>/<name>` with different content; the gate fetched
+  and scanned only the first it saw, so a navigation literal in the other
+  passed unreported. Both are now scanned, saved to separate files, kept
+  apart by `--from-dir`, and named apart in the report. Results of earlier
+  runs are a floor, not a complete count. Issue #98.
 - The PR gate now fails when the Canonical URL guard is not applied. The
   `build (amd64)` job, which every pull request runs, including the Odoo
   nightly bumps, starts `odoo shell` in the image it just built, with the
