@@ -28,7 +28,8 @@ def text(path: Path) -> str:
 
 def test_the_dockerfile_pins_the_base_image_by_arch_and_dated_tag() -> None:
     head = text(DOCKERFILE).split("SHELL ", 1)[0]
-    assert "ARG BUILD_ARCH=amd64" in head, "a default so a bare `docker build` works"
+    assert re.search(r"^ARG BUILD_ARCH$", head, re.M), \
+        "no default: a build that forgot the arch fails instead of building amd64 anywhere"
     assert TAG.search(head), "the tag is one dated Debian base tag"
     assert "FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-debian:${BASE_IMAGE_TAG}" in head
     assert "BUILD_FROM" not in text(DOCKERFILE)
@@ -41,7 +42,12 @@ def test_build_yaml_is_gone_and_nothing_reads_it() -> None:
     readers = [*REPO.glob(".github/**/*.yml"), REPO / ".hadolint.yaml", ROOT / "config.yaml"]
     offenders = [p.relative_to(REPO).as_posix() for p in readers if "build.yaml" in text(p)]
     assert offenders == [], offenders
-    everywhere = [*readers, DOCKERFILE, *(REPO / "docs/testing").glob("*.md")]
+    # docs/adr is history and is corrected by its own Issue (#123); the
+    # CHANGELOG records what changed and may name the old key.
+    everywhere = [*readers, DOCKERFILE, ROOT / "DOCS.md", ROOT / "README.md",
+                  REPO / "README.md", REPO / "CONTEXT.md",
+                  *(REPO / "docs").rglob("*.md")]
+    everywhere = [p for p in everywhere if p.exists() and "docs/adr" not in p.as_posix()]
     offenders = [p.relative_to(REPO).as_posix() for p in everywhere
                  if "build_from" in text(p) or "BUILD_FROM" in text(p)]
     assert offenders == [], offenders
@@ -74,8 +80,13 @@ def test_odoo_bump_reads_and_writes_the_dockerfile_pin() -> None:
 
 
 def test_the_bump_regex_matches_the_pin_as_written() -> None:
-    # The bump's sed pattern and this test's regex agree on the line's
-    # shape, so a hand edit that the bump could no longer rewrite fails here.
-    match = TAG.search(text(DOCKERFILE))
-    assert match
-    assert re.fullmatch(r"bookworm-\d{4}\.\d{2}\.\d+", match.group(1))
+    # The sed pattern the bump reads the tag with, taken from the workflow
+    # itself, must match the Dockerfile line: a hand edit that the bump
+    # could no longer read fails here, not on the next Monday.
+    bump = text(BUMP)
+    pattern = re.search(r"sed -nE 's/(\^ARG BASE_IMAGE_TAG=[^']*?)/\\1/p'", bump).group(1)
+    match = re.search(pattern, text(DOCKERFILE), re.M)
+    assert match, pattern
+    assert match.group(1) == TAG.search(text(DOCKERFILE)).group(1)
+    # And the write step checks its own work.
+    assert 'grep -qE "^ARG BASE_IMAGE_TAG=\\"${NEWEST}\\"$"' in bump

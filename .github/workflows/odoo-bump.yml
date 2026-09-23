@@ -73,6 +73,18 @@ jobs:
           tags.sort(key=lambda t: tuple(int(p) for p in t.split("-")[1].split(".")))
           print(tags[-1] if tags else "")
           ')"
+          # One line pins both architectures, so a tag that amd64 has and
+          # aarch64 does not yet is not a bump: the Release's aarch64 publish
+          # would fail on it. Wait for the next week instead.
+          if [ -n "${newest}" ] && [ "${newest}" != "${current}" ]; then
+            arm_repo="home-assistant/aarch64-base-debian"
+            arm_token="$(curl -fsS "https://ghcr.io/token?scope=repository:${arm_repo}:pull" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
+            if ! curl -fsS -H "Authorization: Bearer ${arm_token}" "https://ghcr.io/v2/${arm_repo}/tags/list?n=500" \
+                | python3 -c 'import json,sys; sys.exit(0 if sys.argv[1] in json.load(sys.stdin)["tags"] else 1)' "${newest}"; then
+              echo "::notice::base image: ${newest} exists for amd64 but not for aarch64 yet; keeping ${current}"
+              newest="${current}"
+            fi
+          fi
           echo "current=${current}" >> "$GITHUB_OUTPUT"
           echo "newest=${newest}" >> "$GITHUB_OUTPUT"
           if [ -z "${newest}" ] || [ "${newest}" = "${current}" ]; then
@@ -109,6 +121,9 @@ jobs:
         run: |
           set -euo pipefail
           sed -i -E "s/^ARG BASE_IMAGE_TAG=\"bookworm-[0-9]{4}\.[0-9]{2}\.[0-9]+\"$/ARG BASE_IMAGE_TAG=\"${NEWEST}\"/" "${ADDON_DIR}/Dockerfile"
+          # sed exits 0 whether or not it matched; the PR must not claim a
+          # bump the Dockerfile does not carry.
+          grep -qE "^ARG BASE_IMAGE_TAG=\"${NEWEST}\"$" "${ADDON_DIR}/Dockerfile"
           grep -E '^ARG BASE_IMAGE_TAG=' "${ADDON_DIR}/Dockerfile"
 
       - name: Record the bump under Unreleased
