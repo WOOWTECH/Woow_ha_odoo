@@ -189,9 +189,10 @@ does not depend on the Supervisor being able to answer.
 With a Canonical URL, `web.base.url` is set to it, `web.base.url.freeze`
 is set to `True`, and the default website's domain (when the `website`
 module is installed) is set to the same value. Without one, an existing
-clean `web.base.url` is frozen as it is; an absent value is left alone and
-a token-carrying value is removed, both with a warning in the add-on log
-that the database is unprotected. A stored value that contains
+clean `web.base.url` is frozen as it is; an absent value and Odoo's install
+default `http://localhost:8070` are left alone and not frozen, and a
+token-carrying value is removed, each with a warning in the add-on log that
+the database is unprotected. A stored value that contains
 `/api/hassio_ingress/` is never kept. The log shows one line per database.
 
 The LAN fallback reads the host address and the published port from the

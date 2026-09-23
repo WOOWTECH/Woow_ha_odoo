@@ -74,6 +74,12 @@
   bootstrap still calls for `web.base.url`. ADR 0006, issue #70.
 
 ### Fixed
+- A database created through the database manager on a host with no
+  Canonical URL no longer has Odoo's install default,
+  `http://localhost:8070`, locked in as its `web.base.url`. The start-up
+  bootstrap now leaves that value unfrozen and logs a warning, so the next
+  start that has a LAN address writes the Canonical URL over it; a value
+  someone set is still kept and frozen as before. Issue #89.
 - Ingress: a page's Share block no longer posts the Supervisor token to
   Facebook, X or WhatsApp on a host with no Canonical URL. The rewrite
   already moved the link onto that base; it now drops the Ingress prefix
