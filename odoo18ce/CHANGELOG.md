@@ -74,6 +74,15 @@
   bootstrap still calls for `web.base.url`. ADR 0006, issue #70.
 
 ### Fixed
+- The Rewrite scan's Home Assistant notification now covers every step of
+  a round. A state file or a database scan that raised used to end the
+  round with a traceback and no notification; both now notify, naming the
+  step (`state`, `scan`). A failure after nginx had accepted the candidate
+  (the move, the reload, the state write) is reported as the `apply` step
+  and says that the rules on disk are the new ones, naming them, instead
+  of claiming the include file is untouched. And a round that added rules
+  before nginx was up says they take effect when nginx starts rather than
+  that they are live now. Issue #120.
 - A database created through the database manager on a host with no
   Canonical URL no longer has Odoo's install default,
   `http://localhost:8070`, locked in as its `web.base.url`. The start-up
