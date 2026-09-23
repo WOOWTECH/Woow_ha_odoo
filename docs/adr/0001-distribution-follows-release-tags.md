@@ -32,14 +32,15 @@ latest Release tag rather than from `main`.
 - A version bump PR must prove both architectures build before it can merge,
   because the moment it lands users who added this repository directly will
   try to pull that version.
-- `build.yaml` stays in the repository for now. Supervisor still reads it
-  for a local build and warns that it is deprecated ("Move build parameters
-  into the Dockerfile directly", seen on the test host, issue #110); the
-  repository keeps it because the publish action, both CI build jobs and
-  the `odoo-bump` workflow read and write `build_from` from it, the
-  `.hadolint.yaml` DL3006 exception and a Dependabot comment justify
-  themselves by it, and the local-build procedure lists its warning as
-  expected. Moving the per-arch pin into the Dockerfile is a separate
-  change (issue #124), after which this bullet goes.
+- `build.yaml` stays in the repository for now. Supervisor no longer uses
+  it to decide whether to build — `image:` in `config.yaml` is what makes
+  it pull a Release instead — but it still reads the file on a local build
+  and warns that it is deprecated ("Move build parameters into the
+  Dockerfile directly", seen on the test host on 2026-09-23, issue #110).
+  The repository keeps it because the publish action and both CI build jobs
+  read the per-arch base image from its `build_from`, and `odoo-bump` reads
+  and writes it there; issue #124 lists every consumer. Moving that pin
+  into the Dockerfile is #124's change, and a dated Postscript will
+  supersede this bullet when it lands.
 - Adding `image:` to `config.yaml` was itself a Release (0.4.0) whose images
   had to be pushed by hand before the bump merged.
