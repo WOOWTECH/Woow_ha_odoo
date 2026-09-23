@@ -17,9 +17,14 @@
 set -uo pipefail
 
 # The helper lives in the image; the Static tier points WOOW_LIB_DIR at the
-# tree to drive this script outside it.
+# tree to drive this script outside it. Without the helper there is no
+# read to make, and a check that never asked must not claim it waited: the
+# service stops with the cause, and `finish` halts the container.
 # shellcheck disable=SC1091
-. "${WOOW_LIB_DIR:-/usr/local/lib}/supervisor-read.sh"
+if ! . "${WOOW_LIB_DIR:-/usr/local/lib}/supervisor-read.sh"; then
+    bashio::log.error "Self-check: /usr/local/lib/supervisor-read.sh could not be loaded; the add-on stops."
+    exit 1
+fi
 
 # ---------- 1. The add-on-network address, from the Supervisor ----------
 # Not loopback: 127.0.0.0/8 is LAN tier in the nginx template and would reach
@@ -28,10 +33,12 @@ set -uo pipefail
 # retried for a bounded time with the cache flushed in between (issue #119;
 # the budget is the one decided on #108). An answer that never comes is
 # handed on as it is, and the module fails the check on it.
-ADDRESS="$(woow::supervisor.read 30 2 "addons.self.ip_address addons.self.info" \
-    bashio::addon.ip_address)" || true
+SUPERVISOR_BUDGET=30
+SUPERVISOR_POLL=2
+ADDRESS="$(woow::supervisor.read "${SUPERVISOR_BUDGET}" "${SUPERVISOR_POLL}" \
+    "addons.self.ip_address addons.self.info" bashio::addon.ip_address)" || true
 if [ -z "${ADDRESS}" ]; then
-    bashio::log.warning "Self-check: the Supervisor reported no add-on address after waiting 30 seconds; the check runs without one"
+    bashio::log.warning "Self-check: the Supervisor reported no add-on address after waiting ${SUPERVISOR_BUDGET} seconds; the check runs without one"
 fi
 
 PUBLIC_URL=''

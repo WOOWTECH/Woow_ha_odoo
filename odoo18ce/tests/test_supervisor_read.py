@@ -12,7 +12,6 @@ whose `bashio::*` functions are stubs, and observed through what it prints,
 what it returns and which cache keys it flushed.
 """
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
@@ -28,6 +27,10 @@ STUBS = r"""
 bashio::log.debug() { :; }
 bashio::log.trace() { :; }
 bashio::cache.flush() { printf 'FLUSH %s\n' "$1" >&2; }
+# No real waiting: `sleep` advances bash's SECONDS instead, so a 30-second
+# budget is a matter of counting and the test does not depend on the host.
+SLEPT="$(mktemp)"; printf '0' > "${SLEPT}"
+sleep() { SECONDS=$((SECONDS + $1)); printf '%s' $(( $(cat "${SLEPT}") + $1 )) > "${SLEPT}"; }
 # A read that answers after N empty attempts. The command substitution the
 # helper wraps the read in is a subshell, so the count lives in a file.
 COUNTER="$(mktemp)"; printf '0' > "${COUNTER}"
@@ -36,6 +39,13 @@ read_after() {
     n=$(( $(cat "${COUNTER}") + 1 )); printf '%s' "${n}" > "${COUNTER}"
     if [ "${n}" -ge "${after}" ]; then printf '%s' "${value}"; fi
     return 0
+}
+# A read that answers with a placeholder until the N-th attempt: what the
+# Supervisor says for a container whose network it has not seen yet.
+placeholder_until() {
+    local until=$1 placeholder=$2 value=$3 n
+    n=$(( $(cat "${COUNTER}") + 1 )); printf '%s' "${n}" > "${COUNTER}"
+    if [ "${n}" -ge "${until}" ]; then printf '%s' "${value}"; else printf '%s' "${placeholder}"; fi
 }
 """
 
@@ -55,41 +65,52 @@ def flushed(result: subprocess.CompletedProcess) -> list[str]:
 
 
 def test_a_value_on_the_first_read_is_returned_at_once_without_a_flush() -> None:
-    started = time.monotonic()
     result = run_helper(
         'woow::supervisor.read 30 2 "addons.self.ip_address addons.self.info" '
         'read_after 1 172.30.33.4; echo " rc=$?"'
     )
     assert result.stdout == "172.30.33.4 rc=0\n", result.stderr
     assert flushed(result) == []
-    assert time.monotonic() - started < 2, "no poll interval is spent on a value that is there"
 
 
 def test_a_read_that_answers_after_empties_is_retried_with_the_cache_flushed() -> None:
     result = run_helper(
-        'woow::supervisor.read 30 0.2 "addons.self.ip_address addons.self.info" '
-        'read_after 3 172.30.33.4; echo " rc=$? attempts=$(cat "${COUNTER}")"'
+        'woow::supervisor.read 30 2 "addons.self.ip_address addons.self.info" '
+        'read_after 3 172.30.33.4; echo " rc=$? attempts=$(cat "${COUNTER}") slept=$(cat "${SLEPT}")"'
     )
-    assert result.stdout == "172.30.33.4 rc=0 attempts=3\n", result.stderr
+    assert result.stdout == "172.30.33.4 rc=0 attempts=3 slept=4\n", result.stderr
     # Both keys, before each of the two retries, the filtered key first so a
     # flush interrupted between the two never leaves a stale filtered value
     # in front of a fresh info.
     assert flushed(result) == ["addons.self.ip_address", "addons.self.info"] * 2
 
 
-def test_an_exhausted_budget_prints_nothing_and_fails() -> None:
-    started = time.monotonic()
+def test_an_exhausted_budget_prints_nothing_fails_and_leaves_no_empty_answer_cached() -> None:
     result = run_helper(
-        'woow::supervisor.read 1 0.2 "network.interface.default.info.ipv4.address" '
-        'read_after 999 never; echo "rc=$? attempts=$(cat "${COUNTER}")"'
+        'woow::supervisor.read 30 2 "network.interface.default.info.ipv4.address" '
+        'read_after 999 never; echo "rc=$? attempts=$(cat "${COUNTER}") slept=$(cat "${SLEPT}")"'
     )
-    elapsed = time.monotonic() - started
     stdout = result.stdout.strip()
     assert stdout.startswith("rc=1 "), result.stderr
     fields = dict(part.split("=") for part in stdout.split())
-    assert 2 <= int(fields["attempts"]) <= 12, "bounded by the clock, not by a count"
-    assert 1 <= elapsed < 4, "the budget holds: one second asked for, not much more spent"
-    assert flushed(result)[0] == "network.interface.default.info.ipv4.address"
+    attempts, waited = int(fields["attempts"]), int(fields["slept"])
+    assert 16 <= attempts <= 17, "bounded by the clock: one read every two seconds for thirty"
+    assert 30 <= waited <= 32, "never shorter than the budget, at most one poll longer"
+    # The last empty answer is flushed too: nothing this helper gave up on
+    # is left in bashio's cache for the next reader in this container.
+    assert flushed(result) == ["network.interface.default.info.ipv4.address"] * attempts
+
+
+def test_the_supervisor_placeholder_address_counts_as_not_yet() -> None:
+    # supervisor/docker/app.py answers `0.0.0.0` for a container whose
+    # network it has not loaded; a jq `// empty` on a missing key is `null`.
+    for placeholder in ("0.0.0.0", "null"):
+        result = run_helper(
+            'woow::supervisor.read 30 2 "addons.self.ip_address addons.self.info" '
+            f'placeholder_until 3 {placeholder} 172.30.33.4; echo " rc=$? attempts=$(cat "${{COUNTER}}")"'
+        )
+        assert result.stdout == "172.30.33.4 rc=0 attempts=3\n", (placeholder, result.stderr)
+        assert flushed(result) == ["addons.self.ip_address", "addons.self.info"] * 2
 
 
 def test_the_helper_is_readable_in_the_image() -> None:

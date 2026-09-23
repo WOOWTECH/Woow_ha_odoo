@@ -241,8 +241,12 @@ def test_a_fail_names_the_status_and_the_route_and_notifies(argv, status, shown)
     assert keywords["source"] == "Self-check"
 
 
-def test_no_address_from_the_supervisor_fails_without_touching_loopback() -> None:
-    code, prober, notifier, lines = run(["--address", "", "--public-url", PUBLIC_URL], 404)
+@pytest.mark.parametrize("address", ["", "0.0.0.0", "127.0.0.1", "::1"])
+def test_no_address_from_the_supervisor_fails_without_touching_loopback(address) -> None:
+    # Empty is what a bashio read gives; `0.0.0.0` is the Supervisor's own
+    # "not yet" for a container it has not seen on the network. Both, and
+    # anything loopback, reach the same branch: LAN tier, never requested.
+    code, prober, notifier, lines = run(["--address", address, "--public-url", PUBLIC_URL], 404)
     assert code == 1
     assert prober.calls == []
     assert "no answer" in lines[0] and "loopback" in lines[0]
@@ -276,7 +280,8 @@ def test_the_notification_goes_through_the_rewrite_scan_adapter(monkeypatch) -> 
 
 def test_the_service_sources_the_check_from_the_supervisor_address() -> None:
     run_script = code_of(SERVICE_DIR / "run")
-    assert 'ADDRESS="$(woow::supervisor.read 30 2 "addons.self.ip_address addons.self.info"' in run_script
+    assert 'ADDRESS="$(woow::supervisor.read "${SUPERVISOR_BUDGET}" "${SUPERVISOR_POLL}"' in run_script
+    assert '"addons.self.ip_address addons.self.info" bashio::addon.ip_address' in run_script
     assert "bashio::addon.ip_address" in run_script
     call = run_script.split("self_check.py", 1)[1].split(")", 1)[0]
     assert '--address "${ADDRESS}"' in call
@@ -339,7 +344,8 @@ sleep() { SECONDS=$((SECONDS + ${1%.*})); }
 """
 
 
-def drive_service(answer_after: int, verdict: int = 0) -> tuple[int, list[str], list[str], int]:
+def drive_service(answer_after: int, verdict: int = 0,
+                  lib_dir: Path = LIB_DIR) -> tuple[int, list[str], list[str], int]:
     """Run services.d/self-check/run; return exit code, log lines, python3 argv, reads."""
     bash = require_tool("bash")
     with tempfile.TemporaryDirectory() as tmp:
@@ -360,7 +366,7 @@ def drive_service(answer_after: int, verdict: int = 0) -> tuple[int, list[str], 
             f'source "{(SERVICE_DIR / "run").as_posix()}"\n'
         )
         env = dict(os.environ, PATH=f"{fake_bin.as_posix()}{os.pathsep}{os.environ['PATH']}",
-                   WOOW_LIB_DIR=LIB_DIR.as_posix())
+                   WOOW_LIB_DIR=lib_dir.as_posix())
         result = subprocess.run([bash, "-c", script], capture_output=True, text=True,
                                 timeout=60, env=env)
         lines = log.read_text(encoding="utf-8").splitlines()
@@ -383,7 +389,7 @@ def test_an_address_that_never_comes_is_named_once_and_still_refused() -> None:
     code, lines, argv, reads = drive_service(answer_after=999, verdict=1)
     assert code == 1
     assert argv[argv.index("--address") + 1] == "--public-url", "an empty address is handed on, not loopback"
-    waited = [l for l in lines if l.startswith("WARN ") and "30" in l]
+    waited = [l for l in lines if l.startswith("WARN ") and "30 seconds" in l]
     assert len(waited) == 1, lines
     assert "no add-on address" in waited[0]
     assert 2 <= reads <= 20, "bounded by the budget, not by a count"
@@ -396,3 +402,18 @@ def test_an_address_on_the_first_read_costs_no_wait_and_no_extra_line() -> None:
     assert reads == 1
     assert [l for l in lines if l.startswith(("FLUSH ", "WARN "))] == []
     assert [l for l in lines if l.startswith("INFO ")] == ["INFO verdict line"]
+
+
+def test_a_missing_helper_stops_the_service_with_the_cause_and_no_check() -> None:
+    with tempfile.TemporaryDirectory() as empty:
+        code, lines, argv, reads = drive_service(answer_after=1, lib_dir=Path(empty))
+    assert code == 1
+    assert reads == 0 and argv == [], "nothing was asked and nothing was checked"
+    assert lines[-1].startswith("ERROR ") and "supervisor-read.sh" in lines[-1]
+
+
+def test_the_budget_is_one_number_in_the_service() -> None:
+    run_script = code_of(SERVICE_DIR / "run")
+    assert "SUPERVISOR_BUDGET=30" in run_script and "SUPERVISOR_POLL=2" in run_script
+    assert "after waiting ${SUPERVISOR_BUDGET} seconds" in run_script
+    assert "30 seconds" not in run_script, "the message and the call share the number"
