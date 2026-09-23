@@ -248,13 +248,26 @@ def test_both_callers_reach_the_rule_through_the_same_function() -> None:
 
 def test_cont_init_reads_the_supervisor_only_when_public_url_is_unset() -> None:
     cont_init = CONT_INIT.read_text(encoding="utf-8")
-    for call in ("bashio::network.ipv4_address", "bashio::addon.port 8069"):
+    for call in ("woow::supervisor.lan_ipv4_settle", "bashio::addon.port 8069"):
         assert call in cont_init, f"cont-init must read {call} for the LAN fallback"
     guard = cont_init.index('if [ -z "${PUBLIC_URL}" ]; then')
-    for call in ("bashio::network.ipv4_address", "bashio::addon.port 8069"):
+    for call in ("woow::supervisor.lan_ipv4_settle", "bashio::addon.port 8069"):
         assert cont_init.index(call) > guard, (
             f"{call} must sit inside the no-public_url branch, as the bootstrap's does"
         )
+
+
+def test_cont_init_settles_the_lan_address_with_the_shared_helper_and_never_reads_it_bare() -> None:
+    # Issue #108: one read at boot was cached empty by bashio for the life of
+    # the container. The read now waits through the helper, and the settled
+    # value is what the bootstrap gets — cont-init publishes it, and never
+    # calls the bare bashio read itself.
+    cont_init = CONT_INIT.read_text(encoding="utf-8")
+    assert 'CANONICAL_LAN_IPV4="$(woow::supervisor.lan_ipv4_settle)"' in cont_init
+    assert "bashio::network.ipv4_address" not in cont_init
+    assert "supervisor-read.sh" in cont_init.split("woow::supervisor.lan_ipv4_settle", 1)[0], (
+        "the helper is sourced before it is called"
+    )
     assert f's#{PLACEHOLDER}#${{CANONICAL_URL}}#g' in cont_init, (
         "cont-init must render the Canonical URL into the nginx template"
     )

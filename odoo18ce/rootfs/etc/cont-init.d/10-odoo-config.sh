@@ -211,11 +211,24 @@ bashio::log.info "8069 origin: LAN tier = ${LAN_NETWORKS}"
 # Odoo port, both read from the Supervisor (needs hassio_api). When the
 # Supervisor reports no address there is no Canonical URL, the shim publishes
 # an empty string, and every rewrite keeps the browser origin it uses today.
+#
+# The address is read through the shared helper (issue #108): the Supervisor
+# can answer empty for a moment at boot, bashio caches that answer, and one
+# read used to make it the whole start. The helper waits, and publishes the
+# value it settled on for the maintenance bootstrap, so both sides see one
+# address per start (ADR 0006) and the bootstrap never asks on its own.
+# shellcheck disable=SC1091
+if ! . "${WOOW_LIB_DIR:-/usr/local/lib}/supervisor-read.sh"; then
+    bashio::log.error "supervisor-read.sh could not be loaded"
+    exit 1
+fi
 CANONICAL_LAN_IPV4=''
 CANONICAL_PORT=''
 if [ -z "${PUBLIC_URL}" ]; then
-    CANONICAL_LAN_IPV4="$(bashio::network.ipv4_address 2>/dev/null || true)"
+    CANONICAL_LAN_IPV4="$(woow::supervisor.lan_ipv4_settle)" || true
     CANONICAL_PORT="$(bashio::addon.port 8069 2>/dev/null || true)"
+else
+    woow::supervisor.publish WOOW_LAN_IPV4 ''
 fi
 # A missing or broken helper costs the shim its value; it never costs the
 # operator the add-on, so `set -e` is kept away from this one command.

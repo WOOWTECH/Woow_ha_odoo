@@ -53,6 +53,10 @@ placeholder_until() {
     n=$(( $(cat "${COUNTER}") + 1 )); printf '%s' "${n}" > "${COUNTER}"
     if [ "${n}" -ge "${until}" ]; then printf '%s' "${value}"; else printf '%s' "${placeholder}"; fi
 }
+# The LAN address read, answering after N empty attempts, and the directory
+# s6 hands services their environment from, both under the test's control.
+bashio::network.ipv4_address() { read_after "${LAN_AFTER:-1}" 192.0.2.10/24; }
+export WOOW_CONTAINER_ENV_DIR; WOOW_CONTAINER_ENV_DIR="$(mktemp -d)"
 """
 
 
@@ -139,3 +143,48 @@ def test_the_helper_is_readable_in_the_image() -> None:
 def test_the_helper_is_in_the_shellcheck_gate() -> None:
     ci = (ROOT.parent / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert 'rootfs/usr/local/lib/supervisor-read.sh"' in ci.split("shellcheck -s bash", 1)[0]
+
+
+# --- the LAN address, settled once per start ----------------------------------
+# cont-init settles the host's LAN address for the Canonical URL and publishes
+# it to the container environment; the maintenance bootstrap reads it from
+# there (issue #108, ADR 0006: one value per start, derived once).
+
+def published(result: subprocess.CompletedProcess) -> str | None:
+    for line in result.stdout.splitlines():
+        if line.startswith("PUBLISHED="):
+            return line[len("PUBLISHED="):]
+    return None
+
+
+SETTLE = (
+    'value="$(woow::supervisor.lan_ipv4_settle)"; rc=$?; '
+    'echo; echo "value=${value} rc=${rc} attempts=$(cat "${COUNTER}") slept=$(cat "${SLEPT}")"; '
+    'f="${WOOW_CONTAINER_ENV_DIR}/WOOW_LAN_IPV4"; '
+    'if [ -e "$f" ]; then echo "PUBLISHED=$(cat "$f")"; else echo "PUBLISHED=<none>"; fi'
+)
+
+
+def test_a_lan_address_that_arrives_late_is_settled_once_and_published() -> None:
+    result = run_helper("LAN_AFTER=3; " + SETTLE)
+    assert "value=192.0.2.10/24 rc=0 attempts=3 slept=4" in result.stdout, result.stderr
+    assert published(result) == "192.0.2.10/24"
+    assert flushed(result) == [
+        "network.interface.default.info.ipv4.address", "network.interface.default.info",
+    ] * 2
+    assert "WARN" not in result.stderr
+
+
+def test_a_lan_address_that_never_arrives_is_one_warning_and_an_empty_publication() -> None:
+    result = run_helper("LAN_AFTER=999; " + SETTLE)
+    assert "value= rc=1 attempts=17 slept=32" in result.stdout, result.stderr
+    assert published(result) == "", "published empty, so the bootstrap does not ask again"
+    warnings = [l for l in result.stderr.splitlines() if l.startswith("WARN ")]
+    assert len(warnings) == 1 and "30 seconds" in warnings[0] and "LAN" in warnings[0], result.stderr
+
+
+def test_a_lan_address_on_the_first_read_costs_no_wait() -> None:
+    result = run_helper("LAN_AFTER=1; " + SETTLE)
+    assert "value=192.0.2.10/24 rc=0 attempts=1 slept=0" in result.stdout, result.stderr
+    assert published(result) == "192.0.2.10/24"
+    assert flushed(result) == [] and "WARN" not in result.stderr

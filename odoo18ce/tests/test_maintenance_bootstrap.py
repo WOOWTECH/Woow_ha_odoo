@@ -215,8 +215,16 @@ def test_bootstrap_processes_every_database_and_never_requires_default_db() -> N
     assert "ir_config_parameter" in script
     assert "/usr/local/lib/odoo-maintenance.py" in script
     assert "/usr/local/lib/odoo-maintenance-account.py" in script
-    assert "bashio::network.ipv4_address" in script
     assert "bashio::addon.port" in script
+    # Issue #108: the LAN address is the one cont-init settled on this start,
+    # handed over through the container environment. The bootstrap does not
+    # retry on its own (ADR 0006: one value per start), and only asks the
+    # Supervisor itself when it runs outside a start, with nothing published.
+    assert 'LAN_IPV4="${WOOW_LAN_IPV4}"' in script
+    assert 'if [ "${WOOW_LAN_IPV4+set}" = set ]' in script
+    assert "woow::supervisor" not in script
+    fallback = script.split('"${WOOW_LAN_IPV4+set}"', 1)[1]
+    assert "bashio::network.ipv4_address" in fallback.split("export ODOO_MAINT", 1)[0]
     # public_url without default_db used to be a start-up failure.
     assert "default_db is required" not in script
     # A failed database listing is reported, not mistaken for "no database".

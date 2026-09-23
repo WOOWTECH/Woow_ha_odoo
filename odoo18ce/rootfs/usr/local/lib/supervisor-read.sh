@@ -80,3 +80,41 @@ woow::supervisor.read() {
     rm -f "${error}"
     return 1
 }
+
+# ------------------------------------------------------------------------------
+# Hand a value from cont-init to the services (issue #108, ADR 0006).
+#
+# s6-overlay reads /run/s6/container_environment/NAME into the environment
+# of every `with-contenv` script that starts later, so a value settled once
+# in cont-init is the value the maintenance bootstrap sees, and neither side
+# derives it twice. The Static tier points WOOW_CONTAINER_ENV_DIR elsewhere.
+#
+#   woow::supervisor.publish NAME VALUE
+# ------------------------------------------------------------------------------
+woow::supervisor.publish() {
+    local dir="${WOOW_CONTAINER_ENV_DIR:-/run/s6/container_environment}"
+    mkdir -p "${dir}"
+    printf '%s' "$2" > "${dir}/$1"
+}
+
+# ------------------------------------------------------------------------------
+# The host's LAN IPv4 address for the Canonical URL, settled once per start.
+#
+# Waits for `bashio::network.ipv4_address` with the budget decided on #108
+# (30 s, 2 s), prints what it got — possibly nothing — and publishes that
+# same value as WOOW_LAN_IPV4 for the bootstrap, so a start ends with one
+# LAN address on both sides, or none on both. An address that never comes
+# is one warning here; the caller's own "no Canonical URL" line follows.
+# ------------------------------------------------------------------------------
+woow::supervisor.lan_ipv4_settle() {
+    local budget=30 poll=2 value='' status=0
+    value="$(woow::supervisor.read "${budget}" "${poll}" \
+        "network.interface.default.info.ipv4.address network.interface.default.info" \
+        bashio::network.ipv4_address)" || status=$?
+    if [ -z "${value}" ]; then
+        bashio::log.warning "The Supervisor reported no host LAN address after waiting at least ${budget} seconds; this start has no Canonical URL from it"
+    fi
+    woow::supervisor.publish WOOW_LAN_IPV4 "${value}"
+    printf '%s' "${value}"
+    return "${status}"
+}
