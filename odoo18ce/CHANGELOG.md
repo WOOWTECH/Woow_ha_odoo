@@ -77,12 +77,14 @@
 - The Rewrite scan's Home Assistant notification now covers every step of
   a round. A state file or a database scan that raised used to end the
   round with a traceback and no notification; both now notify, naming the
-  step (`state`, `scan`). A failure after nginx had accepted the candidate
-  (the move, the reload, the state write) is reported as the `apply` step
-  and says that the rules on disk are the new ones, naming them, instead
-  of claiming the include file is untouched. And a round that added rules
-  before nginx was up says they take effect when nginx starts rather than
-  that they are live now. Issue #120.
+  step (`state`, `scan`). A failure in the writes (the candidate, the move
+  into place, the state write) is reported as the `apply` step, and one
+  that came after the move says that the rules on disk are the new ones,
+  naming them and whether nginx loaded them, instead of claiming the
+  include file is untouched; the add-on log says the same, and the
+  service's own failure line no longer claims the file kept its old rules.
+  And a round that added rules before nginx was up says they take effect
+  when nginx starts rather than that they are live now. Issue #120.
 - A database created through the database manager on a host with no
   Canonical URL no longer has Odoo's install default,
   `http://localhost:8070`, locked in as its `web.base.url`. The start-up

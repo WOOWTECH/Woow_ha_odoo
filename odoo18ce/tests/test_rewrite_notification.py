@@ -320,7 +320,7 @@ def test_the_add_on_may_call_the_home_assistant_api() -> None:
 # --- the seam -----------------------------------------------------------------
 
 def run_main(tmp_path, *arguments, include_text="", failed=False,
-             notify_raises=False, sent=None, broken=""):
+             notify_raises=False, sent=None, broken="", lines=None):
     """`main` against a temporary host, with the adapter replaced.
 
     Returns the exit code, each notification sent as ((title, body), id),
@@ -368,7 +368,7 @@ def run_main(tmp_path, *arguments, include_text="", failed=False,
         return original[1](text, nginx_conf, **dict(keywords, runner=Runner(), running=lambda: False))
 
     apply.apply_include = no_nginx
-    lines: list[str] = []
+    lines = [] if lines is None else lines
     try:
         code = apply.main(
             ["--state", str(tmp_path / "state.json"), "--include", str(include),
@@ -478,6 +478,41 @@ def test_a_round_error_names_its_step_and_whether_the_file_moved() -> None:
     assert error.step == apply.STEP_APPLY and error.replaced
     assert "disk full" in str(error)
     assert apply.RoundError(apply.STEP_VALIDATION, OSError("x")).replaced is False
+
+
+def test_main_logs_what_the_include_file_holds_and_reraises_the_step_error(tmp_path: Path) -> None:
+    """The log line matches the notification, and the exception is the step's own."""
+    logged: list[str] = []
+    with pytest.raises(OSError) as raised:
+        run_main(tmp_path, broken="save_state", lines=logged)
+    assert "save_state step broke" in str(raised.value)
+    assert raised.value.__suppress_context__ is False, "the step's own chain is untouched"
+    assert any("now holds the new rules" in line for line in logged)
+    logged.clear()
+    with pytest.raises(OSError):
+        run_main(tmp_path, broken="scan", lines=logged)
+    assert any("keeps the rules it already had" in line for line in logged)
+
+
+def test_a_refused_reload_survives_a_state_write_that_raised(tmp_path: Path) -> None:
+    """nginx refused the reload, then the state write raised: both are told."""
+    original = scan.save_state
+
+    def broken(*args, **keywords):
+        raise OSError("the save_state step broke")
+
+    scan.save_state = broken
+    try:
+        with pytest.raises(apply.RoundError) as raised:
+            forum_round(tmp_path, runner=Runner(reload_code=1))
+    finally:
+        scan.save_state = original
+    error = raised.value
+    assert error.step == apply.STEP_APPLY and error.replaced and error.reload_failed
+    assert error.prefixes == ("/forum/",)
+    _, body = apply.notification(apply.raised_event(error))
+    assert "not live yet" in body and "restart" in body
+    assert "/forum/" in body
 
 
 def test_main_sends_nothing_for_a_round_that_changed_nothing(tmp_path: Path) -> None:

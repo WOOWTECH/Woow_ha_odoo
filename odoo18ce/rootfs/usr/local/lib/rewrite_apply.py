@@ -502,8 +502,8 @@ def apply_include(
         os.chmod(candidate, 0o644)
     except Exception as error:
         # The candidate could not even be written: nothing has moved.
-        candidate.unlink(missing_ok=True)
-        raise RoundError(STEP_APPLY, error) from error
+        discard(candidate)
+        raise RoundError(STEP_APPLY, error)
 
     try:
         if work_dir is None:
@@ -513,8 +513,8 @@ def apply_include(
             accepted, message = validate(candidate, nginx_conf, work_dir, runner)
     except Exception as error:
         # Nothing has moved: the include file is what it was.
-        candidate.unlink(missing_ok=True)
-        raise RoundError(STEP_VALIDATION, error) from error
+        discard(candidate)
+        raise RoundError(STEP_VALIDATION, error)
 
     if not accepted:
         candidate.unlink(missing_ok=True)
@@ -528,13 +528,12 @@ def apply_include(
         os.replace(candidate, include)
     except Exception as error:
         # `os.replace` is atomic: if it raised, the file did not move.
-        candidate.unlink(missing_ok=True)
-        raise RoundError(STEP_APPLY, error) from error
+        discard(candidate)
+        raise RoundError(STEP_APPLY, error)
 
-    try:
-        alive = nginx_master(pid_path) is not None if running is None else running()
-    except Exception as error:
-        raise RoundError(STEP_APPLY, error, replaced=True) from error
+    # Neither of the two calls below raises: `nginx_master` answers None for
+    # anything it cannot read, and `reload_nginx` reports instead of raising.
+    alive = nginx_master(pid_path) is not None if running is None else running()
     if not alive:
         return ApplyResult(
             STATUS_APPLIED,
@@ -543,10 +542,7 @@ def apply_include(
             include_text=text, prefixes=prefixes, wrote=True,
         )
 
-    try:
-        reloaded, reload_message = reload_nginx(runner)
-    except Exception as error:
-        raise RoundError(STEP_APPLY, error, replaced=True) from error
+    reloaded, reload_message = reload_nginx(runner)
     detail = f"{len(prefixes)} prefixes written to {include}"
     if not reloaded:
         # The file is valid and in place, so nginx loads it at its next
@@ -690,8 +686,13 @@ def apply_round(
         except Exception as error:
             # The include file is the new one and nginx has it (or loads it
             # at its next start); only the memory of this round is missing,
-            # so the next round regenerates and lands on `unchanged`.
-            raise RoundError(STEP_APPLY, error, replaced=outcome.wrote) from error
+            # so the next round regenerates and lands on `unchanged`. A
+            # reload nginx refused before this is carried along: that round
+            # will not retry it either, so this is the one place to say so.
+            raise RoundError(
+                STEP_APPLY, error, replaced=outcome.wrote,
+                prefixes=outcome.prefixes, reload_failed=outcome.reload_failed,
+            )
         outcome = replace(outcome, state_saved=True)
     return outcome
 
@@ -817,9 +818,10 @@ EVENT_FAILED = "failed"
 
 #: The step a failed round names. An incomplete scan is a failed generation:
 #: nothing was generated from it, because the union would have been short.
-#: `state` and `scan` are the two reads before generation; `apply` is
-#: everything after nginx accepted the candidate: the move, the reload and
-#: the state write (issue #120).
+#: `state` and `scan` are the two reads before generation; `apply` is the
+#: writes: the candidate, the move into place and the state write. Whether
+#: the move had happened when the step failed is what `RoundError.replaced`
+#: says (issue #120).
 STEP_STATE = "state"
 STEP_SCAN = "scan"
 STEP_GENERATION = "generation"
@@ -838,11 +840,25 @@ class RoundError(Exception):
     `os.replace` had already succeeded and only the state write failed.
     """
 
-    def __init__(self, step: str, cause: BaseException, *, replaced: bool = False):
+    def __init__(self, step: str, cause: BaseException, *, replaced: bool = False,
+                 prefixes: tuple = (), reload_failed: bool = False):
         super().__init__(f"{step}: {cause}")
         self.step = step
         self.replaced = replaced
+        # After a replace: the prefixes the new file holds, and whether a
+        # running nginx had refused to load it before the step failed.
+        self.prefixes = prefixes
+        self.reload_failed = reload_failed
         self.__cause__ = cause
+
+
+def discard(candidate: Path) -> None:
+    """Remove a candidate that will not be used; a candidate that cannot be
+    removed is not a second failure worth replacing the first with."""
+    try:
+        candidate.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 #: Home Assistant's own API, reached through the Supervisor proxy with the
 #: token every add-on is given. It needs `homeassistant_api` in config.yaml.
@@ -875,6 +891,9 @@ class RoundEvent:
     # EVENT_FAILED: the include file had already been replaced when the
     # step failed, so the rules on disk are the new ones, not the old.
     replaced: bool = False
+    # EVENT_FAILED after a replace: a running nginx refused to load the new
+    # file before the step failed, so the rules are not live either.
+    reload_failed: bool = False
 
 
 def notification_id(event: RoundEvent) -> str:
@@ -914,12 +933,14 @@ def round_event(outcome: ApplyResult, before: Iterable = (), auto: bool = True) 
 def raised_event(error: RoundError) -> RoundEvent:
     """The event a round that raised is: which step, and what is on disk.
 
-    After a replace, the caller names the prefixes now on disk, because no
-    later round will: the file is in place, so the next one lands on
-    `unchanged`.
+    After a replace the prefixes now on disk are named, because no later
+    round will: the file is in place, so the next one lands on `unchanged`.
     """
-    return RoundEvent(EVENT_FAILED, step=error.step, detail=str(error.__cause__),
-                      replaced=error.replaced)
+    return RoundEvent(
+        EVENT_FAILED, prefixes=error.prefixes, step=error.step,
+        detail=str(error.__cause__), replaced=error.replaced,
+        reload_failed=error.reload_failed,
+    )
 
 
 def notification(event: RoundEvent) -> tuple[str, str]:
@@ -958,11 +979,17 @@ def notification(event: RoundEvent) -> tuple[str, str]:
         # The failure came after `os.replace`: the new file is what nginx
         # has, or loads at its next start, and the state was not saved.
         title = f"Woow Odoo: Generated rewrite {event.step} failed"
+        loaded = (
+            "nginx refused to reload before this, so they are not live yet "
+            "and no round retries the reload; restarting the add-on loads them"
+            if event.reload_failed
+            else "nginx has them, or loads them at its next start"
+        )
         body = (
             f"The Rewrite scan's {event.step} step failed after the new "
             "Generated rewrite file was put in place, so the rules on disk "
-            "are the new ones and Odoo is untouched. The next round runs in "
-            "five minutes and regenerates them."
+            f"are the new ones: {loaded}. Odoo is untouched. The next round "
+            "runs in five minutes and regenerates them."
             + (f"\n\nPrefixes now on disk:\n\n{listed}" if event.prefixes else "")
             + f"\n\n{event.detail}"
         )
@@ -1080,6 +1107,7 @@ def main(argv=None, run_query=None, out=print, notifier: Callable = notify) -> i
     # Unreadable answers nothing rather than raising (`live_prefixes`).
     before = live_prefixes(arguments.include)
     step = STEP_STATE
+    failure: RoundError | None = None
     try:
         loaded = scan.load_state(arguments.state, arguments.include)
         state_note = loaded.reason or f"{arguments.state}, {len(loaded.state.bundles)} bundles"
@@ -1102,19 +1130,21 @@ def main(argv=None, run_query=None, out=print, notifier: Callable = notify) -> i
         # already moved; anything else is the step this frame was in when
         # it was raised: a rendered configuration or an exception list that
         # cannot be read stops generation before anything is written. The
-        # operator is told either way (issue #120).
+        # operator is told either way (issue #120), in the log as well as
+        # in the notification, because the service's own line only says
+        # that the round failed.
         failure = error if isinstance(error, RoundError) else RoundError(step, error)
+        out(gate.mask(
+            f"Rewrite scan (apply): the {failure.step} step raised; the include file "
+            + ("now holds the new rules" if failure.replaced else "keeps the rules it already had")
+        ))
         if arguments.auto:
-            event = raised_event(failure)
-            if failure.replaced:
-                event = replace(event, prefixes=live_prefixes(arguments.include))
-            send_notification(event, notifier, out)
-        # The round still fails as it always has, with the exception the
-        # step raised and its own chain: the carrier is for the
-        # notification, not the log.
-        cause = failure.__cause__
-        cause.__suppress_context__ = True
-        raise cause
+            send_notification(raised_event(failure), notifier, out)
+    if failure is not None:
+        # Raised here, outside the handler, so the exception the step raised
+        # reaches the log with its own chain and nothing added: the carrier
+        # is for the notification, not the log.
+        raise failure.__cause__
     report(outcome, state_note, out)
     send_notification(round_event(outcome, before, auto=arguments.auto), notifier, out)
     return 0 if outcome.healthy else 1
