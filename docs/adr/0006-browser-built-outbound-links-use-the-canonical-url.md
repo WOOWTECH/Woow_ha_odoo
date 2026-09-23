@@ -105,3 +105,29 @@ point releases.
   prefix then has to be registered in the exception list.
 - The Public origin is untouched: the Runtime shim is injected by the Ingress
   listener alone.
+
+## Amendment (2026-09-23): one rewrite does not keep today's behaviour
+
+The decision above says that with no Canonical URL every rewrite keeps the
+browser origin, "which is the behaviour we have today". For the website share
+block that sentence was wrong to apply, and it is now an explicit exception:
+**the Ingress prefix is dropped whether or not a Canonical URL exists.**
+
+Today's behaviour there is to hand `location.href` to Facebook, X or WhatsApp,
+and under Ingress that string contains the Supervisor token. "Keep today's
+behaviour" was written to mean "change nothing we have not measured"; applied
+here it meant "keep publishing a credential to a third party", which was never
+the intent. The other two rewrites are unaffected: a wrong host is a broken
+link, not a disclosure, and they still keep the browser origin exactly.
+
+What made this worth revisiting rather than leaving registered as a gap is
+that the shape is reachable. `bashio::network.ipv4_address` returns nothing on
+a host whose uplink is a bridge, bond, WWAN or tun device (Supervisor
+enumerates only ethernet, wireless and VLAN), on an interface NetworkManager
+does not manage, and on IPv6-only or IPv4-disabled networking. A DHCP lease
+that has not arrived when the add-on starts produces the same empty value, and
+bashio caches it in a file for the lifetime of the container, so a boot-time
+race presents as a permanent condition (issue #108).
+
+Without a Canonical URL the share link still points at the Home Assistant host
+and still does not work. It simply no longer carries the token.

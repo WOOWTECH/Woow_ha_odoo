@@ -362,10 +362,15 @@ http {
             # address handed to Facebook, X, WhatsApp and the rest. This one
             # needs the path as well as the base, because under Ingress
             # location.href carries the Supervisor token and posting it to a
-            # social network publishes it. The Ingress prefix is dropped and
-            # the Canonical URL put in front; with no Canonical URL the link
-            # stays exactly what it is today.
-            sub_filter 'const currentUrl=window.location.href;' 'const currentUrl=(function(){var B=window.__WOOW_CANONICAL_URL__||"",P="$safe_ingress_path",L=window.location;if(!B)return L.href;var p=L.pathname;if(P&&p.indexOf(P)===0)p=p.slice(P.length)||"/";return B+p+L.search+L.hash})();';
+            # social network publishes it.
+            #
+            # The Ingress prefix is dropped whether or not a Canonical URL
+            # exists -- this rule is the one exception to "no Canonical URL
+            # means today's behaviour" (ADR 0006), because here today's
+            # behaviour hands a Supervisor token to a third party. Without a
+            # Canonical URL the link keeps the browser origin, so it is as
+            # broken as it was, but it no longer carries the token.
+            sub_filter 'const currentUrl=window.location.href;' 'const currentUrl=(function(){var L=window.location,B=window.__WOOW_CANONICAL_URL__||L.origin,P="$safe_ingress_path",p=L.pathname;if(P&&p.indexOf(P)===0)p=p.slice(P.length)||"/";return B+p+L.search+L.hash})();';
             # Generated rewrites (ADR 0005). The add-on writes this file from
             # its own Rewrite scan; the config-rendering init step creates it
             # empty so a fresh install starts. It holds prefix rules only, and

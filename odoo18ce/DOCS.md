@@ -170,6 +170,16 @@ each Odoo database in its PostgreSQL and writes a Canonical URL:
 | `public_url` empty | `http://<Home Assistant host LAN address>:<published 8069 port>` |
 | neither available | none this start |
 
+The middle row asks the Supervisor for the host's LAN address, and there are
+ordinary networks where it has none to give: the host's uplink is a bridge,
+bond, WWAN or tun device rather than a plain ethernet, wireless or VLAN one;
+the interface is not managed by NetworkManager; or the network is IPv6-only.
+A DHCP lease that has not arrived by the time the add-on starts looks the same
+and does not recover until the next restart. Each of these leaves the start
+with no Canonical URL, and the add-on log says so as a warning. **Set
+`public_url` if any of that describes your host** — it is the only shape that
+does not depend on the Supervisor being able to answer.
+
 With a Canonical URL, `web.base.url` is set to it, `web.base.url.freeze`
 is set to `True`, and the default website's domain (when the `website`
 module is installed) is set to the same value. Without one, an existing
