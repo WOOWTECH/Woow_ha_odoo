@@ -15,7 +15,7 @@ inputs:
     description: Image name without the -{arch} suffix
     required: true
   addon_dir:
-    description: Directory holding config.yaml, build.yaml and the Dockerfile
+    description: Directory holding config.yaml and the Dockerfile
     required: true
   registry_token:
     description: Token with packages:write for ghcr.io
@@ -35,7 +35,6 @@ runs:
         {
           echo "name=$(yq -r '.name' "${ADDON_DIR}/config.yaml")"
           echo "description=$(yq -r '.description' "${ADDON_DIR}/config.yaml")"
-          echo "base_image=$(yq -r ".build_from.${ARCH}" "${ADDON_DIR}/build.yaml")"
           echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         } >> "$GITHUB_OUTPUT"
 
@@ -57,8 +56,9 @@ runs:
         # manifest list; keep the tag a plain single-platform image.
         provenance: false
         tags: ${{ inputs.image_base }}-${{ inputs.arch }}:${{ inputs.version }}
+        # The base image and its tag are the Dockerfile's own ARGs; the
+        # architecture selects which one (issue #124).
         build-args: |
-          BUILD_FROM=${{ steps.meta.outputs.base_image }}
           BUILD_ARCH=${{ inputs.arch }}
           BUILD_VERSION=${{ inputs.version }}
           BUILD_DATE=${{ steps.meta.outputs.date }}

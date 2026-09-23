@@ -1,5 +1,14 @@
-ARG BUILD_FROM
-FROM ${BUILD_FROM}
+# The base image is pinned here, not in a build.yaml: Supervisor has
+# deprecated that file and passes a modernized build only BUILD_ARCH
+# (issues #110, #124). The tag is one dated Debian base tag for every
+# architecture. BUILD_ARCH has no default on purpose: Supervisor, CI and
+# the publish action all pass it, and a bare `docker build` that forgot
+# it fails on the image reference instead of quietly building amd64 on an
+# arm64 host. The weekly odoo-bump rewrites the BASE_IMAGE_TAG line the
+# way it rewrites ODOO_DEB_VERSION below; keep both lines in this shape.
+ARG BUILD_ARCH
+ARG BASE_IMAGE_TAG="bookworm-2026.08.0"
+FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-debian:${BASE_IMAGE_TAG}
 
 # Every RUN below pipes curl into another tool; without pipefail a failed
 # download would be masked by the consumer exiting 0.
@@ -95,7 +104,8 @@ HEALTHCHECK --interval=60s --timeout=10s --start-period=600s --retries=3 \
 
 # ──────────────────────────────────────────────
 # 7. Image labels. The publish workflow fills these in; a local or CI
-#    build leaves them empty, which is harmless.
+#    build leaves all but io.hass.arch empty, which is harmless. BUILD_ARCH
+#    is the one every build passes, because the FROM above needs it.
 # ──────────────────────────────────────────────
 ARG BUILD_ARCH
 ARG BUILD_DATE

@@ -3,8 +3,8 @@
 # updates this pins us to packages that stop existing; the Odoo package, the
 # one artefact whose exact build matters, is pinned by version and SHA256.
 #
-# DL3006 wants a tag on FROM. The base image is `FROM ${BUILD_FROM}`, the
-# Home Assistant add-on convention: the tagged image comes from build.yaml.
+# DL3006 (a tag on FROM) is not ignored any more: since issue #124 the
+# Dockerfile's own `ARG BASE_IMAGE_TAG` carries the dated tag, and hadolint
+# accepts a FROM composed from ARGs that are declared above it.
 ignored:
   - DL3008
-  - DL3006

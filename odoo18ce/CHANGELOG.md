@@ -176,6 +176,15 @@
   RPC is unaffected. Issue #67.
 
 ### Changed
+- The Debian base image is pinned in the Dockerfile (`ARG BASE_IMAGE_TAG`,
+  composed into `FROM` with `BUILD_ARCH`) and `build.yaml` is gone.
+  Supervisor had deprecated `build.yaml` and passes a modernized local
+  build only `BUILD_ARCH`, so a Dockerfile that took its base from
+  `BUILD_FROM` could not be built on a host any more. The tag is the same
+  `bookworm-2026.08.0` for both architectures; CI, the publish action and
+  the weekly `odoo-bump` now read and write that one line instead of the
+  YAML file. A local build on a host no longer logs the `build.yaml`
+  deprecation warning. Issue #124, part of #110.
 - The two Live-tier workflows, the Perimeter check and the Literal rewrite
   gate, no longer run on the nightly schedule; both are dispatch-only. The
   add-on now does both jobs on the host itself — the start-time self-check
