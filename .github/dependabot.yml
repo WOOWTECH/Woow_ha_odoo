@@ -3,8 +3,9 @@ version: 2
 updates:
   # GitHub Actions used by the workflows. One grouped PR per week.
   # The Odoo nightly and the Debian base image are handled by the
-  # odoo-bump workflow, because Dependabot cannot read build.yaml or
-  # the nightly.odoo.com URL scheme.
+  # odoo-bump workflow: Dependabot cannot follow a FROM composed from
+  # ARGs (the Dockerfile's BASE_IMAGE_TAG) or the nightly.odoo.com URL
+  # scheme.
   - package-ecosystem: github-actions
     directory: /
     schedule:

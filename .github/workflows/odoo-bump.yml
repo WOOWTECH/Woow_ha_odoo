@@ -60,9 +60,10 @@ jobs:
         id: base
         run: |
           set -euo pipefail
-          # build.yaml carries the same tag for every arch; read amd64's.
-          current_ref="$(yq -r '.build_from.amd64' "${ADDON_DIR}/build.yaml")"
-          current="${current_ref##*:}"
+          # One tag for every arch, pinned in the Dockerfile (issue #124);
+          # amd64's registry lists the dated tags.
+          current="$(sed -nE 's/^ARG BASE_IMAGE_TAG="(bookworm-[0-9]{4}\.[0-9]{2}\.[0-9]+)"$/\1/p' "${ADDON_DIR}/Dockerfile")"
+          [ -n "${current}" ]
           repo="home-assistant/amd64-base-debian"
           token="$(curl -fsS "https://ghcr.io/token?scope=repository:${repo}:pull" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
           newest="$(curl -fsS -H "Authorization: Bearer ${token}" "https://ghcr.io/v2/${repo}/tags/list?n=500" \
@@ -107,10 +108,8 @@ jobs:
           NEWEST: ${{ steps.base.outputs.newest }}
         run: |
           set -euo pipefail
-          for arch in amd64 aarch64; do
-            yq -i ".build_from.${arch} = \"ghcr.io/home-assistant/${arch}-base-debian:${NEWEST}\"" "${ADDON_DIR}/build.yaml"
-          done
-          cat "${ADDON_DIR}/build.yaml"
+          sed -i -E "s/^ARG BASE_IMAGE_TAG=\"bookworm-[0-9]{4}\.[0-9]{2}\.[0-9]+\"$/ARG BASE_IMAGE_TAG=\"${NEWEST}\"/" "${ADDON_DIR}/Dockerfile"
+          grep -E '^ARG BASE_IMAGE_TAG=' "${ADDON_DIR}/Dockerfile"
 
       - name: Record the bump under Unreleased
         if: steps.odoo.outputs.changed == 'true' || steps.base.outputs.changed == 'true'

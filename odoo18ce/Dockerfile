@@ -1,5 +1,12 @@
-ARG BUILD_FROM
-FROM ${BUILD_FROM}
+# The base image is pinned here, not in a build.yaml: Supervisor has
+# deprecated that file and passes a modernized build only BUILD_ARCH
+# (issues #110, #124). The tag is one dated Debian base tag for every
+# architecture. CI and the publish action pass BUILD_ARCH per job, and the
+# weekly odoo-bump rewrites the BASE_IMAGE_TAG line the way it rewrites
+# ODOO_DEB_VERSION below; keep both lines in this exact shape.
+ARG BUILD_ARCH=amd64
+ARG BASE_IMAGE_TAG="bookworm-2026.08.0"
+FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-debian:${BASE_IMAGE_TAG}
 
 # Every RUN below pipes curl into another tool; without pipefail a failed
 # download would be masked by the consumer exiting 0.

@@ -147,15 +147,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Resolve base image
-        id: base
-        run: |
-          set -euo pipefail
-          from="$(yq -r '.build_from.amd64' "${ADDON_DIR}/build.yaml")"
-          echo "from=${from}" >> "$GITHUB_OUTPUT"
-
       - uses: docker/setup-buildx-action@v4
 
+      # The base image and its tag come from the Dockerfile's own ARGs;
+      # only the architecture is passed in (issue #124).
       - name: Build image (no push)
         uses: docker/build-push-action@v7
         with:
@@ -165,7 +160,7 @@ jobs:
           # image; without this the build only fills the cache.
           load: true
           build-args: |
-            BUILD_FROM=${{ steps.base.outputs.from }}
+            BUILD_ARCH=amd64
           tags: woow-ha-odoo-amd64:ci
           cache-from: type=gha,scope=amd64
           cache-to: type=gha,scope=amd64,mode=max
@@ -268,13 +263,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Resolve base image
-        id: base
-        run: |
-          set -euo pipefail
-          from="$(yq -r '.build_from.aarch64' "${ADDON_DIR}/build.yaml")"
-          echo "from=${from}" >> "$GITHUB_OUTPUT"
-
       - uses: docker/setup-buildx-action@v4
 
       - name: Build image (no push)
@@ -283,7 +271,7 @@ jobs:
           context: ${{ env.ADDON_DIR }}
           push: false
           build-args: |
-            BUILD_FROM=${{ steps.base.outputs.from }}
+            BUILD_ARCH=aarch64
           tags: woow-ha-odoo-aarch64:ci
           cache-from: type=gha,scope=aarch64
           cache-to: type=gha,scope=aarch64,mode=max
