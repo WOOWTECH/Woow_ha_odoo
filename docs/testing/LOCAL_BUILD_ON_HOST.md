@@ -28,10 +28,13 @@
 工作目錄：
 
 ```bash
-scp -r odoo18ce root@<host>:/addons/odoo18ce_branch
+ssh root@<host> rm -rf /addons/odoo18ce_branch
+scp -O -r odoo18ce root@<host>:/addons/odoo18ce_branch
 ```
 
-同一個 `slug:` 在 `/addons/` 下只能有一份。
+先刪再複製：目錄已存在時 `scp -r` 會把新內容放進 `/addons/odoo18ce_branch/odoo18ce/`
+這個子目錄，而不是覆蓋，結果建的還是舊的程式碼。`-O` 讓新版 OpenSSH 改用舊的 scp
+協定，因為 SSH add-on 不一定提供 SFTP。同一個 `slug:` 在 `/addons/` 下只能有一份。
 
 ## 3. 只在本地副本改 `config.yaml`
 
@@ -41,13 +44,15 @@ scp -r odoo18ce root@<host>:/addons/odoo18ce_branch
 | 鍵 | 動作 | 原因 |
 |---|---|---|
 | `image:` | **整行移除** | 留著它，Supervisor 會去 pull 預建映像而不是本地建置（陷阱 a） |
-| `version:` | 加上本地標記，用 **`-`**，**不能用 `+`**，例如 `0.4.2-f441477` | 版本會成為 Docker tag，`+` 不合法（陷阱 b） |
+| `version:` | 加上本地標記，用 **`-`**，**不能用 `+`**，且後綴要**逐次遞增**，例如時間戳 `0.4.2-202609230551` | 版本會成為 Docker tag，`+` 不合法（陷阱 b）；Supervisor 只在新版本比已安裝的**大**時才提供更新，commit hash 不會遞增 |
 | `slug:` | **不動** | Supervisor 會自己加上 `local_` 前綴，變成 `local_odoo18ce`，不會和商店安裝的實例衝突 |
-| `name:` | 可選：改成例如 `Woow Odoo 18 (local f441477)` | 讓兩個實例在側邊欄與 add-on 清單中分得出來 |
+| `name:`、`panel_title:` | 可選：`name:` 改成例如 `Woow Odoo 18 (local f441477)`，`panel_title:` 改成例如 `Odoo local` | `name:` 決定 add-on 清單中的名稱，側邊欄顯示的是 `panel_title:`；兩者都改，兩個實例才分得出來，commit hash 也記在這裡 |
 
 ## 4. 指令
 
-以下在主機的 shell（SSH add-on）執行。`ha addons` 與 `ha apps` 是同一組指令。
+以下在主機的 shell 執行。`ha` 指令在任何 SSH add-on 裡都有；`docker` 指令（陷阱 a、d 與還原）
+需要 Advanced SSH & Web Terminal add-on 並關閉 protection mode，或主機的 console。
+`ha addons` 與 `ha apps` 是同一組指令。
 
 **第一次安裝：**
 
@@ -67,8 +72,8 @@ ha addons start local_odoo18ce
 **之後要換成 branch 的新 commit：**
 
 1. 用第 2 節的方式覆蓋 `/addons/<dir>` 的內容；
-2. 重新做第 3 節的修改，`version:` 換一個**不同的** `-<sha>` 後綴，Supervisor 才會
-   看到有可更新的版本；
+2. 重新做第 3 節的修改，`version:` 換一個**更大的**後綴（新的時間戳），Supervisor
+   才會看到有可更新的版本；
 3. 執行：
 
 ```bash
@@ -84,9 +89,10 @@ ha addons update local_odoo18ce    # CLI 會逾時，見陷阱 d
 
 - **症狀：** 沒有任何錯誤。安裝或更新會「成功」，但 Supervisor pull 的是 Release
   的預建映像，不是你的 branch。你驗到的是 Release 的東西。
-- **處置：** 在本地副本移除 `image:`（第 3 節）。建置期間應該看得到
-  `app_builder_<slug>` 容器；本地建出的映像 tag 是
-  `local/<arch>-addon-<slug>:<version>`，例如 `local/amd64-addon-odoo18ce:0.4.2-f441477`。
+- **處置：** 在本地副本移除 `image:`（第 3 節）。建置期間應該看得到 builder 容器
+  `app_builder_local_odoo18ce`；本地建出的映像 tag 是
+  `local/<arch>-addon-<slug>:<version>`（這裡的 `<slug>` 不含 `local_`），例如
+  `local/amd64-addon-odoo18ce:0.4.2-202609230551`。
   沒有 builder 容器、映像也不是 `local/` 開頭，就是 pull 了預建映像。
 
 ### (b) 版本字串含 `+`：建置失敗
@@ -100,7 +106,7 @@ ha addons update local_odoo18ce    # CLI 會逾時，見陷阱 d
 
 - **原因：** Supervisor 以版本當 Docker tag，`+` 不是合法的 tag 字元。語意化版本的
   build metadata（`0.4.2+sha`）是最自然的寫法，但在這裡會直接失敗。
-- **處置：** 用 `-`：`0.4.2-f441477`。
+- **處置：** 用 `-`，並讓後綴遞增（第 3 節）：`0.4.2-202609230551`。
 
 ### (c) `update` 丟失自訂的埠對應
 
@@ -134,10 +140,10 @@ ha addons update local_odoo18ce    # CLI 會逾時，見陷阱 d
   ```
 
 - **原因：** 這是 CLI 客戶端放棄等待，**不是**建置失敗。建置在
-  `app_builder_<slug>` 容器裡繼續跑。
+  `app_builder_local_odoo18ce` 容器裡繼續跑。
 - **處置：** 不要重跑。用 `docker logs -f app_builder_local_odoo18ce`（或
   `docker ps` 找出實際的 builder 容器名）看進度，等它結束，再用
-  `ha addons info local_odoo18ce` 確認 `version` 已是新的 `-<sha>`。把逾時當失敗
+  `ha addons info local_odoo18ce` 確認 `version` 已是新的後綴。把逾時當失敗
   而重跑，只會多浪費一次完整建置。
 
 ## 6. 預期耗時與預期警告
@@ -165,7 +171,7 @@ legacy map 型別警告。它們不代表失敗，處理見 #110。
 2. 刪除來源：`rm -rf /addons/<dir>`
 3. `ha store reload`，確認 `local_odoo18ce` 不再出現在清單中。
 4. 可選：刪除本地映像，例如
-   `docker rmi local/amd64-addon-odoo18ce:0.4.2-f441477`（`docker images 'local/*'`
+   `docker rmi local/amd64-addon-odoo18ce:0.4.2-202609230551`（`docker images 'local/*'`
    列出全部）。
 5. **確認 Released 實例未受影響：** 用 `ha addons` 找出它的 slug，
    `ha addons info <slug>` 應顯示 `state: started`，且埠對應仍是原本的
