@@ -41,6 +41,10 @@
 # Sourced, not executed: `. /usr/local/lib/supervisor-read.sh`.
 # ==============================================================================
 
+# The budget decided on #108, owned here so every caller reads one number.
+WOOW_SUPERVISOR_BUDGET="${WOOW_SUPERVISOR_BUDGET:-30}"
+WOOW_SUPERVISOR_POLL="${WOOW_SUPERVISOR_POLL:-2}"
+
 woow::supervisor.is_value() {
     case "$1" in
         ''|null|0.0.0.0) return 1 ;;
@@ -82,7 +86,11 @@ woow::supervisor._retry() {
             printf '%s' "${value}"
             return 0
         fi
-        woow::supervisor.flush "${keys}"
+        # bashio caches only a request that succeeded, so there is nothing
+        # to flush after one that failed: the flush belongs to `value` mode.
+        if [ "${accept}" = value ]; then
+            woow::supervisor.flush "${keys}"
+        fi
         # Whole seconds, so "past the budget" rather than "at it": the wait
         # is then never shorter than asked, at most a poll longer.
         if [ $(( $(woow::supervisor.now) - started )) -gt "${budget}" ]; then
@@ -130,31 +138,39 @@ woow::supervisor.publish() {
 # The Canonical URL's two Supervisor inputs, settled once per start.
 #
 # Without public_url the Canonical URL is the host's LAN IPv4 address with
-# the published Odoo port. Both come from the Supervisor. The address is
-# waited for with the budget decided on #108 (30 s, 2 s); the port is read
-# again only while the request itself fails, because "no port published"
-# is an empty answer that is final. Whatever was settled — possibly nothing —
-# is set in WOOW_LAN_IPV4 and WOOW_LAN_PORT for the caller and published
-# under the same names with WOOW_CANONICAL_SETTLED=1, so the bootstrap
-# reuses this start's answer and never asks on its own. An address that
-# never comes is one warning here; the caller's own "no Canonical URL" line
-# follows. Returns 1 when there is no address, 0 otherwise.
+# the published Odoo port. Both come from the Supervisor, and both share
+# one budget (WOOW_SUPERVISOR_BUDGET, decided on #108): the address is
+# waited for first, and the port gets whatever is left, read again only
+# while the request itself fails, because "no port published" is an empty
+# answer that is final. A Supervisor that cannot be asked at all therefore
+# costs one budget, not two. Whatever was settled — possibly nothing — is
+# set in WOOW_LAN_IPV4 and WOOW_LAN_PORT for the caller and published under
+# the same names with WOOW_CANONICAL_SETTLED=1, so the bootstrap reuses this
+# start's answer and never asks on its own. An address that never comes is
+# one warning here; the caller's own "no Canonical URL" line follows.
+# Returns 1 when there is no address, 0 otherwise.
 # ------------------------------------------------------------------------------
 woow::supervisor.settle_canonical_inputs() {
-    local budget=30 poll=2 status=0
+    local budget="${WOOW_SUPERVISOR_BUDGET}" poll="${WOOW_SUPERVISOR_POLL}"
+    local started status=0 remaining
+    started="$(woow::supervisor.now)"
     WOOW_LAN_IPV4="$(woow::supervisor.read "${budget}" "${poll}" \
         "network.interface.default.info.ipv4.address network.interface.default.info" \
         bashio::network.ipv4_address)" || status=1
     if [ -z "${WOOW_LAN_IPV4}" ]; then
         bashio::log.warning "The Supervisor reported no host LAN address after waiting at least ${budget} seconds; this start has no Canonical URL from it"
     fi
-    WOOW_LAN_PORT="$(woow::supervisor.read_until_ok "${budget}" "${poll}" \
+    remaining=$(( budget - ( $(woow::supervisor.now) - started ) ))
+    if [ "${remaining}" -lt 0 ]; then
+        remaining=0
+    fi
+    WOOW_LAN_PORT="$(woow::supervisor.read_until_ok "${remaining}" "${poll}" \
         "addons.self.network.8069-tcp addons.self.info" \
         bashio::addon.port 8069)" || true
     if ! woow::supervisor.publish WOOW_LAN_IPV4 "${WOOW_LAN_IPV4}" \
         || ! woow::supervisor.publish WOOW_LAN_PORT "${WOOW_LAN_PORT}" \
         || ! woow::supervisor.publish WOOW_CANONICAL_SETTLED 1; then
-        bashio::log.warning "The settled Canonical URL inputs could not be published to the container environment; the maintenance bootstrap will read them itself"
+        bashio::log.warning "The settled Canonical URL inputs could not be published to the container environment; the maintenance bootstrap will have no LAN address this start"
     fi
     return "${status}"
 }

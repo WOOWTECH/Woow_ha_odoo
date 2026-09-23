@@ -57,9 +57,9 @@ fi
 # published as WOOW_LAN_IPV4 and WOOW_LAN_PORT under WOOW_CANONICAL_SETTLED=1
 # (issue #108): it waited for the Supervisor there and already said so when
 # nothing came, and this side reuses the answer rather than asking again, so
-# one start has one address and one port on both sides (ADR 0006). The bare
-# reads below only run when nothing was published — this script run by
-# hand, outside a start — and they wait for nothing.
+# one start has one address and one port on both sides (ADR 0006). This
+# script never asks the Supervisor itself: with no marker there is no LAN
+# address this start, because a second derivation is what ADR 0006 forbids.
 LAN_IPV4=""
 PUBLISHED_PORT=""
 if [ -z "${PUBLIC_URL}" ]; then
@@ -67,11 +67,7 @@ if [ -z "${PUBLIC_URL}" ]; then
         LAN_IPV4="${WOOW_LAN_IPV4:-}"
         PUBLISHED_PORT="${WOOW_LAN_PORT:-}"
     else
-        LAN_IPV4="$(bashio::network.ipv4_address 2>/dev/null || true)"
-        PUBLISHED_PORT="$(bashio::addon.port 8069 2>/dev/null || true)"
-        if [ -z "${LAN_IPV4}" ]; then
-            bashio::log.warning "public_url is unset and the Supervisor reported no host LAN address"
-        fi
+        bashio::log.warning "maintenance: the Canonical URL inputs were not settled by cont-init this start; no LAN address is used"
     fi
 fi
 

@@ -167,7 +167,7 @@ def test_read_until_ok_retries_a_failed_request_and_accepts_an_empty_answer() ->
         'bashio::addon.port 8069)"; echo "rc=$? value=[${v}] attempts=$(cat "${PORT_COUNTER}")"'
     )
     assert result.stdout.strip() == "rc=0 value=[] attempts=3", result.stderr
-    assert flushed(result) == ["addons.self.network.8069-tcp", "addons.self.info"] * 2
+    assert flushed(result) == [], "bashio caches only a request that succeeded; nothing to flush"
     assert "WARN" not in result.stderr
 
 
@@ -242,6 +242,21 @@ def test_an_unpublished_port_is_settled_as_empty_without_waiting() -> None:
     result = run_helper('LAN_AFTER=1 PORT_VALUE=""; ' + SETTLE)
     assert "ipv4=[192.0.2.10/24] port=[] rc=0 attempts=1 slept=0" in result.stdout, result.stderr
     assert published(result)["WOOW_LAN_PORT"] == ""
+
+
+def test_a_supervisor_that_cannot_be_asked_costs_one_budget_not_two() -> None:
+    # Both reads fail throughout (no hassio_api, no token, Supervisor down).
+    # The address spends the budget; the port gets what is left of it.
+    result = run_helper('LAN_AFTER=999 PORT_OK_AFTER=999; ' + SETTLE)
+    assert "ipv4=[] port=[] rc=1" in result.stdout, result.stderr
+    fields = dict(part.split("=") for part in result.stdout.splitlines()[0].split() if "=" in part)
+    assert int(fields["slept"]) <= 34, "one shared budget, at most one poll over, not two budgets"
+    assert published(result)["WOOW_CANONICAL_SETTLED"] == "1"
+
+
+def test_the_budget_is_owned_by_the_helper() -> None:
+    result = run_helper('echo "${WOOW_SUPERVISOR_BUDGET} ${WOOW_SUPERVISOR_POLL}"')
+    assert result.stdout.strip() == "30 2", "the #108 decision, in one place"
 
 
 def test_a_publication_that_fails_is_one_warning_and_the_values_still_come_back() -> None:

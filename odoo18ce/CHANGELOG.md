@@ -89,8 +89,9 @@
   comes, the start takes the no-Canonical-URL path it always took, and the
   log says the add-on waited. With `public_url` set nothing waits. Hosts
   that never have an IPv4 address (a bridge, bond, WWAN or tun uplink, an
-  unmanaged interface, IPv6-only) pay the 30 seconds once per start.
-  Issue #108.
+  unmanaged interface, IPv6-only) pay the 30 seconds once per start, and
+  so does a Supervisor that cannot be asked at all: the address and the
+  port share the one budget. Issue #108.
 - The Rewrite scan's Home Assistant notification now covers every step of
   a round. A state file or a database scan that raised used to end the
   round with a traceback and no notification; both now notify, naming the

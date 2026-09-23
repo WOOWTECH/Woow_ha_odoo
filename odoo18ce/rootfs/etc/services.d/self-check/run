@@ -59,8 +59,8 @@ done
 # the Supervisor has had the whole Odoo boot to learn the address before
 # the budget is spent at all. An answer that never comes is handed on as it
 # is, and the module fails the check on it.
-SUPERVISOR_BUDGET=30
-SUPERVISOR_POLL=2
+SUPERVISOR_BUDGET="${WOOW_SUPERVISOR_BUDGET}"
+SUPERVISOR_POLL="${WOOW_SUPERVISOR_POLL}"
 ADDRESS="$(woow::supervisor.read "${SUPERVISOR_BUDGET}" "${SUPERVISOR_POLL}" \
     "addons.self.ip_address addons.self.info" bashio::addon.ip_address)" || true
 if [ -z "${ADDRESS}" ]; then

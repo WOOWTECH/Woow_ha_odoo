@@ -215,20 +215,19 @@ def test_bootstrap_processes_every_database_and_never_requires_default_db() -> N
     assert "ir_config_parameter" in script
     assert "/usr/local/lib/odoo-maintenance.py" in script
     assert "/usr/local/lib/odoo-maintenance-account.py" in script
-    assert "bashio::addon.port" in script
     # Issue #108: the LAN address is the one cont-init settled on this start,
     # handed over through the container environment. The bootstrap does not
     # retry on its own (ADR 0006: one value per start), and only asks the
     # Supervisor itself when it runs outside a start, with nothing published.
     assert 'if [ "${WOOW_CANONICAL_SETTLED:-}" = 1 ]' in script
-    settled, fallback = script.split('"${WOOW_CANONICAL_SETTLED:-}" = 1', 1)[1].split("else", 1)
-    assert 'LAN_IPV4="${WOOW_LAN_IPV4:-}"' in settled
-    assert 'PUBLISHED_PORT="${WOOW_LAN_PORT:-}"' in settled
-    assert "bashio::" not in settled, "a settled start asks the Supervisor nothing"
-    assert "woow::supervisor" not in script, "the bootstrap never waits on its own"
-    fallback = fallback.split("export ODOO_MAINT", 1)[0]
-    assert "bashio::network.ipv4_address" in fallback and "bashio::addon.port" in fallback
-    assert "no host LAN address" in fallback, "the by-hand path warns; the settled path already did"
+    assert 'LAN_IPV4="${WOOW_LAN_IPV4:-}"' in script
+    assert 'PUBLISHED_PORT="${WOOW_LAN_PORT:-}"' in script
+    # Never a second derivation (ADR 0006): the bootstrap neither reads the
+    # Supervisor nor waits on it; without the marker it has no LAN address.
+    assert "bashio::network.ipv4_address" not in script
+    assert "bashio::addon.port" not in script
+    assert "woow::supervisor" not in script
+    assert "not settled by cont-init" in script
     # public_url without default_db used to be a start-up failure.
     assert "default_db is required" not in script
     # A failed database listing is reported, not mistaken for "no database".
