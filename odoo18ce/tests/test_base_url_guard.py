@@ -11,6 +11,7 @@ removes.
 import ast
 import importlib
 import importlib.util
+import re
 import sys
 import types
 from pathlib import Path
@@ -234,3 +235,117 @@ def test_the_manifest_declares_a_module_that_is_never_installed() -> None:
     assert "data" not in manifest
     assert manifest["category"] == "Hidden"
     assert manifest["license"] == "LGPL-3"
+
+
+# --- The PR gate sees the patch in the built image (issue #88) ---------------
+#
+# The stand-in above never moves with upstream, so none of the tests above
+# can notice a nightly that moves res.users.authenticate. And the guard's
+# ImportError does not stop Odoo: its server-wide loader logs the error and
+# serves unguarded. The build tier therefore starts Odoo in the image it just
+# built and asks this probe whether the patch is on.
+
+PROBE = ROOT / "tests/in_image/base_url_guard_applied.py"
+CI_WORKFLOW = ROOT.parent / ".github/workflows/ci.yml"
+CONFIG_SCRIPT = ROOT / "rootfs/etc/cont-init.d/10-odoo-config.sh"
+
+
+def load_probe():
+    spec = importlib.util.spec_from_file_location("base_url_guard_applied", PROBE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def res_users_namespace(declared):
+    """Odoo's res_users module as the probe reads it."""
+    namespace = types.ModuleType("odoo.addons.base.models.res_users")
+
+    class Groups:
+        _name = "res.groups"
+
+    class UsersView(declared):
+        _name = "res.users"
+
+    namespace.Groups = Groups
+    namespace.Users = declared
+    namespace.UsersView = UsersView
+    return namespace
+
+
+def test_the_probe_reports_an_unguarded_authenticate() -> None:
+    declared, _, _ = odoo_users()
+    assert load_probe().guarded(res_users_namespace(declared)) is False
+
+
+def test_the_probe_reports_the_patch_once_the_guard_is_applied() -> None:
+    declared, _, _ = odoo_users()
+    install_guard(declared)
+    assert load_probe().guarded(res_users_namespace(declared)) is True
+
+
+def test_the_probe_reports_a_moved_seam_as_unguarded() -> None:
+    """A nightly that takes authenticate out of res_users leaves nothing to find."""
+    namespace = types.ModuleType("odoo.addons.base.models.res_users")
+
+    class Users:
+        _name = "res.users"
+
+    namespace.Users = Users
+    assert load_probe().guarded(namespace) is False
+
+
+def test_the_probe_asks_odoo_and_never_applies_the_guard_itself() -> None:
+    """Importing the guard from the probe would make the check pass by itself."""
+    tree = ast.parse(PROBE.read_text(encoding="utf-8"))
+    imported = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+    } | {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+    assert not [name for name in imported if MODULE_NAME in name]
+    # The flag is the probe's only link to the guard; both spell it the same.
+    source = (MODULE / "__init__.py").read_text(encoding="utf-8")
+    flag = re.search(r'^GUARDED_FLAG = "(\w+)"$', source, re.M)
+    assert flag and load_probe().GUARDED_FLAG == flag.group(1)
+
+
+def guard_step():
+    import yaml
+
+    workflow = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+    job = workflow["jobs"]["build-amd64"]
+    steps = [step for step in job["steps"] if "base_url_guard_applied" in step.get("run", "")]
+    assert len(steps) == 1, "build (amd64) needs exactly one step running the guard probe"
+    return job, steps[0]["run"]
+
+
+def test_the_guard_probe_runs_on_the_build_that_every_pull_request_gets() -> None:
+    job, _ = guard_step()
+    # The aarch64 build only runs on a version bump; an Odoo nightly bump
+    # changes the Dockerfile, not the version, so it would never get there.
+    assert "if" not in job, "build (amd64) must stay unconditional"
+    assert "load: true" in CI_WORKFLOW.read_text(encoding="utf-8")
+
+
+def test_the_guard_probe_starts_odoo_in_the_image_this_pull_request_built() -> None:
+    _, run = guard_step()
+    assert "woow-ha-odoo-amd64:ci" in run
+    assert "shell" in run and "/usr/bin/odoo" in run
+    # The server-wide list is the one the add-on renders, read from the
+    # shipped config script, never a copy that could drift.
+    assert CONFIG_SCRIPT.relative_to(ROOT).as_posix() in run
+    assert "server_wide_modules" in run
+
+
+def test_the_guard_probe_is_shown_to_go_red_without_the_guard() -> None:
+    _, run = guard_step()
+    # The mutation: the same run with the guard left out of --load must fail.
+    assert "--load" in run
+    assert run.count("check_guard") >= 3, "one definition, the real run and the mutation"
+    assert "::error::" in run and "guard" in run.lower()
