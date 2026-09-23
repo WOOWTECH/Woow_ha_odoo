@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import http.client
+import ipaddress
 from pathlib import Path
 import sys
 from typing import Callable
@@ -87,6 +88,26 @@ def public_host(public_url: str) -> str:
     if not public_url:
         return ""
     return public_url.split("://", 1)[-1].split("/", 1)[0]
+
+
+def usable_address(address: str) -> bool:
+    """An address the check may source its request from.
+
+    Empty is what a bashio read gives when the Supervisor has no answer;
+    `0.0.0.0` is the Supervisor's own placeholder before it has seen the
+    container on the network, and a socket bound to it is loopback in
+    practice; 127.0.0.0/8 and ::1 are loopback outright. All of them are
+    LAN tier to nginx, where the database manager answers on every correct
+    install. A string that is not an address at all is passed on: `probe`
+    reports it as no answer.
+    """
+    if not address:
+        return False
+    try:
+        parsed = ipaddress.ip_address(address)
+    except ValueError:
+        return True
+    return not (parsed.is_unspecified or parsed.is_loopback)
 
 
 def probe(address: str, host: str, *, port: int = ORIGIN_PORT,
@@ -157,17 +178,20 @@ def main(argv=None, prober: Callable = probe, notifier: Callable | None = None,
 
     public_url_set = bool(arguments.public_url)
     host = public_host(arguments.public_url)
-    if arguments.address:
+    if usable_address(arguments.address):
         status = prober(arguments.address, host, port=arguments.port)
         where = f"http://{arguments.address}:{arguments.port}{ROUTE}"
         if host:
             where += f" with Host {host}"
     else:
         # Loopback is LAN tier and would pass on every correct install, so
-        # there is no address to fall back to.
+        # there is no address to fall back to — and `0.0.0.0`, the
+        # Supervisor's placeholder for a container it has not seen on the
+        # network, connects to loopback too.
         status = None
         where = (f"{ROUTE}, not requested: the Supervisor reported no "
-                 "add-on-network address, and loopback is LAN tier")
+                 f"add-on-network address ({arguments.address or 'empty'}), "
+                 "and loopback is LAN tier")
 
     if self_check_verdict(status, public_url_set):
         out(f"Self-check: {where} answered {status}, the restricted tier; "
