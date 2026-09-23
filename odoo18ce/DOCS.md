@@ -241,6 +241,93 @@ changes it. To share a channel with someone who has no account, clear that
 channel's Authorized Group first; the built-in `general` and
 `Administrators` channels cannot be shared this way at all.
 
+## Generated rewrites
+
+Under Ingress every page lives under the Supervisor's prefix
+`/api/hassio_ingress/<token>/`. The Runtime shim that nginx injects into each
+Ingress page adds that prefix to requests as the browser makes them, but an
+application's asset bundle can also contain a root-relative address used for
+a whole-page navigation — `window.location = "/shop/cart"` — and nothing in
+the page runs before that lands on the Home Assistant root. Such a **Prefix
+escape** is fixed by a **Literal rewrite**: nginx rewrites that string inside
+the bundle before sending it over Ingress. A few rules ship in the image; the
+rest the add-on generates itself, so a newly installed application works
+under Ingress the day you install it and not after the next Release.
+
+**The Rewrite scan.** A service in the container reads the asset bundles
+every Odoo database serves — straight from the database and its filestore,
+with no login and no network — once at start, as soon as PostgreSQL is
+ready, and every five minutes after that. It rescans a database when the
+bundles' checksums change, which is what an install, an upgrade or a module
+update does. Only a prefix used in a whole-page navigation becomes a
+Generated rewrite; a prefix that a bundle merely compares paths against never
+does, because rewriting those has broken pages before. An exception list
+shipped in the image still applies.
+
+**Where the rules live.** The Generated rewrites are an nginx `include`
+file, `/data/nginx-generated-rewrites.conf`. A new version is validated with
+`nginx -t` against the add-on's rendered configuration before it is moved
+into place and nginx is reloaded; a candidate nginx refuses leaves the last
+good file where it was, with Odoo untouched. The file is part of `/data`,
+so it survives a restart and is included in a backup; it is regenerated from
+the databases whenever they change, so there is nothing in it to edit by
+hand. Rules written before nginx is up on a start take effect when nginx
+starts.
+
+**What the log says.** Every round is written to the add-on log: the status
+of each database by name (`ok`, `failed`, `no bundles`), whether the scan was
+complete, and — when bundles were read — what each one contains at each
+level, the exception hits and the prefixes now in the include file, with
+every Ingress token masked. A round that fails is a warning: the rules
+already in place stay live, Odoo is untouched, and the next round runs five
+minutes later. The scan never stops the container.
+
+**Apply Generated Rewrites** (`literal_rewrite_auto`, default on) is the
+switch. Turn it off to freeze the rules where they are: the scan and its
+report keep running, so the log still says what would have been rewritten,
+and the rules already in the include file stay live. Nothing new is written
+and no notification is sent while it is off.
+
+**Two notifications** appear in Home Assistant, and only for these two
+events:
+
+| Notification | When | What to do |
+|---|---|---|
+| *Woow Odoo: Generated rewrites added* | A round added rules, listed by prefix | Nothing — this is your notice that Ingress behaviour changed and which prefixes are now rewritten. The bundles they were found in are in the log. |
+| *Woow Odoo: Generated rewrite &lt;step&gt; failed* | A step of a round failed: the state file, the scan, generation, validation, the apply (the write, the move into place, the state write) or the reload | Read the detail it carries. The rules already in place stay as they are, or — after a failure past the move — the new file is on disk and the body says whether nginx has loaded it. The next round runs in five minutes; a failed reload is not retried and is fixed by restarting the add-on. |
+
+A round that changes nothing sends nothing, a repeated failure replaces its
+own notification rather than stacking, and Ingress tokens are masked in
+both. Sending needs the Home Assistant API, which is why the add-on declares
+`homeassistant_api`; a notification that cannot be sent is logged and does
+not change the round.
+
+### Start-time self-check
+
+Nothing outside your host watches the Public origin. In its place the add-on
+checks itself on every start: once nginx answers, it requests its own
+database-manager route, `/web/database/manager`, the way the Cloudflare
+tunnel does — from its own add-on-network address (learned from the
+Supervisor, never loopback, which is LAN tier), on port 8069, with the host
+of `public_url` as `Host`. The answer decides whether Odoo is served:
+
+| `public_url` | Expected answer | Meaning |
+|---|---|---|
+| set | `404` | the restricted tier: the database manager is closed to the tunnel |
+| empty | `503` | off-LAN callers are refused until a Public origin exists |
+
+On the expected answer the add-on logs one line and starts normally. On any
+other answer — `200`, a 5xx, or none at all — it logs an error naming the
+status and the route, sends the notification *Woow Odoo: start-time
+self-check failed*, and **stops the container**, so that a database manager
+reachable from the tunnel is never served. A `200` means the request was
+treated as LAN: check that `lan_networks` does not cover the add-on network
+(`172.30.32.0/23` is carved out of the default range for this reason). No
+answer means the request never reached nginx as the tunnel's would: check
+that `public_url` names the host the tunnel actually presents. Correct the
+option and start the add-on again; the stopped add-on is the intended
+state until then.
+
 ## Custom Modules
 
 Place custom Odoo modules in `/share/odoo_addons/` (mapped from HA's shared

@@ -328,12 +328,19 @@ outbound_urls: [<會產生對外 URL 的功能點>]     # 觸發 E 群組
 Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔不到的整頁跳轉與路徑判斷；
 一個前綴要不要進 Literal rewrite，由 bundle 的**用法**決定，不由 bundle 是否含有它決定。
 
-> 判定工具是 `U-A4` 的守門腳本 `odoo18ce/tests/e2e_literal_rewrite_gate.py`：登入 control group
-> 收集所有已載入 bundle，抽出根相對字面量，依消費方式分為 `FAIL`（整頁跳轉）、`WARN`（路徑判斷）、
-> `INFO`（shim 已攔截），再與 nginx 模板現行 `sub_filter` 規則求差集。清單外前綴的 `FAIL` 即擋門，
-> 除非 `odoo18ce/rootfs/usr/local/lib/literal_rewrite_exceptions.yaml` 登記了附理由的例外。
-> 裝完 app 後跑一次守門；`FAIL` 就在模板補該前綴的三種引號規則，或登記例外。
-> 每晚由 `.github/workflows/literal-rewrite-gate.yml` 自動執行。
+> 依 ADR 0005（`docs/adr/0005-generated-rewrites-replace-the-control-group-gate.md`），
+> 這個判定現在由 add-on 自己在容器內執行：**Rewrite scan** 於啟動時與之後每五分鐘讀取每個資料庫實際
+> 提供的 asset bundle，把根相對字面量依消費方式分為 `FAIL`（整頁跳轉）、`WARN`（路徑判斷）、
+> `INFO`（shim 已攔截），只把 `FAIL` 等級的前綴寫成 **Generated rewrite**（nginx include 檔
+> `/data/nginx-generated-rewrites.conf`），經 `nginx -t` 驗證後 reload；`WARN` 依 ADR 0004 永遠不改寫，
+> `odoo18ce/rootfs/usr/local/lib/literal_rewrite_exceptions.yaml` 登記的例外仍然適用。
+> 裝完 app 不必補模板、不必等 Release；新規則加入時 Home Assistant 會收到通知，add-on log 記錄每一輪。
+> `literal_rewrite_auto` 關閉時只掃描、不套用。
+>
+> `U-A4` 的守門腳本 `odoo18ce/tests/e2e_literal_rewrite_gate.py` 仍在，是同一套分析從外部對 Public origin
+> 跑的版本（登入、收集 bundle、與現行規則求差集），供手動驗收用：`--include-file` 可帶入主機上的
+> Generated rewrite 檔一起計入已登記規則。`.github/workflows/literal-rewrite-gate.yml` 不再每晚排程，
+> 保留 `workflow_dispatch` 手動觸發。
 
 ---
 
@@ -414,7 +421,7 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 |---|---|---|---|---|---|
 | `G-01` | add-on 的 maintenance bootstrap 只在 `public_url` **且** `default_db` 皆設定時才寫入 `web.base.url` 並設 `web.base.url.freeze`；Ingress-only 安裝或未設 `default_db` 時**完全無防護**，且任何形態下都不設定 `website.domain` | **Blocker** | RC-9 | `odoo18ce/rootfs/usr/local/bin/odoo-maintenance-bootstrap`（`if public_url:` 區塊）、static tier 僅有字串存在檢查 | 未 freeze 時 Odoo 會在 admin 登入時把 `web.base.url` 覆寫成當次請求基底——**從 ingress 登入一次，token 就會被寫進所有分享連結與寄出的郵件**。修法：bootstrap 對所有 DB 逐一處理；有 `public_url` 用它，否則用 HA 的 LAN 位址，取不到則只上鎖不改值；同時設定 `website.domain`；補 static tier 測試。追蹤 #57 |
 | `G-02` | 分享對話框的複製鈕在 ingress 可能無反應：`navigator.clipboard.writeText` 在 cross-origin iframe 需要宿主授予 `allow="clipboard-write"`，HA 是否授予**未知** | **Important** | RC-3 | 結構性假設，待 `U-F1` 實測 | 先跑 `U-F1`：**有**授權→查 Odoo 端呼叫時機；**沒有**→ nginx shim 注入 `execCommand('copy')` 或「點擊即全選」的退路。網址欄位值錯誤屬 `G-01` 下游，不在此列。追蹤 #60 |
-| `G-03` | nginx Literal rewrite 的前綴清單只有 8 個前綴，計劃安裝的 12 個 app 至少引入 15 個新前綴 | **Important**（安裝時觸發） | RC-11 | `odoo18ce/rootfs/etc/nginx/nginx.conf.template` `location ^~ /web/assets/` | **處置中（#58）**：ADR 0004 決定不擴清單也不泛化（0.3.10、0.3.34 兩次翻車）；`U-A4` 已實作為 `odoo18ce/tests/e2e_literal_rewrite_gate.py` 並納入發版守門與每晚 workflow。首次對 .6 test（4 apps）執行：0 個未登記 `FAIL`，`/scoped_app` 以例外命中，清單外前綴全部為 `WARN`／`INFO`。第 9／10 節 app 分批安裝後各跑一次守門；`FAIL` 才補規則。機制改造另開 issue |
+| `G-03` | nginx Literal rewrite 的前綴清單只有 8 個前綴，計劃安裝的 12 個 app 至少引入 15 個新前綴 | **Important**（安裝時觸發） | RC-11 | `odoo18ce/rootfs/etc/nginx/nginx.conf.template` `location ^~ /web/assets/` | **處置中（#58）**：ADR 0004 決定不擴清單也不泛化（0.3.10、0.3.34 兩次翻車）；`U-A4` 已實作為 `odoo18ce/tests/e2e_literal_rewrite_gate.py` 並納入發版守門與每晚 workflow。首次對 .6 test（4 apps）執行：0 個未登記 `FAIL`，`/scoped_app` 以例外命中，清單外前綴全部為 `WARN`／`INFO`。**機制已改造並出貨（ADR 0005，#74）**：add-on 內建 Rewrite scan 在執行期把 `FAIL` 等級前綴寫成 Generated rewrite，不再靠擴充模板清單；第 9／10 節 app 分批安裝後仍可用 `--include-file` 手動跑一次守門驗收（#81） |
 | `G-04` | `@web/core/utils/urls` 的 `url()`／`getOrigin()` 在 Odoo 18 一律退回瀏覽器的 protocol + host（session info 無 `origin` 欄位），而同一個函式同時組出 `/web/image`、`/web/content` 等**站內**位址 | **Important** | RC-9 | `.6` 服務的 `web.assets_backend`：`getOrigin()` 取 `browser.location` 的 `protocol`／`host`，`url()` 以 `getOrigin(options.origin ?? session.origin)` 取基底 | **`STRUCTURAL`**（ADR 0006）。改寫這個共用函式會把站內位址一起變成絕對公開網址並離開 Ingress，正是 ADR 0006 否決「改寫 `session.origin`」的理由。承接路徑：凡經 `url()` 組出、要給外人開的網址，一律從 **Public origin** 產生。2026-09-22 盤點 `.6` 實際服務的 15 個 bundle，目前沒有任何對外分享連結走這條路；日後若出現，逐一評估能否以精確表達式補丁，否則留在本列。追蹤 #70 |
 | `G-05` | ~~Ingress-only 且 Supervisor 取不到 LAN 位址（Canonical URL 為空）時，Website 分享 snippet 仍把 `location.href` 交給社群網站，其中含 Supervisor 的 ingress token~~ **已修正（2026-09-23）** | ~~**Important**~~ | RC-9 | `nginx.conf.template` 的 `const currentUrl=` 補丁現在**無論有沒有 Canonical URL 都剝掉 ingress 前綴** | ADR 0006 已補一段修正，把這條列為「空值即今日行為」的唯一例外：今日行為是把憑證交給第三方，那不值得保留。無 Canonical URL 時連結仍指向 HA 主機、仍然打不開，但不再帶 token。另兩條補丁不受影響。促成重審的是 #108——空值的形態比原先估計的容易達到 |
 
