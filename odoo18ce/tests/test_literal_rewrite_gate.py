@@ -381,6 +381,51 @@ def test_cli_refuses_an_include_file_that_is_not_there(tmp_path, monkeypatch):
     assert "absent.conf" in str(exit_info.value)
 
 
+# Odoo serves one bundle name under two URLs with different content: a
+# website-scoped one and an unscoped one (issue #98).
+SCOPED_URL = "https://odoo.example/web/assets/1/8c63e6a/web.assets_web.min.js"
+UNSCOPED_URL = "https://odoo.example/web/assets/392901d/web.assets_web.min.js?debug=0"
+
+
+def test_cli_keys_two_bundles_that_share_a_name_by_their_url_path():
+    cli = load_cli()
+    scoped, unscoped = cli.bundle_path(SCOPED_URL), cli.bundle_path(UNSCOPED_URL)
+    assert scoped == "/web/assets/1/8c63e6a/web.assets_web.min.js"
+    assert unscoped == "/web/assets/392901d/web.assets_web.min.js"
+
+    report = gate.evaluate({scoped: FAIL_BUNDLE_FORUM, unscoped: 'rpc("/forum/x")'}, RULES, set())
+    assert set(report.bundles) == {scoped, unscoped}
+    assert [f.prefix for f in report.bundles[scoped].unregistered_failures] == ["/forum"]
+    assert report.bundles[unscoped].unregistered_failures == []
+
+
+def test_cli_keeps_the_ingress_token_out_of_the_bundle_path():
+    cli = load_cli()
+    url = "https://ha.example/api/hassio_ingress/secret-token/web/assets/392901d/web.assets_web.min.js"
+    assert cli.bundle_path(url) == "/web/assets/392901d/web.assets_web.min.js"
+    stray = "https://ha.example/api/hassio_ingress/secret-token/x.min.js?u=/web/assets/a.min.js"
+    assert "secret-token" not in cli.bundle_filename(cli.bundle_path(stray))
+
+
+def test_cli_saves_and_re_evaluates_two_same_name_bundles_apart(tmp_path, monkeypatch):
+    cli = load_cli()
+    bundles = tmp_path / "bundles"
+    bundles.mkdir()
+    scoped, unscoped = cli.bundle_path(SCOPED_URL), cli.bundle_path(UNSCOPED_URL)
+    names = {cli.bundle_filename(scoped), cli.bundle_filename(unscoped)}
+    assert len(names) == 2
+    (bundles / cli.bundle_filename(scoped)).write_text(FAIL_BUNDLE_FORUM, encoding="utf-8")
+    (bundles / cli.bundle_filename(unscoped)).write_text('rpc("/forum/x")', encoding="utf-8")
+    artifacts = tmp_path / "artifacts"
+    monkeypatch.setenv("E2E_ARTIFACT_DIR", str(artifacts))
+
+    assert cli.main(["--from-dir", str(bundles)]) == 1
+    report = (artifacts / "literal-rewrite-gate.txt").read_text(encoding="utf-8")
+    assert "bundles: 2" in report
+    for name in names:
+        assert f"== {name} " in report
+
+
 def _wait_for_socket(process: subprocess.Popen, socket: Path) -> None:
     for _ in range(100):
         if socket.exists():
