@@ -64,11 +64,14 @@ while true; do
     "${ROUND}" || STATUS=$?
     if [ "${STATUS}" -ne 0 ]; then
         # The report above names the database that failed or what nginx
-        # refused. This line is what makes the round itself visible as a
-        # failure, so a host that has stopped updating its rules says so
-        # every round instead of reading like a host with nothing to do.
+        # refused, and says what the include file holds now: a step that
+        # failed after the new file was moved into place leaves the new
+        # rules on disk (issue #120). This line is what makes the round
+        # itself visible as a failure, so a host that has stopped updating
+        # its rules says so every round instead of reading like a host with
+        # nothing to do.
         bashio::log.warning \
-            "Rewrite scan: the round above ended at exit ${STATUS}; the include file keeps the rules it already had, Odoo is untouched, and the next round runs in ${ROUND_INTERVAL} seconds"
+            "Rewrite scan: the round above ended at exit ${STATUS}; it says what the include file holds, Odoo is untouched, and the next round runs in ${ROUND_INTERVAL} seconds"
     fi
     sleep "${ROUND_INTERVAL}"
 done

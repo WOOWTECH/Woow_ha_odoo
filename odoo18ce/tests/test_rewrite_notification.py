@@ -213,6 +213,23 @@ def test_nginx_not_running_yet_is_not_a_failed_reload(tmp_path: Path) -> None:
 
 # --- what the notification says -----------------------------------------------
 
+def test_an_added_notification_says_when_the_rules_take_effect(tmp_path: Path) -> None:
+    """Before nginx is up the rules are written, not live (issue #120)."""
+    outcome, before = forum_round(tmp_path, running=lambda: False)
+    event = apply.round_event(outcome, before)
+    assert event.kind == apply.EVENT_ADDED and not event.live
+    _, body = apply.notification(event)
+    assert "nginx starts" in body
+    assert "now rewrites" not in body
+
+    outcome, before = forum_round(tmp_path)
+    event = apply.round_event(outcome, before)
+    assert event.live
+    _, body = apply.notification(event)
+    assert "now rewrites" in body
+    assert "nginx starts" not in body
+
+
 def test_an_added_notification_lists_the_prefixes() -> None:
     title, body = apply.notification(apply.RoundEvent(apply.EVENT_ADDED, prefixes=("/forum/", "/livechat/")))
     assert "added" in title.lower()
@@ -303,11 +320,13 @@ def test_the_add_on_may_call_the_home_assistant_api() -> None:
 # --- the seam -----------------------------------------------------------------
 
 def run_main(tmp_path, *arguments, include_text="", failed=False,
-             notify_raises=False, sent=None):
+             notify_raises=False, sent=None, broken="", lines=None):
     """`main` against a temporary host, with the adapter replaced.
 
     Returns the exit code, each notification sent as ((title, body), id),
-    and the lines the round logged.
+    and the lines the round logged. `broken` names one step of the round
+    that raises instead of working: `state`, `scan`, `validate` or
+    `save_state`.
     """
     one = row()
     store = filestore(tmp_path, (one, FORUM_BUNDLE))
@@ -327,14 +346,29 @@ def run_main(tmp_path, *arguments, include_text="", failed=False,
         sent.append((note, notification_id))
         return True
 
-    original = scan.scan_databases, apply.apply_include
-    scan.scan_databases = lambda run_query: scan.ScanResult((database,))
+    def raising(step):
+        def broken_step(*args, **keywords):
+            raise OSError(f"the {step} step broke")
+        return broken_step
+
+    original = (scan.scan_databases, apply.apply_include, scan.load_state,
+                scan.save_state, apply.validate)
+    scan.scan_databases = (
+        raising("scan") if broken == "scan"
+        else lambda run_query: scan.ScanResult((database,))
+    )
+    if broken == "state":
+        scan.load_state = raising("state")
+    if broken == "save_state":
+        scan.save_state = raising("save_state")
+    if broken == "validate":
+        apply.validate = raising("validate")
 
     def no_nginx(text, nginx_conf, **keywords):
         return original[1](text, nginx_conf, **dict(keywords, runner=Runner(), running=lambda: False))
 
     apply.apply_include = no_nginx
-    lines: list[str] = []
+    lines = [] if lines is None else lines
     try:
         code = apply.main(
             ["--state", str(tmp_path / "state.json"), "--include", str(include),
@@ -342,7 +376,8 @@ def run_main(tmp_path, *arguments, include_text="", failed=False,
             out=lines.append, notifier=notifier,
         )
     finally:
-        scan.scan_databases, apply.apply_include = original
+        (scan.scan_databases, apply.apply_include, scan.load_state,
+         scan.save_state, apply.validate) = original
     return code, sent, lines
 
 
@@ -389,6 +424,95 @@ def test_main_notifies_a_generation_that_raised_and_still_fails(tmp_path: Path) 
     ((title, body), notification_id), = sent
     assert apply.STEP_GENERATION in title
     assert notification_id == apply.NOTIFICATION_IDS[apply.EVENT_FAILED]
+
+
+def test_main_notifies_a_scan_that_raised(tmp_path: Path) -> None:
+    """A database scan that raises is a failed round the operator hears about (issue #120)."""
+    sent: list = []
+    with pytest.raises(OSError):
+        run_main(tmp_path, broken="scan", sent=sent)
+    ((title, body), notification_id), = sent
+    assert apply.STEP_SCAN in title
+    assert "stay as they are" in body
+    assert notification_id == apply.NOTIFICATION_IDS[apply.EVENT_FAILED]
+
+
+def test_main_notifies_a_state_that_could_not_be_read(tmp_path: Path) -> None:
+    sent: list = []
+    with pytest.raises(OSError):
+        run_main(tmp_path, broken="state", sent=sent)
+    ((title, body), notification_id), = sent
+    assert apply.STEP_STATE in title
+    assert "stay as they are" in body
+    assert notification_id == apply.NOTIFICATION_IDS[apply.EVENT_FAILED]
+
+
+def test_main_notifies_a_validation_that_raised(tmp_path: Path) -> None:
+    """`nginx -t` that cannot even be run is a validation failure, not a generation one."""
+    sent: list = []
+    with pytest.raises(OSError):
+        run_main(tmp_path, broken="validate", sent=sent)
+    ((title, body), _), = sent
+    assert apply.STEP_VALIDATION in title
+    assert "stay as they are" in body
+    assert (tmp_path / "nginx-generated-rewrites.conf").read_text(encoding="utf-8") == ""
+
+
+def test_a_state_that_could_not_be_saved_names_apply_and_the_new_file(tmp_path: Path) -> None:
+    """After `os.replace` the include file is the new one; the notification must not say otherwise."""
+    sent: list = []
+    with pytest.raises(OSError):
+        run_main(tmp_path, broken="save_state", sent=sent)
+    ((title, body), notification_id), = sent
+    assert apply.STEP_APPLY in title
+    assert "stay as they are" not in body
+    assert "/forum/" in body, "the rules that are now on disk are named"
+    assert "next round" in body.lower()
+    written = (tmp_path / "nginx-generated-rewrites.conf").read_text(encoding="utf-8")
+    assert "/forum/" in written
+    assert notification_id == apply.NOTIFICATION_IDS[apply.EVENT_FAILED]
+
+
+def test_a_round_error_names_its_step_and_whether_the_file_moved() -> None:
+    error = apply.RoundError(apply.STEP_APPLY, OSError("disk full"), replaced=True)
+    assert error.step == apply.STEP_APPLY and error.replaced
+    assert "disk full" in str(error)
+    assert apply.RoundError(apply.STEP_VALIDATION, OSError("x")).replaced is False
+
+
+def test_main_logs_what_the_include_file_holds_and_reraises_the_step_error(tmp_path: Path) -> None:
+    """The log line matches the notification, and the exception is the step's own."""
+    logged: list[str] = []
+    with pytest.raises(OSError) as raised:
+        run_main(tmp_path, broken="save_state", lines=logged)
+    assert "save_state step broke" in str(raised.value)
+    assert raised.value.__suppress_context__ is False, "the step's own chain is untouched"
+    assert any("now holds the new rules" in line for line in logged)
+    logged.clear()
+    with pytest.raises(OSError):
+        run_main(tmp_path, broken="scan", lines=logged)
+    assert any("keeps the rules it already had" in line for line in logged)
+
+
+def test_a_refused_reload_survives_a_state_write_that_raised(tmp_path: Path) -> None:
+    """nginx refused the reload, then the state write raised: both are told."""
+    original = scan.save_state
+
+    def broken(*args, **keywords):
+        raise OSError("the save_state step broke")
+
+    scan.save_state = broken
+    try:
+        with pytest.raises(apply.RoundError) as raised:
+            forum_round(tmp_path, runner=Runner(reload_code=1))
+    finally:
+        scan.save_state = original
+    error = raised.value
+    assert error.step == apply.STEP_APPLY and error.replaced and error.reload_failed
+    assert error.prefixes == ("/forum/",)
+    _, body = apply.notification(apply.raised_event(error))
+    assert "not live yet" in body and "restart" in body
+    assert "/forum/" in body
 
 
 def test_main_sends_nothing_for_a_round_that_changed_nothing(tmp_path: Path) -> None:
