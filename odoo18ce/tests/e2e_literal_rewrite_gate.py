@@ -81,14 +81,20 @@ def bundle_path(url: str) -> str:
     need scanning (issue #98). The in-container Rewrite scan keys its rows
     the same way (#92). Whatever precedes `/web/assets/` -- an Ingress
     prefix and its token -- is dropped, and so are the origin and query.
+    A path without `/web/assets/` is masked, since it becomes a file name.
     """
     path = urlsplit(url).path
     index = path.find("/web/assets/")
-    return path[index:] if index >= 0 else path
+    return path[index:] if index >= 0 else gate.mask(path)
 
 
 def safe_filename(name: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]+", "_", name).lstrip("_")
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", name)
+
+
+def bundle_filename(path: str) -> str:
+    """The saved copy's name: one file per bundle path."""
+    return safe_filename(path.lstrip("/"))
 
 
 def collect_bundles(base: str, login: str, password: str, artifacts: Path) -> dict[str, str]:
@@ -158,7 +164,7 @@ def collect_bundles(base: str, login: str, password: str, artifacts: Path) -> di
             bundles[path] = text
             # One file per path, so two bundles sharing a name never
             # overwrite each other's copy.
-            filename = safe_filename(path)
+            filename = bundle_filename(path)
             assert saved.setdefault(filename, path) == path, f"{path} and {saved[filename]} both save as {filename}"
             # The saved copy is masked: against an Ingress base the bundles
             # carry the token in every rewritten literal, and the artifact

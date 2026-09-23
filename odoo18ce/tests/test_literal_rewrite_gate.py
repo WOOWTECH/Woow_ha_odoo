@@ -403,6 +403,8 @@ def test_cli_keeps_the_ingress_token_out_of_the_bundle_path():
     cli = load_cli()
     url = "https://ha.example/api/hassio_ingress/secret-token/web/assets/392901d/web.assets_web.min.js"
     assert cli.bundle_path(url) == "/web/assets/392901d/web.assets_web.min.js"
+    stray = "https://ha.example/api/hassio_ingress/secret-token/x.min.js?u=/web/assets/a.min.js"
+    assert "secret-token" not in cli.bundle_filename(cli.bundle_path(stray))
 
 
 def test_cli_saves_and_re_evaluates_two_same_name_bundles_apart(tmp_path, monkeypatch):
@@ -410,10 +412,10 @@ def test_cli_saves_and_re_evaluates_two_same_name_bundles_apart(tmp_path, monkey
     bundles = tmp_path / "bundles"
     bundles.mkdir()
     scoped, unscoped = cli.bundle_path(SCOPED_URL), cli.bundle_path(UNSCOPED_URL)
-    names = {cli.safe_filename(scoped), cli.safe_filename(unscoped)}
+    names = {cli.bundle_filename(scoped), cli.bundle_filename(unscoped)}
     assert len(names) == 2
-    (bundles / cli.safe_filename(scoped)).write_text(FAIL_BUNDLE_FORUM, encoding="utf-8")
-    (bundles / cli.safe_filename(unscoped)).write_text('rpc("/forum/x")', encoding="utf-8")
+    (bundles / cli.bundle_filename(scoped)).write_text(FAIL_BUNDLE_FORUM, encoding="utf-8")
+    (bundles / cli.bundle_filename(unscoped)).write_text('rpc("/forum/x")', encoding="utf-8")
     artifacts = tmp_path / "artifacts"
     monkeypatch.setenv("E2E_ARTIFACT_DIR", str(artifacts))
 
