@@ -51,9 +51,16 @@ per-bundle, per-level summary with its exception hits. Every line goes
 through `gate.mask`, because a bundle can hold an Ingress token and the
 add-on log is copied into issues and screenshots.
 
-Only `validate`, `reload_nginx` and the file moves reach out of the
-process; the rest is pure over strings, so the Static tier drives all four
-refusals with a fake runner and a temporary filestore.
+Only `validate`, `reload_nginx`, `notify` and the file moves reach out of
+the process; the rest is pure over strings, so the Static tier drives all
+four refusals with a fake runner and a temporary filestore.
+
+`notification` is what the operator sees outside the log (issue #78): one
+Home Assistant persistent notification when a round added Generated
+rewrites or when its generation, validation or reload failed, and nothing
+otherwise. `round_event` decides which, `notification` words it masked,
+and `notify` is the thin adapter to the Supervisor, whose failure is
+logged and never changes the round.
 
 The module must import with the standard library alone, plus PyYAML for the
 exception list, which ADR 0008 puts in the image.
@@ -64,6 +71,7 @@ import argparse
 import collections
 from dataclasses import dataclass, field, replace
 import itertools
+import json
 import os
 from pathlib import Path
 import re
@@ -71,6 +79,7 @@ import subprocess
 import sys
 import tempfile
 from typing import Callable, Iterable, Mapping
+import urllib.request
 
 # The two modules ship beside this one. They are imported by name rather
 # than by path so the Static tier, which loads all three out of the
@@ -424,6 +433,9 @@ class ApplyResult:
     prefixes: tuple = ()
     wrote: bool = False
     reloaded: bool = False
+    # A running nginx refused the reload. Not the same as `not reloaded`:
+    # before nginx has started there is nobody to reload, and that is fine.
+    reload_failed: bool = False
     state_saved: bool = False
     scan: "scan.ScanResult | None" = None
     verdict: "scan.ScanVerdict | None" = None
@@ -522,7 +534,7 @@ def apply_include(
             STATUS_APPLIED,
             f"{detail}, but the reload failed and the rules are not live yet: "
             f"{reload_message}",
-            include_text=text, prefixes=prefixes, wrote=True,
+            include_text=text, prefixes=prefixes, wrote=True, reload_failed=True,
         )
     return ApplyResult(
         STATUS_APPLIED, f"{detail} and nginx was reloaded",
@@ -765,6 +777,142 @@ def finding_lines(findings) -> list[str]:
     return lines
 
 
+# --- the notification ---------------------------------------------------------
+
+# ADR 0005 lets a Generated rewrite go live without a human reading it, and
+# names this notification and the log line as the review (issue #78). So the
+# operator hears about exactly two things, and nothing on a round that
+# changed nothing: rewrites were added, or a step failed.
+EVENT_ADDED = "added"
+EVENT_FAILED = "failed"
+
+#: The step a failed round names. An incomplete scan is a failed generation:
+#: nothing was generated from it, because the union would have been short.
+STEP_GENERATION = "generation"
+STEP_VALIDATION = "validation"
+STEP_RELOAD = "reload"
+
+#: Home Assistant's own API, reached through the Supervisor proxy with the
+#: token every add-on is given. It needs `homeassistant_api` in config.yaml.
+NOTIFY_URL = "http://supervisor/core/api/services/persistent_notification/create"
+NOTIFY_TIMEOUT_SECONDS = 10
+#: One id per event, so a failure that repeats every round replaces its own
+#: notification instead of stacking one every five minutes, and never
+#: replaces the one that named the rules that were added.
+NOTIFICATION_IDS = {
+    EVENT_ADDED: "odoo18ce_generated_rewrites_added",
+    EVENT_FAILED: "odoo18ce_generated_rewrites_failed",
+}
+
+
+@dataclass(frozen=True)
+class RoundEvent:
+    """Something a round did that the operator is told about."""
+
+    kind: str
+    prefixes: tuple = ()     # EVENT_ADDED: the prefixes this round added
+    step: str = ""           # EVENT_FAILED: which step failed
+    detail: str = ""
+
+
+def round_event(outcome: ApplyResult, before: Iterable = (), auto: bool = True) -> RoundEvent | None:
+    """The event a round is, or None when it is not worth a notification.
+
+    `before` is what the include file rewrote before the round, so only the
+    prefixes this round *added* are named; a round that only removed rules
+    sends nothing. With application off nothing is sent at all, not even
+    for a failed round: the option freezes the rules, and the log still
+    says what the scan found.
+    """
+    if not auto:
+        return None
+    if outcome.status == STATUS_INCOMPLETE:
+        return RoundEvent(EVENT_FAILED, step=STEP_GENERATION, detail=outcome.detail)
+    if outcome.status == STATUS_INVALID:
+        return RoundEvent(EVENT_FAILED, step=STEP_VALIDATION, detail=outcome.detail)
+    if outcome.reload_failed:
+        return RoundEvent(EVENT_FAILED, step=STEP_RELOAD, detail=outcome.detail)
+    if outcome.status == STATUS_APPLIED:
+        known = set(before)
+        added = tuple(prefix for prefix in outcome.prefixes if prefix not in known)
+        if added:
+            return RoundEvent(EVENT_ADDED, prefixes=added)
+    return None
+
+
+def notification(event: RoundEvent) -> tuple[str, str]:
+    """The title and body of the notification for one event, masked.
+
+    A prefix is bundle text and a detail can quote nginx or psql, so either
+    could carry an Ingress token; a notification is as easily screenshotted
+    as the log.
+    """
+    if event.kind == EVENT_ADDED:
+        title = "Woow Odoo: Generated rewrites added"
+        body = (
+            "The Rewrite scan found navigation prefixes no Shipped rewrite "
+            "covers and now rewrites them under Ingress:\n\n"
+            + "\n".join(f"- `{prefix}`" for prefix in event.prefixes)
+            + "\n\nThe add-on log has the bundles they were found in. "
+            "Set `literal_rewrite_auto` to false to freeze the rules."
+        )
+    else:
+        title = f"Woow Odoo: Generated rewrite {event.step} failed"
+        body = (
+            f"The Rewrite scan's {event.step} step failed, so the Generated "
+            "rewrites already in place stay as they are and Odoo is untouched. "
+            "The next round runs in five minutes.\n\n"
+            f"{event.detail}"
+        )
+    return gate.mask(title), gate.mask(body)
+
+
+def notify(
+    note: tuple[str, str],
+    *,
+    token: str | None = None,
+    opener: Callable = urllib.request.urlopen,
+    log: Callable[[str], None] = print,
+    notification_id: str = NOTIFICATION_IDS[EVENT_ADDED],
+) -> bool:
+    """Create the persistent notification through the Supervisor.
+
+    A failure is logged and never raised: a notification that could not be
+    sent must not change what the round did or how it exits.
+    """
+    if token is None:
+        token = os.environ.get("SUPERVISOR_TOKEN", "")
+    if not token:
+        log("Rewrite scan: no SUPERVISOR_TOKEN, so the notification was not sent")
+        return False
+    title, message = note
+    request = urllib.request.Request(
+        NOTIFY_URL,
+        data=json.dumps({
+            "title": title, "message": message, "notification_id": notification_id,
+        }).encode("utf-8"),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with opener(request, timeout=NOTIFY_TIMEOUT_SECONDS):
+            pass
+    except Exception as error:      # noqa: BLE001 - reported, never raised
+        log(gate.mask(f"Rewrite scan: the notification could not be sent: {error}"))
+        return False
+    return True
+
+
+def send_notification(event: RoundEvent | None, notifier: Callable, log: Callable[[str], None]) -> None:
+    """Hand one event to the adapter; whatever the adapter does stays here."""
+    if event is None:
+        return
+    try:
+        notifier(notification(event), notification_id=NOTIFICATION_IDS[event.kind], log=log)
+    except Exception as error:      # noqa: BLE001 - a broken adapter must not end the round
+        log(gate.mask(f"Rewrite scan: the notification could not be sent: {error}"))
+
+
 # --- the command --------------------------------------------------------------
 
 def report(outcome: ApplyResult, state_note: str, out=print) -> None:
@@ -790,7 +938,7 @@ def report(outcome: ApplyResult, state_note: str, out=print) -> None:
         line(f"  prefixes: {' '.join(outcome.prefixes)}")
 
 
-def main(argv=None, run_query=None, out=print) -> int:
+def main(argv=None, run_query=None, out=print, notifier: Callable = notify) -> int:
     parser = argparse.ArgumentParser(
         prog="odoo-rewrite-apply",
         description="Run one Rewrite scan round and apply its findings as the "
@@ -817,19 +965,33 @@ def main(argv=None, run_query=None, out=print) -> int:
 
     loaded = scan.load_state(arguments.state, arguments.include)
     state_note = loaded.reason or f"{arguments.state}, {len(loaded.state.bundles)} bundles"
+    # Read before the round, so the notification names only what it added.
+    before = live_prefixes(arguments.include)
     result = scan.scan_databases(run_query or scan.psql_query)
-    outcome = apply_round(
-        result,
-        auto=arguments.auto,
-        previous_state=loaded.state,
-        force=arguments.force,
-        filestore=arguments.filestore,
-        include_path=arguments.include,
-        nginx_conf_path=arguments.nginx_conf,
-        exceptions_path=arguments.exceptions,
-        state_path=arguments.state,
-    )
+    try:
+        outcome = apply_round(
+            result,
+            auto=arguments.auto,
+            previous_state=loaded.state,
+            force=arguments.force,
+            filestore=arguments.filestore,
+            include_path=arguments.include,
+            nginx_conf_path=arguments.nginx_conf,
+            exceptions_path=arguments.exceptions,
+            state_path=arguments.state,
+        )
+    except Exception as error:
+        # A rendered configuration or an exception list that cannot be read
+        # stops generation before anything is written. The round still
+        # fails as it always has; the operator is told which step it was.
+        if arguments.auto:
+            send_notification(
+                RoundEvent(EVENT_FAILED, step=STEP_GENERATION, detail=str(error)),
+                notifier, out,
+            )
+        raise
     report(outcome, state_note, out)
+    send_notification(round_event(outcome, before, auto=arguments.auto), notifier, out)
     return 0 if outcome.healthy else 1
 
 

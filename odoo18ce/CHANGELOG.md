@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- The Rewrite scan now tells you in Home Assistant when it acts. A round
+  that adds Generated rewrites creates a persistent notification naming the
+  new prefixes, and a round whose generation, validation or reload failed
+  creates one naming the step; a round that changes nothing, and every
+  round with **Apply Generated Rewrites** off, sends nothing. Ingress
+  tokens are masked, a failure repeated every five minutes replaces its own
+  notification rather than stacking, and a notification that cannot be
+  sent is logged without changing the round. The add-on now asks for
+  `homeassistant_api`, which this needs. ADR 0005, issue #78.
 - The Rewrite scan now runs by itself. A new service scans once at start,
   as soon as PostgreSQL is ready, and every five minutes after that, so an
   application installed while the add-on is running has its navigation
