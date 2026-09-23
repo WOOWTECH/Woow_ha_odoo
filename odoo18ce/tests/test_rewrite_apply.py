@@ -18,6 +18,7 @@ theirs.
 """
 import importlib.machinery
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -141,12 +142,25 @@ class Runner:
         return [call for call in self.calls if "-t" in call]
 
 
-def apply_round(tmp_path, scan_result, *, include_text="", **keywords):
+def inputs_of(conf_text=None, exceptions_path=apply.EXCEPTIONS_PATH):
+    """The generation inputs a round over this gateway and exception list sees."""
+    return apply.generation_inputs(
+        apply.shipped_rules(conf_text if conf_text is not None else rendered_conf()),
+        apply.load_exceptions(exceptions_path),
+    )
+
+
+def matching_state(*rows, conf_text=None, exceptions_path=apply.EXCEPTIONS_PATH):
+    """A previous state that agrees with these rows and these generation inputs."""
+    return scan.state_from_rows(rows, "0" * 64, inputs=inputs_of(conf_text, exceptions_path))
+
+
+def apply_round(tmp_path, scan_result, *, include_text="", conf_text=None, **keywords):
     """Run a round against a temporary include file, state and filestore."""
     include = tmp_path / "nginx-generated-rewrites.conf"
     include.write_text(include_text, encoding="utf-8")
     conf = tmp_path / "nginx.conf"
-    conf.write_text(rendered_conf(), encoding="utf-8")
+    conf.write_text(conf_text if conf_text is not None else rendered_conf(), encoding="utf-8")
     keywords.setdefault("runner", Runner())
     keywords.setdefault("running", lambda: True)
     keywords.setdefault("state_path", tmp_path / "state.json")
@@ -510,7 +524,7 @@ def test_a_state_that_matches_skips_the_expensive_pass(tmp_path: Path) -> None:
     one = row()
     # No filestore at all: if the pass were taken, reading would fail the
     # database, so reaching "up to date" proves nothing was read.
-    previous = scan.ScanState(analysis_version="0" * 64, bundles={one.key: one.checksum})
+    previous = matching_state(one)
     runner = Runner()
     outcome, include = apply_round(
         tmp_path, result(ok(DB, one)), filestore=str(tmp_path / "absent"),
@@ -524,11 +538,127 @@ def test_a_state_that_matches_skips_the_expensive_pass(tmp_path: Path) -> None:
 def test_force_takes_the_pass_even_when_the_state_matches(tmp_path: Path) -> None:
     one = row()
     store = filestore(tmp_path, (one, FORUM_BUNDLE))
-    previous = scan.ScanState(analysis_version="0" * 64, bundles={one.key: one.checksum})
+    previous = matching_state(one)
     outcome, _ = apply_round(
         tmp_path, result(ok(DB, one)), filestore=store, previous_state=previous, force=True,
     )
     assert outcome.status == apply.STATUS_APPLIED
+
+
+# --- the generation inputs (issue #135) ---------------------------------------
+
+# Shipped rewrites as the rendered template writes them.
+WEB_SHIPPED = "            sub_filter '\"/web/' '\"$safe_ingress_path/web/';\n"
+MAIL_SHIPPED = "            sub_filter '\"/mail/' '\"$safe_ingress_path/mail/';\n"
+# One more Shipped rewrite, the one FORUM_BUNDLE earns.
+FORUM_SHIPPED = "            sub_filter '\"/forum/' '\"$safe_ingress_path/forum/';\n"
+
+
+def conf_shipping_forum() -> str:
+    config = rendered_conf()
+    assert config.count(WEB_SHIPPED) == 1
+    return config.replace(WEB_SHIPPED, WEB_SHIPPED + FORUM_SHIPPED)
+
+
+def forum_include() -> str:
+    """The include file the template as it is earns for FORUM_BUNDLE."""
+    return apply.build_include(
+        apply.scan_bundles({row().key: FORUM_BUNDLE}),
+        apply.shipped_rules(rendered_conf()), apply.load_exceptions(),
+    )
+
+
+def test_a_change_of_the_shipped_rewrites_makes_a_pass_due(tmp_path: Path) -> None:
+    """A Release that ships a rule moves no bundle, and must still be applied."""
+    one = row()
+    store = filestore(tmp_path, (one, FORUM_BUNDLE))
+    live = forum_include()
+    assert "/forum/" in apply.include_prefixes(live)
+    outcome, include = apply_round(
+        tmp_path, result(ok(DB, one)), include_text=live, filestore=store,
+        conf_text=conf_shipping_forum(), previous_state=matching_state(one),
+    )
+    assert outcome.status == apply.STATUS_APPLIED
+    assert "Shipped rewrites changed" in outcome.verdict.reason
+    assert "/forum/" not in apply.include_prefixes(include.read_text(encoding="utf-8")), (
+        "the Shipped rule covers the prefix now, so the Generated one is dropped"
+    )
+
+
+def test_a_change_of_the_exception_list_makes_a_pass_due(tmp_path: Path) -> None:
+    one = row()
+    store = filestore(tmp_path, (one, FORUM_BUNDLE))
+    exceptions = tmp_path / "exceptions.yaml"
+    exceptions.write_text(
+        Path(apply.EXCEPTIONS_PATH).read_text(encoding="utf-8")
+        + "- prefix: /forum/\n  level: FAIL\n  reason: approved for this test\n",
+        encoding="utf-8",
+    )
+    outcome, include = apply_round(
+        tmp_path, result(ok(DB, one)), include_text=forum_include(), filestore=store,
+        exceptions_path=exceptions, previous_state=matching_state(one),
+    )
+    assert outcome.status == apply.STATUS_APPLIED
+    assert "exception list changed" in outcome.verdict.reason
+    assert "/forum/" not in apply.include_prefixes(include.read_text(encoding="utf-8"))
+
+
+def test_a_state_without_generation_inputs_makes_a_pass_due_once(tmp_path: Path) -> None:
+    """A state file written by 0.4.3 or earlier: loaded, then replaced."""
+    one = row()
+    store = filestore(tmp_path, (one, FORUM_BUNDLE))
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps({
+        "analysis_version": "0" * 64, "databases": {DB: {one.url: one.checksum}},
+    }), encoding="utf-8")
+    include = tmp_path / "nginx-generated-rewrites.conf"
+    include.write_text(forum_include(), encoding="utf-8")
+    loaded = scan.load_state(state_path, include)
+    assert loaded.state is not None, loaded.reason
+
+    outcome, _ = apply_round(
+        tmp_path, result(ok(DB, one)), include_text=forum_include(), filestore=store,
+        previous_state=loaded.state,
+    )
+    assert outcome.status == apply.STATUS_UNCHANGED
+    assert outcome.state_saved
+
+
+def test_the_saved_state_carries_the_inputs_and_the_next_round_skips(tmp_path: Path) -> None:
+    one = row()
+    store = filestore(tmp_path, (one, FORUM_BUNDLE))
+    conf = conf_shipping_forum()
+    first, include = apply_round(
+        tmp_path, result(ok(DB, one)), filestore=store, conf_text=conf,
+    )
+    assert first.state_saved
+    saved = scan.load_state(tmp_path / "state.json", include).state
+    assert saved.inputs == inputs_of(conf)
+
+    runner = Runner()
+    second, _ = apply_round(
+        tmp_path, result(ok(DB, one)), include_text=include.read_text(encoding="utf-8"),
+        filestore=str(tmp_path / "absent"), conf_text=conf, previous_state=saved,
+        runner=runner,
+    )
+    assert second.status == apply.STATUS_UP_TO_DATE
+    assert runner.calls == []
+
+
+def test_the_fingerprint_ignores_the_order_and_layout_of_the_shipped_rules() -> None:
+    config = rendered_conf()
+    assert config.count(WEB_SHIPPED) == 1 and config.count(MAIL_SHIPPED) == 1
+    reordered = (
+        config.replace(WEB_SHIPPED, "@@WEB@@")
+        .replace(MAIL_SHIPPED, WEB_SHIPPED)
+        .replace("@@WEB@@", MAIL_SHIPPED)
+    )
+    assert reordered != config
+    spaced = config.replace(WEB_SHIPPED, "\n        sub_filter   '\"/web/'    '\"$safe_ingress_path/web/';\n\n")
+    assert apply.shipped_rules(reordered) == apply.shipped_rules(config)
+    assert inputs_of(reordered) == inputs_of(config)
+    assert inputs_of(spaced) == inputs_of(config)
+    assert inputs_of(conf_shipping_forum()) != inputs_of(config)
 
 
 # --- what the image and the option ship ---------------------------------------

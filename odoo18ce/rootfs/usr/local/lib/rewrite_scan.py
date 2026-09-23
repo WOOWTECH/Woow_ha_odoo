@@ -330,20 +330,57 @@ def analysis_version(paths: Iterable[Path | str] = ANALYSIS_MODULES) -> str:
     return digest.hexdigest()
 
 
+# --- the generation inputs ----------------------------------------------------
+
+@dataclass(frozen=True)
+class GenerationInputs:
+    """What the include file was built from, besides the bundles and the analysis.
+
+    The Shipped rewrites and the exception list both decide which prefixes
+    earn a Generated rewrite, and a Release can change either without moving
+    a bundle or an analysis module (issue #135). Each is a sha256 kept in
+    its own field, so the verdict can name which one moved. They are worked
+    out by `rewrite_apply.generation_inputs`, where the rules and the list
+    are read; this module only keeps and compares them.
+    """
+
+    shipped_rules: str
+    exceptions: str
+
+    def to_dict(self) -> dict:
+        return {"shipped_rules": self.shipped_rules, "exceptions": self.exceptions}
+
+    @classmethod
+    def from_dict(cls, data: object) -> "GenerationInputs":
+        if not isinstance(data, dict):
+            raise ValueError("generation_inputs must be a JSON object")
+        shipped, exceptions = data.get("shipped_rules"), data.get("exceptions")
+        if not isinstance(shipped, str) or not isinstance(exceptions, str):
+            raise ValueError("generation_inputs must carry shipped_rules and exceptions")
+        return cls(shipped_rules=shipped, exceptions=exceptions)
+
+
 # --- the state ----------------------------------------------------------------
 
 @dataclass(frozen=True)
 class ScanState:
-    """The previous pass: what was served, and what analysed it."""
+    """The previous pass: what was served, what analysed it, and what else
+    the include file was built from."""
 
     analysis_version: str
     bundles: Mapping[tuple[str, str], str]      # (database, url) -> checksum
+    # None for a state written before issue #135, which cannot say what the
+    # include file was built from, so the next round takes the pass.
+    inputs: GenerationInputs | None = None
 
     def to_dict(self) -> dict:
         databases: dict[str, dict[str, str]] = {}
         for (database, url), checksum in self.bundles.items():
             databases.setdefault(database, {})[url] = checksum
-        return {"analysis_version": self.analysis_version, "databases": databases}
+        data = {"analysis_version": self.analysis_version, "databases": databases}
+        if self.inputs is not None:
+            data["generation_inputs"] = self.inputs.to_dict()
+        return data
 
     @classmethod
     def from_dict(cls, data: object) -> "ScanState":
@@ -362,14 +399,24 @@ class ScanState:
                 if not isinstance(checksum, str):
                     raise ValueError(f"{database} {url}: the checksum must be a string")
                 bundles[(database, url)] = checksum
-        return cls(analysis_version=version, bundles=bundles)
+        inputs = data.get("generation_inputs")
+        return cls(
+            analysis_version=version, bundles=bundles,
+            inputs=GenerationInputs.from_dict(inputs) if inputs is not None else None,
+        )
 
 
-def state_from_rows(rows: Iterable[BundleRow], version: str | None = None) -> ScanState:
+def state_from_rows(
+    rows: Iterable[BundleRow],
+    version: str | None = None,
+    *,
+    inputs: GenerationInputs | None = None,
+) -> ScanState:
     """The state to keep once a pass over these rows has been applied."""
     return ScanState(
         analysis_version=version if version is not None else analysis_version(),
         bundles={row.key: row.checksum for row in rows},
+        inputs=inputs,
     )
 
 
@@ -438,13 +485,20 @@ def scan_state(
     previous_state: ScanState | None,
     *,
     version: str | None = None,
+    inputs: GenerationInputs | None = None,
 ) -> ScanVerdict:
     """Is a Rewrite scan due?
 
     Due on a new bundle attachment, a changed checksum, a removed
-    attachment, an absent previous state, or a state written by a different
-    analysis. Not otherwise -- a pass costs about four seconds of CPU per
-    round (ADR 0007) and the loop runs every five minutes.
+    attachment, an absent previous state, a state written by a different
+    analysis, or -- when `inputs` is given -- a change of the Shipped
+    rewrites or the exception list, or a state that records neither. Not
+    otherwise -- a pass costs about four seconds of CPU per round (ADR 0007)
+    and the loop runs every five minutes.
+
+    `inputs` is None only for a caller that does not read the rendered
+    gateway, which is the read-only `odoo-rewrite-scan`; the generation
+    inputs are then not compared.
 
     A regenerated bundle usually arrives as a removal plus an addition
     rather than a same-URL checksum change, because the `unique` segment is
@@ -468,9 +522,20 @@ def scan_state(
         key for key, checksum in current.items()
         if key in previous and previous[key] != checksum
     ))
-    if not (added or changed or removed):
+    reasons: list[str] = []
+    if inputs is not None:
+        previous_inputs = previous_state.inputs
+        if previous_inputs is None:
+            reasons.append("the previous state records no generation inputs")
+        else:
+            if previous_inputs.shipped_rules != inputs.shipped_rules:
+                reasons.append("the Shipped rewrites changed")
+            if previous_inputs.exceptions != inputs.exceptions:
+                reasons.append("the exception list changed")
+    if added or changed or removed:
+        reasons.append(f"{len(added)} added, {len(changed)} changed, {len(removed)} removed")
+    if not reasons:
         return ScanVerdict(False, f"no change across {len(current)} bundles")
-    reason = (
-        f"{len(added)} added, {len(changed)} changed, {len(removed)} removed"
+    return ScanVerdict(
+        True, "; ".join(reasons), added=added, changed=changed, removed=removed,
     )
-    return ScanVerdict(True, reason, added=added, changed=changed, removed=removed)

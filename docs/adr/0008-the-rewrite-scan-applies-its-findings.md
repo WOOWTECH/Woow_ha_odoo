@@ -141,3 +141,18 @@ a local build of `main` at 6a8b7e0), running #81's runbook:
   Release shipping them), the generated duplicates stayed in the include
   file until a forced round removed them, silently, as removals are. That
   is #135.
+
+## Postscript (#135)
+
+A change of the Shipped rewrites or of the exception list now makes a pass
+due, as a bundle change does. The state records a fingerprint of each
+(`generation_inputs`: `shipped_rules`, `exceptions`), worked out every round
+from the rendered `nginx.conf` and the shipped exception list before the
+verdict, and the verdict names which one moved. The fingerprint is taken
+from `shipped_rules()` alone and never from the include file, for the reason
+given above: a Generated rewrite read back as a Shipped one would make the
+rules flap. A state written before this has no fingerprint; it still loads,
+and the first round after the upgrade takes the pass once and records it.
+One consequence: a rendered `nginx.conf` or an exception list that cannot
+be read now fails every round as a failed generation, including rounds
+that would have skipped. Before, only a round that took a pass noticed.

@@ -217,6 +217,30 @@ def load_exceptions(path: str | os.PathLike = EXCEPTIONS_PATH) -> set:
     return gate.load_exceptions(Path(path).read_text(encoding="utf-8"))
 
 
+def generation_inputs(rules: Mapping, exceptions: Iterable) -> "scan.GenerationInputs":
+    """The fingerprint of the Shipped rewrites and the exception list (issue #135).
+
+    What the state compares so that a Release changing either one makes a
+    pass due, although no bundle and no analysis module moved. Each is
+    hashed in a sorted form, so reordering the `sub_filter` lines or
+    re-indenting the template changes nothing that `shipped_rules` does not
+    see.
+
+    `rules` is `shipped_rules`' answer and never the Generated rewrites:
+    fingerprinting the include file would make every application a change
+    of the inputs, and the rules would flap (ADR 0008).
+    """
+    def digest(value) -> str:
+        return hashlib.sha256(json.dumps(value).encode("utf-8")).hexdigest()
+
+    return scan.GenerationInputs(
+        shipped_rules=digest(sorted(
+            [prefix, sorted(quotes)] for prefix, quotes in rules.items()
+        )),
+        exceptions=digest(sorted([prefix, level] for prefix, level in exceptions)),
+    )
+
+
 def scan_bundles(texts: Mapping[tuple[str, str], str]) -> dict:
     """The findings of every bundle, one regex pass each.
 
@@ -624,6 +648,11 @@ def apply_round(
     verdict and not before: reading and classifying them is the four seconds
     a round costs (ADR 0007), and the whole point of the state is not to pay
     it when nothing moved.
+
+    The rendered gateway and the exception list are read before the
+    verdict, though: they are what the include file is built from besides
+    the bundles, and a Release that changes either must make a pass due
+    (issue #135). Reading them is cheap; the bundles are what costs.
     """
     if not result.complete:
         return ApplyResult(
@@ -631,7 +660,12 @@ def apply_round(
             prefixes=live_prefixes(include_path),
         )
 
-    verdict = scan.scan_state(result.rows, previous_state, version=version)
+    nginx_conf = Path(nginx_conf_path).read_text(encoding="utf-8")
+    rules = shipped_rules(nginx_conf)
+    exceptions = load_exceptions(exceptions_path)
+    inputs = generation_inputs(rules, exceptions)
+
+    verdict = scan.scan_state(result.rows, previous_state, version=version, inputs=inputs)
     # The skip is an optimisation for a host whose rules are already in
     # place, and it is taken only while application is on. With the option
     # off nothing is ever applied, so a skip there would silence exactly the
@@ -650,9 +684,6 @@ def apply_round(
             prefixes=live_prefixes(include_path),
         )
 
-    nginx_conf = Path(nginx_conf_path).read_text(encoding="utf-8")
-    rules = shipped_rules(nginx_conf)
-    exceptions = load_exceptions(exceptions_path)
     # The one pass over the bytes, and the four seconds ADR 0007 prices.
     # Both the include file and the round's summary are built from it.
     scanned = scan_bundles(read.texts)
@@ -682,7 +713,9 @@ def apply_round(
         # true. A state written from a refused or frozen round would make
         # the next one skip the pass that would have fixed it.
         try:
-            scan.save_state(state_path, scan.state_from_rows(read.result.rows, version))
+            scan.save_state(
+                state_path, scan.state_from_rows(read.result.rows, version, inputs=inputs),
+            )
         except Exception as error:
             # The include file is the new one and nginx has it (or loads it
             # at its next start); only the memory of this round is missing,

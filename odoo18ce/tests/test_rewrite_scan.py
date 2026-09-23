@@ -384,6 +384,70 @@ def test_a_different_analysis_version_forces_a_rescan() -> None:
     assert verdict.added == verdict.changed == verdict.removed == ()
 
 
+# The generation inputs outside the analysis modules (issue #135): what the
+# Shipped rewrites and the exception list were when the include was built.
+INPUTS = scan.GenerationInputs(shipped_rules="a" * 64, exceptions="b" * 64)
+
+
+def test_a_change_of_the_shipped_rewrites_forces_a_rescan() -> None:
+    previous = scan.state_from_rows([row()], VERSION, inputs=INPUTS)
+    moved = scan.GenerationInputs(shipped_rules="c" * 64, exceptions=INPUTS.exceptions)
+    verdict = scan.scan_state([row()], previous, version=VERSION, inputs=moved)
+    assert verdict.rescan
+    assert "Shipped rewrites changed" in verdict.reason
+    assert "exception list" not in verdict.reason
+    assert verdict.added == verdict.changed == verdict.removed == ()
+
+
+def test_a_change_of_the_exception_list_forces_a_rescan() -> None:
+    previous = scan.state_from_rows([row()], VERSION, inputs=INPUTS)
+    moved = scan.GenerationInputs(shipped_rules=INPUTS.shipped_rules, exceptions="c" * 64)
+    verdict = scan.scan_state([row()], previous, version=VERSION, inputs=moved)
+    assert verdict.rescan
+    assert "exception list changed" in verdict.reason
+    assert "Shipped" not in verdict.reason
+
+
+def test_unchanged_generation_inputs_are_not_a_rescan() -> None:
+    previous = scan.state_from_rows([row()], VERSION, inputs=INPUTS)
+    verdict = scan.scan_state([row()], previous, version=VERSION, inputs=INPUTS)
+    assert not verdict.rescan
+
+
+def test_a_state_that_records_no_generation_inputs_is_a_rescan_once() -> None:
+    """A state written before #135 cannot say what the include was built from."""
+    previous = scan.state_from_rows([row()], VERSION)
+    verdict = scan.scan_state([row()], previous, version=VERSION, inputs=INPUTS)
+    assert verdict.rescan
+    assert "generation inputs" in verdict.reason
+
+
+def test_the_generation_inputs_round_trip_through_the_state_file(tmp_path) -> None:
+    path, include = tmp_path / "state.json", tmp_path / "include.conf"
+    include.write_text("", encoding="utf-8")
+    state = scan.state_from_rows([row()], VERSION, inputs=INPUTS)
+    scan.save_state(path, state)
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    assert stored["generation_inputs"] == {
+        "shipped_rules": INPUTS.shipped_rules, "exceptions": INPUTS.exceptions,
+    }
+    loaded = scan.load_state(path, include)
+    assert loaded.state == state
+
+
+def test_a_state_file_written_before_the_generation_inputs_still_loads(tmp_path) -> None:
+    path, include = tmp_path / "state.json", tmp_path / "include.conf"
+    include.write_text("", encoding="utf-8")
+    path.write_text(json.dumps({
+        "analysis_version": VERSION, "databases": {DB: {URL_A: SUM_A}},
+    }), encoding="utf-8")
+    loaded = scan.load_state(path, include)
+    assert loaded.state is not None, loaded.reason
+    assert loaded.state.inputs is None
+    # Not a match: the next round takes the pass and records the inputs.
+    assert scan.scan_state([row()], loaded.state, version=VERSION, inputs=INPUTS).rescan
+
+
 # --- the analysis version -----------------------------------------------------
 
 def test_the_analysis_version_is_the_hash_of_both_analysis_modules(tmp_path) -> None:
@@ -464,6 +528,9 @@ def test_an_unreadable_state_is_treated_as_absent(tmp_path) -> None:
     ('{"databases": {}}', "cannot be read"),
     ('{"analysis_version": 7, "databases": {}}', "cannot be read"),
     ('{"analysis_version": "x", "databases": {"db": ["url"]}}', "cannot be read"),
+    ('{"analysis_version": "x", "databases": {}, "generation_inputs": "y"}', "cannot be read"),
+    ('{"analysis_version": "x", "databases": {}, "generation_inputs": {"shipped_rules": "y"}}',
+     "cannot be read"),
 ])
 def test_an_unparseable_state_is_treated_as_absent(tmp_path, text, why) -> None:
     path, include = tmp_path / "state.json", tmp_path / "include.conf"
