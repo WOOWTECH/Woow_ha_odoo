@@ -4,7 +4,7 @@
 
 ### Changed
 - The add-on's config folder is now mapped as `app_config:rw`, the name
-  Supervisor 2026.07 gave it, instead of the legacy `addon_config:rw`.
+  Supervisor 2026.07.1 gave it, instead of the legacy `addon_config:rw`.
   Nothing moves: Supervisor binds the same host folder to `/config`
   either way, and a local build no longer logs the legacy map-type
   warning. **The add-on now requires Supervisor 2026.07.1 or later**;

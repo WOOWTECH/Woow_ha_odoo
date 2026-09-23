@@ -165,7 +165,7 @@ ha addons update local_odoo18ce    # CLI 會逾時，見陷阱 d
 `docker exec`、`docker logs` 用這個名字。
 
 **不該再出現的警告：** `addon_config` 的 legacy map 型別警告不會再出現：#126 之後
-`config.yaml` 的 `map` 用的是 `app_config:rw`（需要 Supervisor 2026.07.1 以上）。
+`config.yaml` 的 `map` 用的是 `app_config:rw`。
 `build.yaml` 已棄用的警告也不會再出現：#124 之後 base image 的
 pin 在 `Dockerfile` 的 `ARG BASE_IMAGE_TAG`，Supervisor 只傳 `BUILD_ARCH`。如果
 你的 Supervisor 仍印出 `build.yaml` 警告，代表 `/addons/<dir>` 裡還留著舊檔，刪掉它。
