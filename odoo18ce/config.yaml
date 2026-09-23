@@ -40,7 +40,7 @@ ports_description:
 
 map:
   - share:rw
-  - addon_config:rw
+  - app_config:rw
 
 backup: cold
 backup_exclude:
