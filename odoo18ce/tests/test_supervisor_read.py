@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import require_tool
+from conftest import require_bash
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "rootfs/usr/local/lib/supervisor-read.sh"
@@ -26,11 +26,17 @@ HELPER = ROOT / "rootfs/usr/local/lib/supervisor-read.sh"
 STUBS = r"""
 bashio::log.debug() { :; }
 bashio::log.trace() { :; }
+bashio::log.warning() { printf 'WARN %s\n' "$1" >&2; }
 bashio::cache.flush() { printf 'FLUSH %s\n' "$1" >&2; }
-# No real waiting: `sleep` advances bash's SECONDS instead, so a 30-second
-# budget is a matter of counting and the test does not depend on the host.
+# No real waiting, and no real clock: `sleep` advances a counter that the
+# helper's clock reads, so a 30-second budget is a matter of counting and
+# the test does not depend on how fast this host forks a subshell.
 SLEPT="$(mktemp)"; printf '0' > "${SLEPT}"
-sleep() { SECONDS=$((SECONDS + $1)); printf '%s' $(( $(cat "${SLEPT}") + $1 )) > "${SLEPT}"; }
+sleep() { printf '%s' $(( $(cat "${SLEPT}") + $1 )) > "${SLEPT}"; }
+woow::supervisor.now() { cat "${SLEPT}"; }
+# A read the Supervisor API refuses: bashio logs the refusal and returns
+# non-zero with nothing on stdout.
+refused() { printf 'Failed to get addon info from Supervisor API\n' >&2; return 1; }
 # A read that answers after N empty attempts. The command substitution the
 # helper wraps the read in is a subshell, so the count lives in a file.
 COUNTER="$(mktemp)"; printf '0' > "${COUNTER}"
@@ -51,7 +57,7 @@ placeholder_until() {
 
 
 def run_helper(script: str) -> subprocess.CompletedProcess:
-    bash = require_tool("bash")
+    bash = require_bash()
     posix_helper = HELPER.as_posix()
     return subprocess.run(
         [bash, "-c", f'source "{posix_helper}"\n{STUBS}\n{script}'],
@@ -94,23 +100,35 @@ def test_an_exhausted_budget_prints_nothing_fails_and_leaves_no_empty_answer_cac
     assert stdout.startswith("rc=1 "), result.stderr
     fields = dict(part.split("=") for part in stdout.split())
     attempts, waited = int(fields["attempts"]), int(fields["slept"])
-    assert 16 <= attempts <= 17, "bounded by the clock: one read every two seconds for thirty"
-    assert 30 <= waited <= 32, "never shorter than the budget, at most one poll longer"
+    assert attempts == 17, "one read every two seconds until the clock is past thirty"
+    assert waited == 32, "never shorter than the budget, at most one poll longer"
     # The last empty answer is flushed too: nothing this helper gave up on
     # is left in bashio's cache for the next reader in this container.
     assert flushed(result) == ["network.interface.default.info.ipv4.address"] * attempts
+    assert "WARN" not in result.stderr, "an answer that never came is not an error to log"
 
 
-def test_the_supervisor_placeholder_address_counts_as_not_yet() -> None:
+def test_a_read_the_supervisor_refuses_is_named_when_the_budget_runs_out() -> None:
+    result = run_helper(
+        'woow::supervisor.read 30 2 "addons.self.ip_address addons.self.info" '
+        'refused; echo "rc=$?"'
+    )
+    assert result.stdout.strip() == "rc=1"
+    warnings = [l for l in result.stderr.splitlines() if l.startswith("WARN ")]
+    assert len(warnings) == 1, result.stderr
+    assert "refused" in warnings[0] and "Failed to get addon info from Supervisor API" in warnings[0]
+
+
+@pytest.mark.parametrize("placeholder", ["0.0.0.0", "null"])
+def test_the_supervisor_placeholder_address_counts_as_not_yet(placeholder) -> None:
     # supervisor/docker/app.py answers `0.0.0.0` for a container whose
     # network it has not loaded; a jq `// empty` on a missing key is `null`.
-    for placeholder in ("0.0.0.0", "null"):
-        result = run_helper(
-            'woow::supervisor.read 30 2 "addons.self.ip_address addons.self.info" '
-            f'placeholder_until 3 {placeholder} 172.30.33.4; echo " rc=$? attempts=$(cat "${{COUNTER}}")"'
-        )
-        assert result.stdout == "172.30.33.4 rc=0 attempts=3\n", (placeholder, result.stderr)
-        assert flushed(result) == ["addons.self.ip_address", "addons.self.info"] * 2
+    result = run_helper(
+        'woow::supervisor.read 30 2 "addons.self.ip_address addons.self.info" '
+        f'placeholder_until 3 {placeholder} 172.30.33.4; echo " rc=$? attempts=$(cat "${{COUNTER}}")"'
+    )
+    assert result.stdout == "172.30.33.4 rc=0 attempts=3\n", result.stderr
+    assert flushed(result) == ["addons.self.ip_address", "addons.self.info"] * 2
 
 
 def test_the_helper_is_readable_in_the_image() -> None:

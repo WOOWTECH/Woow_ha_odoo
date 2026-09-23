@@ -282,7 +282,9 @@ def test_the_service_sources_the_check_from_the_supervisor_address() -> None:
     run_script = code_of(SERVICE_DIR / "run")
     assert 'ADDRESS="$(woow::supervisor.read "${SUPERVISOR_BUDGET}" "${SUPERVISOR_POLL}"' in run_script
     assert '"addons.self.ip_address addons.self.info" bashio::addon.ip_address' in run_script
-    assert "bashio::addon.ip_address" in run_script
+    # After the nginx wait, not before it: the Supervisor gets the whole Odoo
+    # boot to learn the address before any of the budget is spent.
+    assert run_script.index("woow::supervisor.read") > run_script.index("http://127.0.0.1:8069/")
     call = run_script.split("self_check.py", 1)[1].split(")", 1)[0]
     assert '--address "${ADDRESS}"' in call
     assert "127.0.0.1" not in call
@@ -322,7 +324,7 @@ import os
 import subprocess
 import tempfile
 
-from conftest import require_tool
+from conftest import require_bash
 
 SERVICE_STUBS = r"""
 LOG="$1"; ARGS="$2"; ANSWER_AFTER="$3"; VERDICT="$4"; COUNTER="$5"
@@ -341,13 +343,14 @@ bashio::addon.ip_address() {
 curl() { return 0; }
 python3() { printf '%s\n' "$@" > "${ARGS}"; printf 'verdict line'; return "${VERDICT}"; }
 sleep() { SECONDS=$((SECONDS + ${1%.*})); }
+woow::supervisor.now() { printf '%s' "${SECONDS}"; }
 """
 
 
 def drive_service(answer_after: int, verdict: int = 0,
                   lib_dir: Path = LIB_DIR) -> tuple[int, list[str], list[str], int]:
     """Run services.d/self-check/run; return exit code, log lines, python3 argv, reads."""
-    bash = require_tool("bash")
+    bash = require_bash()
     with tempfile.TemporaryDirectory() as tmp:
         fake_bin = Path(tmp) / "bin"
         fake_bin.mkdir()
@@ -415,5 +418,5 @@ def test_a_missing_helper_stops_the_service_with_the_cause_and_no_check() -> Non
 def test_the_budget_is_one_number_in_the_service() -> None:
     run_script = code_of(SERVICE_DIR / "run")
     assert "SUPERVISOR_BUDGET=30" in run_script and "SUPERVISOR_POLL=2" in run_script
-    assert "after waiting ${SUPERVISOR_BUDGET} seconds" in run_script
+    assert "after waiting at least ${SUPERVISOR_BUDGET} seconds" in run_script
     assert "30 seconds" not in run_script, "the message and the call share the number"

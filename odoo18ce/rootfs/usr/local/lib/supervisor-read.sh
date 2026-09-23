@@ -17,6 +17,9 @@
 # loaded yet (supervisor/docker/app.py, NO_ADDDRESS). The value goes to
 # stdout; an exhausted budget is exit 1 with nothing printed, and the
 # caller decides what an empty value means and says how long was waited.
+# When the budget runs out and the last attempt wrote an error, that error
+# is logged, so "the Supervisor said nothing" and "the Supervisor could not
+# be asked" (no token, no socket, an API error) read differently.
 #
 # What this does not bound is one read that hangs: bashio's curl has no
 # --max-time, so a Supervisor that accepts the connection and never
@@ -40,13 +43,22 @@ woow::supervisor.is_value() {
     esac
 }
 
+# The clock the budget is measured on. bash's SECONDS counts whole seconds;
+# a test replaces this function with a counter its `sleep` stub advances.
+woow::supervisor.now() {
+    printf '%s' "${SECONDS}"
+}
+
 woow::supervisor.read() {
     local budget=$1 poll=$2 keys=$3
     shift 3
-    local started="${SECONDS}" value='' key
+    local started value='' key error
+    started="$(woow::supervisor.now)"
+    error="$(mktemp)"
     while :; do
-        value="$("$@" 2>/dev/null || true)"
+        value="$("$@" 2>"${error}" || true)"
         if woow::supervisor.is_value "${value}"; then
+            rm -f "${error}"
             printf '%s' "${value}"
             return 0
         fi
@@ -55,13 +67,16 @@ woow::supervisor.read() {
         for key in ${keys}; do
             ( bashio::cache.flush "${key}" ) || true
         done
-        # SECONDS counts whole seconds, so "past the budget" rather than "at
-        # it": the wait is then never shorter than asked, at most a poll
-        # longer.
-        if [ $((SECONDS - started)) -gt "${budget}" ]; then
+        # Whole seconds, so "past the budget" rather than "at it": the wait
+        # is then never shorter than asked, at most a poll longer.
+        if [ $(( $(woow::supervisor.now) - started )) -gt "${budget}" ]; then
             break
         fi
         sleep "${poll}"
     done
+    if [ -s "${error}" ]; then
+        bashio::log.warning "Supervisor read $1 failed on its last attempt: $(tail -n 1 "${error}")"
+    fi
+    rm -f "${error}"
     return 1
 }

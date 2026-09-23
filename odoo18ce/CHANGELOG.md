@@ -90,14 +90,16 @@
   a single time at boot, and bashio caches an empty answer for the life of
   the container, so one late Supervisor reply became a failed check, a
   notification and a stopped add-on. The read is now retried for up to
-  30 seconds, two seconds apart, with bashio's cache flushed in between
-  (`/usr/local/lib/supervisor-read.sh`, shared with the LAN-address reads
-  of issue #108). The Supervisor's placeholder `0.0.0.0`, which it answers
+  30 seconds, two seconds apart, with bashio's cache flushed in between,
+  and only once nginx is up, so the Supervisor has the whole Odoo boot to
+  learn the address first (`/usr/local/lib/supervisor-read.sh`, written
+  for the LAN-address reads of issue #108 to use next). The Supervisor's
+  placeholder `0.0.0.0`, which it answers
   before it has seen the container on the network, counts as no answer
   too, and the check refuses it and any loopback address the way it
   refuses an empty one. An address that never comes still fails the check,
-  the log says the add-on waited, and the empty answer is not left in the
-  cache. On pass the service logs one line; the "waiting for nginx" line
+  the log says the add-on waited and, when the Supervisor refused the
+  request, what it said; the empty answer is not left in the cache. On pass the service logs one line; the "waiting for nginx" line
   moved to debug. Issue #119.
 - A database created through the database manager on a host with no
   Canonical URL no longer has Odoo's install default,
