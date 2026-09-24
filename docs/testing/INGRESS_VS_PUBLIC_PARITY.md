@@ -509,7 +509,10 @@ docker exec -u postgres app_1b7b4ce7_odoo18ce \
 # 瀏覽器層（兩個基底各跑一次）
 ODOO_BASE_URL=<PUBLIC_BASE>  ... python3 odoo18ce/tests/e2e_adversarial.py
 ODOO_BASE_URL=<INGRESS_BASE> ... python3 odoo18ce/tests/e2e_adversarial.py
-python3 odoo18ce/tests/e2e_menu_action_crawler.py
+# 選單／動作爬蟲：每個 surface 各跑一次，再比對（憑證只從環境變數讀，見腳本開頭）
+python3 odoo18ce/tests/e2e_menu_action_adapter.py crawl --surface public     --apps contacts,project --out public.jsonl
+python3 odoo18ce/tests/e2e_menu_action_adapter.py crawl --surface ha_ingress --apps contacts,project --out ingress.jsonl
+python3 odoo18ce/tests/e2e_menu_action_adapter.py diff public.jsonl ingress.jsonl --out diff.jsonl
 python3 odoo18ce/tests/e2e_settings_ingress.py
 ```
 
