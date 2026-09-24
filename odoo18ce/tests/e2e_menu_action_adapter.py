@@ -32,6 +32,7 @@ The pure parts are tested in the static tier by test_e2e_menu_action_adapter.py.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import ipaddress
 import json
@@ -267,23 +268,29 @@ class Masker:
         return sorted(pairs, key=lambda pair: len(pair[0]), reverse=True)
 
     def text(self, value: str) -> str:
-        for old, new in self._replacements():
-            value = value.replace(old, new)
-        return sanitize_diagnostic(value)
+        return self.value(value)
 
     def value(self, value: Any) -> Any:
-        def replace(item: Any) -> Any:
+        """Mask every string in `value`; masking a masked value changes nothing."""
+        replacements = self._replacements()
+
+        def walk(item: Any, on_string) -> Any:
             if isinstance(item, str):
-                for old, new in self._replacements():
-                    item = item.replace(old, new)
-                return item
+                return on_string(item)
             if isinstance(item, Mapping):
-                return {key: replace(child) for key, child in item.items()}
+                return {key: walk(child, on_string) for key, child in item.items()}
             if isinstance(item, (list, tuple)):
-                return type(item)(replace(child) for child in item)
+                return type(item)(walk(child, on_string) for child in item)
             return item
 
-        return sanitize_diagnostic(replace(value))
+        def replace(text: str) -> str:
+            for old, new in replacements:
+                text = text.replace(old, new)
+            return text
+
+        masked = sanitize_diagnostic(walk(value, replace))
+        # sanitize_diagnostic reads "?<redacted>" as a new query and redacts it again.
+        return walk(masked, lambda text: re.sub(r"(?:<redacted>)+", "<redacted>", text))
 
 
 # --- Signals --------------------------------------------------------------
@@ -456,12 +463,24 @@ def _index(records: Iterable[Mapping[str, Any]], key: str) -> dict[str, Mapping[
     return indexed
 
 
+_BASE_CODES = ("<PUBLIC_BASE>", "<INGRESS_BASE>", "<INGRESS_PREFIX>")
+
+
 def _logical_literals(block: Mapping[str, Any]) -> set[str]:
-    """Masked literals with the Ingress prefix taken off, so both surfaces compare."""
-    return {
-        literal[len("<INGRESS_PREFIX>"):] if literal.startswith("<INGRESS_PREFIX>/") else literal
-        for literal in block.get("url_literals") or ()
-    }
+    """Masked literals as paths, so both surfaces compare.
+
+    Odoo writes some URLs absolute on the Public origin and root-relative under
+    Ingress; both name the same path. A literal on the wrong base is a U-C5
+    violation and is reported as one, not here.
+    """
+    literals = set()
+    for literal in block.get("url_literals") or ():
+        for code in _BASE_CODES:
+            if literal.startswith(code + "/"):
+                literal = literal[len(code):]
+                break
+        literals.add(literal)
+    return literals
 
 
 def _literal_differences(public: Mapping[str, Any], ingress: Mapping[str, Any]) -> list[str]:
@@ -549,6 +568,21 @@ def verdict_lines(merged: Iterable[Mapping[str, Any]]) -> list[str]:
 # --- Runtime (Live tier) --------------------------------------------------
 
 
+def parse_env_file(lines: Iterable[str], environ: dict[str, str]) -> None:
+    """Fill `environ` from `NAME=value` lines; a name already set wins."""
+    for line in lines:
+        line = line.strip()
+        if line.startswith("export "):
+            line = line[len("export "):]
+        name, sep, value = line.partition("=")
+        name, value = name.strip(), value.strip()
+        if not sep or line.startswith("#") or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        environ.setdefault(name, value)
+
+
 def _require_env(name: str) -> str:
     value = os.environ.get(name, "")
     if not value:
@@ -571,7 +605,12 @@ class IngressSession:
             ssl_context = ssl.create_default_context()
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE
-        self._socket = connect(websocket_url(ha_base), ssl=ssl_context, open_timeout=30)
+        # websockets wants connect() entered as a context manager; the stack
+        # keeps it open for the whole crawl and close() exits it.
+        self._stack = contextlib.ExitStack()
+        self._socket = self._stack.enter_context(
+            connect(websocket_url(ha_base), ssl=ssl_context, open_timeout=30)
+        )
         self._next_id = 1
         if json.loads(self._socket.recv(timeout=30)).get("type") != "auth_required":
             raise RuntimeError("HA websocket did not ask for authentication")
@@ -599,7 +638,7 @@ class IngressSession:
             self._validated = time.monotonic()
 
     def close(self) -> None:
-        self._socket.close()
+        self._stack.close()
 
 
 _URL_LITERALS_JS = r"""() => {
@@ -690,7 +729,9 @@ class SurfaceDriver:
             if page.locator('input[name="login"]').count():
                 page.locator('input[name="login"]').fill(self.login)
                 page.locator('input[name="password"]').fill(self.password)
-                page.locator('form button[type="submit"]').first.click()
+                # Enter submits the login form itself; with `website` installed the
+                # page header has a search form whose submit button comes first.
+                page.locator('input[name="password"]').press("Enter")
             page.locator(".o_main_navbar").wait_for(timeout=60000)
         finally:
             page.close()
@@ -817,6 +858,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     crawl_parser.add_argument("--surface", required=True, choices=[surface.value for surface in Surface])
     crawl_parser.add_argument("--apps", required=True, help="comma-separated module names, e.g. contacts,project")
     crawl_parser.add_argument("--out", required=True, help="JSONL evidence file to write")
+    crawl_parser.add_argument("--env-file", help="read unset credentials from this NAME=value file")
     diff_parser = commands.add_parser("diff", help="judge a Public origin run against an Ingress run")
     diff_parser.add_argument("public_run")
     diff_parser.add_argument("ingress_run")
@@ -824,6 +866,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "crawl":
+        if args.env_file:
+            with open(args.env_file, encoding="utf-8") as env_file:
+                parse_env_file(env_file, os.environ)
         apps = [app.strip() for app in args.apps.split(",") if app.strip()]
         with open(args.out, "w", encoding="utf-8") as out:
             return crawl(Surface(args.surface), apps, out)

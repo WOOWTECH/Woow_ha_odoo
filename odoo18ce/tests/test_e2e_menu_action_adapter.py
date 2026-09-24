@@ -19,6 +19,7 @@ from e2e_menu_action_adapter import (
     ingress_prefix_from_info,
     ingress_session_command,
     is_prefix_escape,
+    parse_env_file,
     plan_visits,
     read_records,
     scope_from_web_menus,
@@ -126,6 +127,16 @@ class ScopeAndPlanTests(unittest.TestCase):
         )
 
 
+class EnvFileTests(unittest.TestCase):
+    def test_env_file_fills_only_unset_names(self) -> None:
+        environ = {"KEEP": "from-shell"}
+        parse_env_file([
+            "# comment", "", "export A=1", "B = two words ", "C='quoted'", 'D="dq"',
+            "KEEP=from-file", "E=", "not a pair",
+        ], environ)
+        self.assertEqual(environ, {"KEEP": "from-shell", "A": "1", "B": "two words", "C": "quoted", "D": "dq", "E": ""})
+
+
 class WebsocketMessageTests(unittest.TestCase):
     def test_websocket_url_follows_the_scheme(self) -> None:
         self.assertEqual(websocket_url("http://ha.example:8123/"), "ws://ha.example:8123/api/websocket")
@@ -178,6 +189,13 @@ class MaskingTests(unittest.TestCase):
         self.assertEqual(masker.text("https://odoo.example/odoo/action-5"), "<PUBLIC_BASE>/odoo/action-5")
         self.assertEqual(masker.text(PREFIX + "/web/login"), "<INGRESS_PREFIX>/web/login")
         self.assertEqual(masker.text(HA + "/lovelace"), "<HA_BASE>/lovelace")
+
+    def test_masking_twice_changes_nothing(self) -> None:
+        masker = self.masker()
+        once = masker.text("https://odoo.example/web/image/x?unique=1")
+        self.assertEqual(once, "<PUBLIC_BASE>/web/image/x?<redacted>")
+        self.assertEqual(masker.text(once), once)
+        self.assertEqual(masker.value({"u": once}), {"u": once})
 
     def test_credentials_and_foreign_ingress_tokens_never_survive(self) -> None:
         masked = self.masker().value({
@@ -284,7 +302,7 @@ class EvidenceAndDiffTests(unittest.TestCase):
             "5xx": (observation(), observation(signals=dict(ZERO, http_4xx_5xx=1), http_5xx=1), "blocker", "ingress http_4xx_5xx=1"),
             "literals": (observation(url_literals=("<PUBLIC_BASE>/my/orders/4", "/odoo/contacts")),
                          observation(url_literals=("<INGRESS_PREFIX>/odoo/contacts",)),
-                         "important", "URL literals only on public: <PUBLIC_BASE>/my/orders/4"),
+                         "important", "URL literals only on public: /my/orders/4"),
             "unavailable": (observation(), observation(available=False, result="error: timeout"), "blocker", "ingress unavailable: error: timeout"),
         }
         for name, (public, ingress, severity, note) in cases.items():
@@ -297,6 +315,13 @@ class EvidenceAndDiffTests(unittest.TestCase):
                 self.assertEqual(merged[0]["verdict"], "GAP")
                 self.assertEqual(merged[0]["severity"], severity)
                 self.assertIn(note, merged[0]["notes"])
+
+    def test_literals_compare_by_path_whatever_base_each_surface_writes(self) -> None:
+        merged = diff_runs(
+            [record(Surface.PUBLIC, url_literals=("<PUBLIC_BASE>/web/image/res.partner/3/avatar_128?<redacted>",))],
+            [record(Surface.HA_INGRESS, url_literals=("<INGRESS_PREFIX>/web/image/res.partner/3/avatar_128?<redacted>",))],
+        )
+        self.assertEqual(merged[0]["verdict"], "PARITY", merged[0]["notes"])
 
     def test_an_action_seen_on_one_surface_only_is_a_gap(self) -> None:
         merged = diff_runs([record(Surface.PUBLIC, identity="menu:a|x:1")], [record(Surface.HA_INGRESS, identity="menu:b|x:2")])
