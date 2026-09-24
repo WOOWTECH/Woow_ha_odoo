@@ -251,7 +251,7 @@ class SignalTests(unittest.TestCase):
 
 
 ZERO = {"pageerror": 0, "console_error": 0, "failed_requests": 0, "http_4xx_5xx": 0, "route_escape": 0}
-RUN = RunInfo(run_id="WOOW-PARITY-20260924T000000Z", target="local", database="odoo_parity")
+RUN = RunInfo(run_id="WOOW-PARITY-20260924T000000Z", target="local", database="example_db")
 
 
 def observation(**overrides) -> SurfaceObservation:
