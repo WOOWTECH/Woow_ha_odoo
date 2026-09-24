@@ -1,0 +1,125 @@
+Rewrite scan (apply): unchanged
+  the file already holds these 0 prefixes; nothing written, nginx not reloaded
+  state: /data/rewrite-scan-state.json, 34 bundles (written)
+  databases: 2 (ok 2, no bundles 0, failed 0), bundles 34, skipped 0, complete: yes
+  odoo_parity: ok
+  odoo_test: ok
+  findings: 34 bundles, FAIL 0, WARN 37, INFO 486 uncovered by the Shipped rewrites
+  == odoo_parity /web/assets/ba6102b/web.assets_frontend_minimal.min.js (14,857 B)
+       every root-relative literal is covered
+  == odoo_parity /web/assets/ce5720f/bus.websocket_worker_assets.min.js (16,200 B)
+       every root-relative literal is covered
+  == odoo_parity /web/assets/b911737/web.assets_frontend.min.css (485,592 B)
+       every root-relative literal is covered
+  == odoo_parity /web/assets/30170dd/web.assets_frontend_lazy.min.js (1,811,269 B)
+       exception /scoped_app          x3    unction isScopedApp(){return browser.location.href.includes("/scoped_app")&&isDisplayStandalone();} function cast(value){return!valu
+       WARN      /web                 x4    }=urlObj;const state=parseSearchQuery(search);if(pathname==="/web"){const sanitizedHash=sanitizeHash(parseHash(hash));if(sani
+       WARN      /assets/             x1    >{return(sheet.href?.includes("/web")&&sheet.href?.includes("/assets/")&&new URL(sheet.href,browser.location.origin).origin===or
+       INFO      /bus/ x1, /html_editor/ x25, /unsplash/ x2, /web_editor/ x32, /web_tour/ x2, /web_unsplash/ x17
+  == odoo_parity /web/assets/1/81e18be/web.assets_frontend_minimal.min.js (30,353 B)
+       every root-relative literal is covered
+  == odoo_parity /web/assets/1/207dc96/web.assets_frontend.min.css (722,046 B)
+       every root-relative literal is covered
+  == odoo_parity /web/assets/1/8ea1da1/web.assets_frontend_lazy.min.js (2,905,636 B)
+       exception /scoped_app          x3    unction isScopedApp(){return browser.location.href.includes("/scoped_app")&&isDisplayStandalone();} function cast(value){return!valu
+       WARN      /web                 x4    }=urlObj;const state=parseSearchQuery(search);if(pathname==="/web"){const sanitizedHash=sanitizeHash(parseHash(hash));if(sani
+       WARN      /assets/             x1    >{return(sheet.href?.includes("/web")&&sheet.href?.includes("/assets/")&&new URL(sheet.href,browser.location.origin).origin===or
+       WARN      /cookie-policy       x1    guments);this.isCookiePolicyPage=window.location.pathname==="/cookie-policy";this._insertCookieBarToggleButton();const copyrightFooterC
+       INFO      /account/ x1, /base/ x1, /bus/ x1, /chatbot/ x3, /cookie-policy x1, /discuss/ x14, /html_editor/ x25, /im_livechat/ x14, /portal/ x10, /portal_rating/ x5, /rating/ x3, /unsplash/ x2, /web_editor/ x32, /web_tour/ x2, /web_unsplash/ x17, /website_hr_recruitment/ x1, /website_links/ x5, /website_mail/ x2, /website_mass_mailing/ x3
+  == odoo_parity /web/assets/8545c77/web.assets_web.min.css (1,190,656 B)
+       every root-relative literal is covered
+  == odoo_parity /web/assets/de75e54/web.assets_web.min.js (6,699,423 B)
+       exception /scoped_app          x3    unction isScopedApp(){return browser.location.href.includes("/scoped_app")&&isDisplayStandalone();} function cast(value){return!valu
+       WARN      /web                 x4    }=urlObj;const state=parseSearchQuery(search);if(pathname==="/web"){const sanitizedHash=sanitizeHash(parseHash(hash));if(sani
+       WARN      /assets/             x1    >{return(sheet.href?.includes("/web")&&sheet.href?.includes("/assets/")&&new URL(sheet.href,browser.location.origin).origin===or
+       WARN      /r                   x3    .services.website.contentWindow&&window.location.pathname!=="/r",});registry.category("website.should_display_seo").add("we
+       WARN      /document/           x1    ||pathname.startsWith('/web/content/')||pathname.startsWith('/document/share/')));} _replaceBrowserUrl(){if(!wUtils.isHTTPSorNaked
+       INFO      /account/ x52, /analytic/ x2, /applications/ x4, /avatar_1024/ x2, /barcodes/ x4, /base/ x2, /base_import/ x10, /bus/ x1, /crm/ x3, /discuss/ x23, /event/ x6, /event_sms/ x1, /forum x1, /google_calendar/ x1, /google_recaptcha/ x1, /hr/ x17, /hr_attendance/ x32, /hr_calendar/ x1, /hr_expense/ x11, /hr_holidays/ x24, /hr_holidays_attendance/ x2, /hr_org_chart/ x4, /hr_recruitment/ x4, /hr_recruitment_skills/ x1, /hr_skills/ x14, /hr_skills_survey/ x2, /hr_timesheet/ x1, /html_editor/ x74, /iap/ x2, /im_livechat/ x6, /image x1, /jobs/ x1, /livechat x1, /mailing/ x1, /mass_mailing/ x4, /microsoft_calendar/ x1, /mrp/ x22, /partner_autocomplete/ x7, /point_of_sale/ x4, /pos_hr/ x1, /product/ x14, /project/ x23, /project_todo/ x3, /purchase/ x7, /purchase_stock/ x1, /r x1, /rating/ x2, /report/ x1, /resource/ x2, /resource_mail/ x5, /sale/ x28, /sale_pdf_quote_builder/ x6, /sale_project/ x4, /sale_stock/ x4, /scoped_app x4, /shop x1, /sms/ x5, /snailmail/ x3, /spreadsheet/ x1, /static/ x1, /stock/ x31, /stock_account/ x2, /survey/ x2, /web x1, /web_editor/ x43, /web_tour/ x4, /web_unsplash/ x16, /website_hr_recruitment/ x3, /website_livechat/ x1, /website_sale/ x2
+  == odoo_parity /web/assets/29531d0/web.assets_web_print.min.css (1,195,623 B)
+       every root-relative literal is covered
+  == odoo_test /web/assets/ba6102b/web.assets_frontend_minimal.min.js (14,857 B)
+       every root-relative literal is covered
+  == odoo_test /web/assets/0fe1317/web.assets_frontend.min.css (485,396 B)
+       every root-relative literal is covered
+  == odoo_test /web/assets/6d0e496/web.assets_frontend_lazy.min.js (1,810,026 B)
+       exception /scoped_app          x3    unction isScopedApp(){return browser.location.href.includes("/scoped_app")&&isDisplayStandalone();} function cast(value){return!valu
+       WARN      /web                 x4    }=urlObj;const state=parseSearchQuery(search);if(pathname==="/web"){const sanitizedHash=sanitizeHash(parseHash(hash));if(sani
+       WARN      /assets/             x1    >{return(sheet.href?.includes("/web")&&sheet.href?.includes("/assets/")&&new URL(sheet.href,browser.location.origin).origin===or
+       INFO      /bus/ x1, /html_editor/ x25, /unsplash/ x2, /web_editor/ x32, /web_tour/ x2, /web_unsplash/ x17
+  == odoo_test /web/assets/ce5720f/bus.websocket_worker_assets.min.js (16,200 B)
+       every root-relative literal is covered
+  == odoo_test /web/assets/1/81e18be/web.assets_frontend_minimal.min.js (30,353 B)
+       every root-relative literal is covered
+  == odoo_test /web/assets/1/b58327a/web.assets_frontend_lazy.min.js (3,149,141 B)
+       exception /scoped_app          x3    unction isScopedApp(){return browser.location.href.includes("/scoped_app")&&isDisplayStandalone();} function cast(value){return!valu
+       WARN      /web                 x4    }=urlObj;const state=parseSearchQuery(search);if(pathname==="/web"){const sanitizedHash=sanitizeHash(parseHash(hash));if(sani
+       WARN      /assets/             x1    >{return(sheet.href?.includes("/web")&&sheet.href?.includes("/assets/")&&new URL(sheet.href,browser.location.origin).origin===or
+       WARN      /cookie-policy       x1    guments);this.isCookiePolicyPage=window.location.pathname==="/cookie-policy";this._insertCookieBarToggleButton();const copyrightFooterC
+       INFO      /account/ x1, /add_option/ x1, /autocomplete/ x2, /base/ x1, /bus/ x1, /chatbot/ x3, /cookie-policy x1, /delivery/ x10, /discuss/ x14, /html_editor/ x25, /im_livechat/ x14, /image x1, /image_1024/ x1, /image_256/ x1, /portal/ x10, /portal_rating/ x5, /rating/ x3, /sale/ x20, /shop x1, /stats/ x7, /unsplash/ x2, /update_line_dict x1, /web_editor/ x32, /web_tour/ x2, /web_unsplash/ x17, /website_hr_recruitment/ x1, /website_links/ x5, /website_mail/ x2, /website_mass_mailing/ x3, /website_sale/ x34, /website_sale_autocomplete/ x2, /website_sale_mrp/ x1, /website_sale_stock/ x6
+  == odoo_test /web/assets/de75e54/web.assets_web.min.js (6,699,423 B)
+       exception /scoped_app          x3    unction isScopedApp(){return browser.location.href.includes("/scoped_app")&&isDisplayStandalone();} function cast(value){return!valu
+       WARN      /web                 x4    }=urlObj;const state=parseSearchQuery(search);if(pathname==="/web"){const sanitizedHash=sanitizeHash(parseHash(hash));if(sani
+       WARN      /assets/             x1    >{return(sheet.href?.includes("/web")&&sheet.href?.includes("/assets/")&&new URL(sheet.href,browser.location.origin).origin===or
+       WARN      /r                   x3    .services.website.contentWindow&&window.location.pathname!=="/r",});registry.category("website.should_display_seo").add("we
+       WARN      /document/           x1    ||pathname.startsWith('/web/content/')||pathname.startsWith('/document/share/')));} _replaceBrowserUrl(){if(!wUtils.isHTTPSorNaked
+       INFO      /account/ x52, /analytic/ x2, /applications/ x4, /avatar_1024/ x2, /barcodes/ x4, /base/ x2, /base_import/ x10, /bus/ x1, /crm/ x3, /discuss/ x23, /event/ x6, /event_sms/ x1, /forum x1, /google_calendar/ x1, /google_recaptcha/ x1, /hr/ x17, /hr_attendance/ x32, /hr_calendar/ x1, /hr_expense/ x11, /hr_holidays/ x24, /hr_holidays_attendance/ x2, /hr_org_chart/ x4, /hr_recruitment/ x4, /hr_recruitment_skills/ x1, /hr_skills/ x14, /hr_skills_survey/ x2, /hr_timesheet/ x1, /html_editor/ x74, /iap/ x2, /im_livechat/ x6, /image x1, /jobs/ x1, /livechat x1, /mailing/ x1, /mass_mailing/ x4, /microsoft_calendar/ x1, /mrp/ x22, /partner_autocomplete/ x7, /point_of_sale/ x4, /pos_hr/ x1, /product/ x14, /project/ x23, /project_todo/ x3, /purchase/ x7, /purchase_stock/ x1, /r x1, /rating/ x2, /report/ x1, /resource/ x2, /resource_mail/ x5, /sale/ x28, /sale_pdf_quote_builder/ x6, /sale_project/ x4, /sale_stock/ x4, /scoped_app x4, /shop x1, /sms/ x5, /snailmail/ x3, /spreadsheet/ x1, /static/ x1, /stock/ x31, /stock_account/ x2, /survey/ x2, /web x1, /web_editor/ x43, /web_tour/ x4, /web_unsplash/ x16, /website_hr_recruitment/ x3, /website_livechat/ x1, /website_sale/ x2
+  == odoo_test /web/assets/1/42dcde4/web.assets_backend.min.js (6,697,737 B)
+       exception /scoped_app          x3    unction isScopedApp(){return browser.location.href.includes("/scoped_app")&&isDisplayStandalone();} function cast(value){return!valu
+       WARN      /web                 x4    }=urlObj;const state=parseSearchQuery(search);if(pathname==="/web"){const sanitizedHash=sanitizeHash(parseHash(hash));if(sani
+       WARN      /assets/             x1    >{return(sheet.href?.includes("/web")&&sheet.href?.includes("/assets/")&&new URL(sheet.href,browser.location.origin).origin===or
+       WARN      /r                   x3    .services.website.contentWindow&&window.location.pathname!=="/r",});registry.category("website.should_display_seo").add("we
+       WARN      /document/           x1    ||pathname.startsWith('/web/content/')||pathname.startsWith('/document/share/')));} _replaceBrowserUrl(){if(!wUtils.isHTTPSorNaked
+       INFO      /account/ x52, /analytic/ x2, /applications/ x4, /avatar_1024/ x2, /barcodes/ x4, /base/ x2, /base_import/ x10, /bus/ x1, /crm/ x3, /discuss/ x23, /event/ x6, /event_sms/ x1, /forum x1, /google_calendar/ x1, /google_recaptcha/ x1, /hr/ x17, /hr_attendance/ x32, /hr_calendar/ x1, /hr_expense/ x11, /hr_holidays/ x24, /hr_holidays_attendance/ x2, /hr_org_chart/ x4, /hr_recruitment/ x4, /hr_recruitment_skills/ x1, /hr_skills/ x14, /hr_skills_survey/ x2, /hr_timesheet/ x1, /html_editor/ x74, /iap/ x2, /im_livechat/ x6, /image x1, /jobs/ x1, /livechat x1, /mailing/ x1, /mass_mailing/ x4, /microsoft_calendar/ x1, /mrp/ x22, /partner_autocomplete/ x7, /point_of_sale/ x4, /pos_hr/ x1, /product/ x14, /project/ x23, /project_todo/ x3, /purchase/ x7, /purchase_stock/ x1, /r x1, /rating/ x2, /report/ x1, /resource/ x2, /resource_mail/ x5, /sale/ x28, /sale_pdf_quote_builder/ x6, /sale_project/ x4, /sale_stock/ x4, /scoped_app x4, /shop x1, /sms/ x5, /snailmail/ x3, /spreadsheet/ x1, /static/ x1, /stock/ x31, /stock_account/ x2, /survey/ x2, /web x1, /web_editor/ x43, /web_tour/ x4, /web_unsplash/ x16, /website_hr_recruitment/ x3, /website_livechat/ x1, /website_sale/ x2
+  == odoo_test /web/assets/1/74f993a/web.assets_backend_lazy.min.js (191,450 B)
+       INFO      /hr/ x2, /hr_org_chart/ x3, /project/ x1, /stock/ x1, /web_hierarchy/ x4
+  == odoo_test /web/assets/1/878e7fe/web.assets_frontend.min.js (3,178,321 B)
+       exception /scoped_app          x3    unction isScopedApp(){return browser.location.href.includes("/scoped_app")&&isDisplayStandalone();} function cast(value){return!valu
+       WARN      /web                 x4    }=urlObj;const state=parseSearchQuery(search);if(pathname==="/web"){const sanitizedHash=sanitizeHash(parseHash(hash));if(sani
+       WARN      /assets/             x1    >{return(sheet.href?.includes("/web")&&sheet.href?.includes("/assets/")&&new URL(sheet.href,browser.location.origin).origin===or
+       WARN      /cookie-policy       x1    guments);this.isCookiePolicyPage=window.location.pathname==="/cookie-policy";this._insertCookieBarToggleButton();const copyrightFooterC
+       INFO      /account/ x1, /add_option/ x1, /autocomplete/ x2, /base/ x1, /bus/ x1, /chatbot/ x3, /cookie-policy x1, /delivery/ x10, /discuss/ x14, /html_editor/ x25, /im_livechat/ x14, /image x1, /image_1024/ x1, /image_256/ x1, /portal/ x10, /portal_rating/ x5, /rating/ x3, /sale/ x20, /shop x1, /stats/ x7, /unsplash/ x2, /update_line_dict x1, /web_editor/ x32, /web_tour/ x2, /web_unsplash/ x17, /website_hr_recruitment/ x1, /website_links/ x5, /website_mail/ x2, /website_mass_mailing/ x3, /website_sale/ x34, /website_sale_autocomplete/ x2, /website_sale_mrp/ x1, /website_sale_stock/ x6
+  == odoo_test /web/assets/1/de75e54/web.assets_web.min.js (6,699,423 B)
+       exception /scoped_app          x3    unction isScopedApp(){return browser.location.href.includes("/scoped_app")&&isDisplayStandalone();} function cast(value){return!valu
+       WARN      /web                 x4    }=urlObj;const state=parseSearchQuery(search);if(pathname==="/web"){const sanitizedHash=sanitizeHash(parseHash(hash));if(sani
+       WARN      /assets/             x1    >{return(sheet.href?.includes("/web")&&sheet.href?.includes("/assets/")&&new URL(sheet.href,browser.location.origin).origin===or
+       WARN      /r                   x3    .services.website.contentWindow&&window.location.pathname!=="/r",});registry.category("website.should_display_seo").add("we
+       WARN      /document/           x1    ||pathname.startsWith('/web/content/')||pathname.startsWith('/document/share/')));} _replaceBrowserUrl(){if(!wUtils.isHTTPSorNaked
+       INFO      /account/ x52, /analytic/ x2, /applications/ x4, /avatar_1024/ x2, /barcodes/ x4, /base/ x2, /base_import/ x10, /bus/ x1, /crm/ x3, /discuss/ x23, /event/ x6, /event_sms/ x1, /forum x1, /google_calendar/ x1, /google_recaptcha/ x1, /hr/ x17, /hr_attendance/ x32, /hr_calendar/ x1, /hr_expense/ x11, /hr_holidays/ x24, /hr_holidays_attendance/ x2, /hr_org_chart/ x4, /hr_recruitment/ x4, /hr_recruitment_skills/ x1, /hr_skills/ x14, /hr_skills_survey/ x2, /hr_timesheet/ x1, /html_editor/ x74, /iap/ x2, /im_livechat/ x6, /image x1, /jobs/ x1, /livechat x1, /mailing/ x1, /mass_mailing/ x4, /microsoft_calendar/ x1, /mrp/ x22, /partner_autocomplete/ x7, /point_of_sale/ x4, /pos_hr/ x1, /product/ x14, /project/ x23, /project_todo/ x3, /purchase/ x7, /purchase_stock/ x1, /r x1, /rating/ x2, /report/ x1, /resource/ x2, /resource_mail/ x5, /sale/ x28, /sale_pdf_quote_builder/ x6, /sale_project/ x4, /sale_stock/ x4, /scoped_app x4, /shop x1, /sms/ x5, /snailmail/ x3, /spreadsheet/ x1, /static/ x1, /stock/ x31, /stock_account/ x2, /survey/ x2, /web x1, /web_editor/ x43, /web_tour/ x4, /web_unsplash/ x16, /website_hr_recruitment/ x3, /website_livechat/ x1, /website_sale/ x2
+  == odoo_test /web/assets/1/42dcde4/web.assets_web_print.min.js (6,697,741 B)
+       exception /scoped_app          x3    unction isScopedApp(){return browser.location.href.includes("/scoped_app")&&isDisplayStandalone();} function cast(value){return!valu
+       WARN      /web                 x4    }=urlObj;const state=parseSearchQuery(search);if(pathname==="/web"){const sanitizedHash=sanitizeHash(parseHash(hash));if(sani
+       WARN      /assets/             x1    >{return(sheet.href?.includes("/web")&&sheet.href?.includes("/assets/")&&new URL(sheet.href,browser.location.origin).origin===or
+       WARN      /r                   x3    .services.website.contentWindow&&window.location.pathname!=="/r",});registry.category("website.should_display_seo").add("we
+       WARN      /document/           x1    ||pathname.startsWith('/web/content/')||pathname.startsWith('/document/share/')));} _replaceBrowserUrl(){if(!wUtils.isHTTPSorNaked
+       INFO      /account/ x52, /analytic/ x2, /applications/ x4, /avatar_1024/ x2, /barcodes/ x4, /base/ x2, /base_import/ x10, /bus/ x1, /crm/ x3, /discuss/ x23, /event/ x6, /event_sms/ x1, /forum x1, /google_calendar/ x1, /google_recaptcha/ x1, /hr/ x17, /hr_attendance/ x32, /hr_calendar/ x1, /hr_expense/ x11, /hr_holidays/ x24, /hr_holidays_attendance/ x2, /hr_org_chart/ x4, /hr_recruitment/ x4, /hr_recruitment_skills/ x1, /hr_skills/ x14, /hr_skills_survey/ x2, /hr_timesheet/ x1, /html_editor/ x74, /iap/ x2, /im_livechat/ x6, /image x1, /jobs/ x1, /livechat x1, /mailing/ x1, /mass_mailing/ x4, /microsoft_calendar/ x1, /mrp/ x22, /partner_autocomplete/ x7, /point_of_sale/ x4, /pos_hr/ x1, /product/ x14, /project/ x23, /project_todo/ x3, /purchase/ x7, /purchase_stock/ x1, /r x1, /rating/ x2, /report/ x1, /resource/ x2, /resource_mail/ x5, /sale/ x28, /sale_pdf_quote_builder/ x6, /sale_project/ x4, /sale_stock/ x4, /scoped_app x4, /shop x1, /sms/ x5, /snailmail/ x3, /spreadsheet/ x1, /static/ x1, /stock/ x31, /stock_account/ x2, /survey/ x2, /web x1, /web_editor/ x43, /web_tour/ x4, /web_unsplash/ x16, /website_hr_recruitment/ x3, /website_livechat/ x1, /website_sale/ x2
+  == odoo_test /web/assets/1/d03d569/web.report_assets_common.min.js (155,998 B)
+       every root-relative literal is covered
+  == odoo_test /web/assets/1/e2e523b/website.assets_wysiwyg.min.js (357,931 B)
+       INFO      /contactus-thank-you x1, /cookie-policy x2, /job-thank-you x1, /website_payment/ x3, /your-task-has-been-submitted x1
+  == odoo_test /web/assets/1/588bc94/web_editor.assets_wysiwyg.min.js (729,828 B)
+       INFO      /html_editor/ x1, /web_editor/ x34
+  == odoo_test /web/assets/1/ce80a8d/survey.survey_assets.min.js (388,365 B)
+       INFO      /survey/ x6
+  == odoo_test /web/assets/1/6b6f516/im_livechat.assets_embed_external.min.js (1,655,198 B)
+       exception /scoped_app          x3    unction isScopedApp(){return browser.location.href.includes("/scoped_app")&&isDisplayStandalone();} function cast(value){return!valu
+       WARN      /web                 x4    }=urlObj;const state=parseSearchQuery(search);if(pathname==="/web"){const sanitizedHash=sanitizeHash(parseHash(hash));if(sani
+       WARN      /assets/             x1    >{return(sheet.href?.includes("/web")&&sheet.href?.includes("/assets/")&&new URL(sheet.href,browser.location.origin).origin===or
+       INFO      /base/ x1, /chatbot/ x3, /discuss/ x14, /im_livechat/ x14, /rating/ x3
+  == odoo_test /web/assets/1/fb40966/point_of_sale.assets_prod.min.js (3,799,621 B)
+       WARN      /web                 x4    t.styleSheets].filter((sheet)=>{return(sheet.href?.includes("/web")&&sheet.href?.includes("/assets/")&&new URL(sheet.href,bro
+       WARN      /assets/             x1    >{return(sheet.href?.includes("/web")&&sheet.href?.includes("/assets/")&&new URL(sheet.href,browser.location.origin).origin===or
+       exception /scoped_app          x3    sAvailable:false,isScopedApp:browser.location.href.includes("/scoped_app"),isSupportedOnBrowser:false,startUrl:"/odoo",decline,getMa
+       INFO      /account/ x5, /base/ x1, /cgi-bin/ x1, /image x1, /point_of_sale/ x78, /pos_customer_display/ x1, /pos_epson_printer/ x1, /pos_event/ x6, /pos_hr/ x8, /pos_online_payment/ x1, /pos_sale/ x3, /pos_sms/ x1, /report/ x2, /scoped_app x2, /web_tour/ x2, /yyyy x1
+  == odoo_test /web/assets/1/8161b3b/web.assets_frontend.min.css (773,454 B)
+       every root-relative literal is covered
+  == odoo_test /web/assets/8545c77/web.assets_web.min.css (1,190,656 B)
+       every root-relative literal is covered
+  == odoo_test /web/assets/29531d0/web.assets_web_print.min.css (1,195,623 B)
+       every root-relative literal is covered
+  == odoo_test /web/assets/74f993a/web.assets_backend_lazy.min.js (191,450 B)
+       INFO      /hr/ x2, /hr_org_chart/ x3, /project/ x1, /stock/ x1, /web_hierarchy/ x4
+  == odoo_test /web/assets/3a36703/web.assets_backend_lazy.min.css (13,397 B)
+       every root-relative literal is covered
+  == odoo_test /web/assets/6c8f779/web.chartjs_lib.min.js (337,290 B)
+       every root-relative literal is covered
+  exception hits: /scoped_app WARN

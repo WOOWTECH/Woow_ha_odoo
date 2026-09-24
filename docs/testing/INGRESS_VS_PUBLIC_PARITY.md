@@ -88,7 +88,7 @@ Public 是**基準組**，Ingress 是**待測組**。所有比對方向都是「
 - **DB**：`odoo_test`
 - **客戶端**：桌機 Chrome（Chromium 穩定版），1920×1080，**單一基準**
   - HA 手機 App WebView、行動版視窗、Safari／非 Chromium **本輪不納入**，
-    列為已知未覆蓋風險（見 10.4）
+    列為已知未覆蓋風險（見 10.5）
 - **目標安裝 app（13，測試機為全新安裝，執行前先裝回）**：`account`, `calendar`, `contacts`, `crm`, `hr`, `hr_skills`,
   `mail`, `mass_mailing`, `project`, `project_todo`, `purchase`, `stock`, `website`
 - **計劃安裝 app（12）**：`sale_management`, `website_sale`, `point_of_sale`, 金流串接,
@@ -350,21 +350,26 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 
 | 模組 | 引用原語 | 新增路由前綴 | 模組特化殘餘 | 對外 URL 功能點 |
 |---|---|---|---|---|
-| `mail` | C1,C9,C10,C11,C26,C27 | `/mail/`（已列）、`/discuss/`（**待確認**） | 附件預覽器、@提及自動完成 | 郵件內所有連結 `U-E2` |
+| `mail` | C1,C9,C10,C11,C26,C27 | `/mail/`（已列）、`/discuss/`（INFO，shim 攔截） | 附件預覽器、@提及自動完成 | 郵件內所有連結 `U-E2` |
 | `contacts` | C1–C3,C7,C16–C20 | — | 地圖／地址連結 | 名片分享 |
 | `calendar` | C1,C3,C9,C10,C26 | `/calendar/`（已列） | 拖放改期、重複事件、行事曆訂閱 URL | 邀請信、`.ics` 訂閱連結 |
 | `crm` | C1–C3,C9,C16,C17,C20 | — | 看板拖放、預測視圖 | 商機分享、報價信 |
-| `project` / `project_todo` | C1–C3,C9,C16,C17 | `/project/`（**待確認**） | 看板拖放、子任務、**分享唯讀連結** | **`U-E3` 分享連結（`G-01`／`G-02`）** |
-| `account` | C1–C3,C16,C17,C20 | `/account/`、`/my/invoices`（**待確認**） | 對帳、稅務、稽核軌跡 | 發票 portal 連結、付款連結、PDF 內 QR |
-| `purchase` | C1–C3,C16,C17,C20 | `/purchase/`（**待確認**） | 供應商 portal | 詢價單寄送連結 |
-| `stock` | C1–C3,C16,C17,C20 | `/stock/`（**待確認**） | 條碼輸入、批號序號、揀貨介面 | 交貨單 PDF |
-| `hr` / `hr_skills` | C1–C3,C7,C16 | `/hr/`（**待確認**） | 組織圖、員工照片 | 員工資料分享 |
+| `project` / `project_todo` | C1–C3,C9,C16,C17 | `/project/`（INFO，shim 攔截） | 看板拖放、子任務、**分享唯讀連結** | **`U-E3` 分享連結（`G-01`／`G-02`）** |
+| `account` | C1–C3,C16,C17,C20 | `/account/`（INFO，shim 攔截）；`/my/invoices` 不在任何 bundle | 對帳、稅務、稽核軌跡 | 發票 portal 連結、付款連結、PDF 內 QR |
+| `purchase` | C1–C3,C16,C17,C20 | `/purchase/`（INFO，shim 攔截） | 供應商 portal | 詢價單寄送連結 |
+| `stock` | C1–C3,C16,C17,C20 | `/stock/`（INFO，shim 攔截） | 條碼輸入、批號序號、揀貨介面 | 交貨單 PDF |
+| `hr` / `hr_skills` | C1–C3,C7,C16 | `/hr/`（INFO，shim 攔截） | 組織圖、員工照片 | 員工資料分享 |
 | `mass_mailing` | C1,C6,C16,C17 | `/r/`（短連結追蹤，**高風險**）、`/mass_mailing/`、`/mail/track/` | 郵件設計器（iframe 內的 iframe） | **`U-E2`：追蹤連結、退訂連結全部是對外 URL** |
 | `website` | D1–D8 全部 | `/website/`（已列）、`/web_editor/`、`/html_editor/` | snippet 編輯器、頁面管理、SEO 面板 | `U-D8` SEO 產出物 |
 
-> 標「**待確認**」者需在執行 `U-A4` 時實測 bundle 內是否存在該前綴的根相對字面量；
-> 存在且用於整頁跳轉（`FAIL`）者，由 add-on 的 Rewrite scan 在執行期產生 Generated rewrite（ADR 0005），
-> 跑過一輪後仍未被改寫、頁面仍逃逸者才是 `GAP`。
+> 原本標「**待確認**」的前綴已於 2026-09-24 實測（#144，`odoo_parity` 裝齊 29 個模組，0.4.4）：
+> 最後一輪 Rewrite scan 讀 34 個 bundle，`FAIL 0`、`WARN 37`、`INFO 486`；上表各前綴都是 `INFO`
+> （Runtime shim 攔截），沒有產生任何 Generated rewrite。兩個 surface 的選單爬蟲比對 290 個選單：
+> 272 `PARITY`、4 `GAP`、14 跳過；這 13 個 app 的已比對選單全為 `PARITY`（`website` 的訪客清單除外，見 #160）。
+> `project_todo` 唯一的選單是 server action，依唯讀規則跳過，沒有可比對的畫面。
+> 證據在 `docs/testing/evidence/2026-09-24-issue-144/`。
+> 注意 `INFO` 表示「shim 攔得到這種用法」，不保證每個消費點都攔得到：`/barcodes/` 也是 `INFO`，
+> 但 `new Audio(url(...))` 仍逃逸（#159）；資料庫裡的 HTML（動作的 help）也不在 bundle 內（#158）。
 
 ---
 
@@ -380,7 +385,7 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 | `sale_management` | `/sale/`、`/my/orders`、`/my/quotes` | RC-9 | `U-E3`、`U-E2`、`U-C20`、`U-D5` |
 | `website_sale` | `/shop/`、`/shop/cart`、`/shop/checkout`、`/shop/payment` | RC-9、**RC-10** | `U-D1`–`U-D7`、`U-E6`；購物車 cookie 走 `U-B2` |
 | `point_of_sale` | `/pos/`、`/pos/ui`、`/pos_self_order/` | **RC-6**、RC-3、RC-8 | **`U-C27`（離線能力在 ingress 必失效）**、`U-C24` 全螢幕、`U-C25` 掃碼、`U-F5` 收據列印 |
-| 金流串接（ECPay 等） | `/payment/`、各 provider 專屬 return/notify 路徑 | **RC-10、RC-9** | **`U-E6`（return_url／notify_url 必須是 public 且對外可達）**；ingress 原理上無法承接回呼 → `STRUCTURAL` |
+| 金流串接（ECPay：`ecpay_invoice_tw`、`ecpay_invoice_website`、`payment_ecpay`、`payment_ecpay_ecpg`） | `/payment/`、各 provider 專屬 return/notify 路徑 | **RC-10、RC-9** | **`U-E6`（return_url／notify_url 必須是 public 且對外可達）**；ingress 原理上無法承接回呼 → `STRUCTURAL` |
 
 > **POS 特別警告**：ingress 的 shim 主動反註冊 service worker 並偽造
 > `navigator.serviceWorker`（`RC-6`）。POS 的離線模式建立在 service worker 之上，
@@ -389,6 +394,12 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 >
 > **已決定（2026-09-24，ADR 0011）**：POS 兩個 surface 都可用；離線銷售是 ingress 的
 > Structural gap，由 public 承接。測試時 ingress 的離線項目判 `STRUCTURAL`，並驗證 public 確實能離線。
+>
+> **實測修正（2026-09-24，#161）**：Odoo 18 CE 的 POS **沒有自己的 service worker**；唯一的
+> `/web/service-worker.js` 範圍是 `/odoo`，只在導覽失敗時顯示離線頁。所以 `/pos/ui` 斷網重整
+> 在 public 也失敗。POS 18 的離線是頁內機制：頁面已載入時斷網，會出現「Connection Lost …
+> limited functionality」並可繼續操作，不需要 service worker，預期兩個 surface 相同。
+> 斷網成交再同步的完整驗證尚未完成，ADR 0011 的前提待重審，都記在 #161。
 
 ### 10.2 服務 / 行銷 / 生產
 
@@ -407,7 +418,32 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 | `hr_attendance` / `hr_timesheet` | `/hr_attendance/`、`/hr_timesheet/` | **RC-3** | `U-C24` Kiosk 全螢幕、`U-C25` 掃 QR／條碼、`U-F1` 上界確認 |
 | `hr_recruitment` | `/jobs/`、`/jobs/apply` | **RC-10** | 對外職缺頁與應徵表單只有 public 有意義 → `U-D7` `STRUCTURAL` |
 
-### 10.4 本輪未覆蓋的已知風險（明列，不假裝測過）
+### 10.4 安裝實測結果（2026-09-24，#144）
+
+13 個計劃 app（含 `hr_timesheet`）與 4 個 ECPay 模組都已**經 Ingress 的 Apps 畫面**裝到 `odoo_parity`
+（0.4.4），每次安裝後 5 分鐘內都有一輪 Rewrite scan（`unchanged` 或 `up to date`，沒有新增
+Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo18 `56cb04c`。
+「爬蟲」欄是兩個 surface 選單爬蟲比對的結果，依選單 xmlid 的模組歸屬；證據與方法見
+`docs/testing/evidence/2026-09-24-issue-144/`。
+
+| 模組 | 爬蟲 | 必跑項目現況 |
+|---|---|---|
+| `sale_management` | 經 `sale` 選單，23 `PARITY` | `U-E3`／`U-E2`／`U-C20`／`U-D5` → #145 |
+| `website_sale` | 15 `PARITY` | `U-D1`–`U-D6`、`U-B2` → #143；`U-D7`、`U-E6` 為 `STRUCTURAL`（RC-10） |
+| `point_of_sale` | 19 `PARITY` | `U-C27` 見 10.1 的實測修正與 #161；`U-C24`／`U-C25`／`U-F5` → #143 |
+| ECPay 4 模組 | `ecpay_invoice_tw`、`payment_ecpay` 各 1 `PARITY`；另兩個無自有選單 | `U-E6` 實際付款與回呼 → #146 |
+| `survey` | 4 `PARITY`、**2 `GAP`**（同一動作） | 範例圖片逃逸 → **#158**；`U-E3`／`U-C4` → #145 |
+| `im_livechat` | 8 `PARITY` | 外嵌 script 為 `STRUCTURAL`（RC-10）；`U-C26` → #143 |
+| `event` | 7 `PARITY`、**1 `GAP`** | 報到台條碼音效逃逸 → **#159**；`U-E3`／`U-E4` → #145 |
+| `mrp` | 8 `PARITY` | `U-C24`／`U-C25` → #143；`U-C20` → #145 |
+| `hr_holidays` / `hr_expense` | 13 / 8 `PARITY` | `U-E2` → #145 |
+| `hr_attendance` / `hr_timesheet` | 5 / 7 `PARITY` | `U-C24`／`U-C25`／`U-F1` → #143 |
+| `hr_recruitment` | 14 `PARITY` | 對外職缺頁 `U-D7` 為 `STRUCTURAL`（RC-10） |
+
+第 9 節的 13 個 app 同一輪已比對的選單全為 `PARITY`（`project_todo` 只有一個跳過的 server action），唯一例外是 `website` 的訪客清單：經 Ingress 瀏覽網站時，
+訪客紀錄把 HA 根網址存成頁面 URL（`U-C5`，#160）。
+
+### 10.5 本輪未覆蓋的已知風險（明列，不假裝測過）
 
 | 項目 | 為何重要 | 處置 |
 |---|---|---|

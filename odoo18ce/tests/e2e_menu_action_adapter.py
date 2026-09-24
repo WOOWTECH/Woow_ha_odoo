@@ -214,6 +214,11 @@ def addon_info_command(message_id: int, slug: str) -> dict[str, Any]:
     return _supervisor(message_id, "/addons/%s/info" % slug, "get")
 
 
+def notifications_command(message_id: int) -> dict[str, Any]:
+    # HA keeps persistent notifications behind the websocket only, not REST states.
+    return {"id": message_id, "type": "persistent_notification/get"}
+
+
 def ws_result(message: Mapping[str, Any], message_id: int) -> Any:
     """The result of command `message_id`, or None for any other message."""
     if message.get("type") != "result" or message.get("id") != message_id:
@@ -637,15 +642,23 @@ class IngressSession:
             self._call(lambda i: validate_session_command(i, self.session))
             self._validated = time.monotonic()
 
+    def notifications(self) -> list[dict[str, Any]]:
+        """The persistent notifications Home Assistant holds now."""
+        return self._call(notifications_command) or []
+
     def close(self) -> None:
         self._stack.close()
 
 
+# An empty list or kanban view shows sample records with avatars of users
+# picked at random on every load; they are not data, so their literals are
+# left out or two runs of one screen would never agree.
 _URL_LITERALS_JS = r"""() => {
   const out = new Set();
   const re = /\b(?:https?|wss?):\/\/[^\s"'<>]+/g;
   const skip = /^(?:data:|blob:|javascript:|mailto:|tel:|#)/i;
   for (const el of document.body.querySelectorAll('[href],[src],[action],[data-src]')) {
+    if (el.closest('.o_view_sample_data')) continue;
     for (const name of ['href', 'src', 'action', 'data-src']) {
       const value = el.getAttribute(name);
       if (value && !skip.test(value.trim())) out.add(value.trim());
@@ -772,7 +785,9 @@ class SurfaceDriver:
         available, result, screen, literals = True, "loaded", {}, []
         try:
             page.goto(self.base + visit.route, wait_until="load", timeout=60000)
-            page.locator(".o_action_manager > *").first.wait_for(timeout=30000)
+            # An action with target "new" (a wizard) opens in a dialog and
+            # leaves the action manager empty.
+            page.locator(".o_action_manager > *, .o_dialog .modal-content").first.wait_for(timeout=30000)
             try:
                 page.wait_for_load_state("networkidle", timeout=10000)
             except Exception:  # Odoo can keep a request open; the settle below still applies.
