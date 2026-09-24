@@ -22,6 +22,10 @@ _Avoid_: local access, trusted network, direct access
 The value the maintenance bootstrap writes into `web.base.url` and the default website's `domain` on every start, and then locks with `web.base.url.freeze`. It is the Public origin when `public_url` is set, otherwise the Home Assistant host's LAN address with the published Odoo port. A stored value that carries an Ingress token is never kept as the Canonical URL.
 _Avoid_: base url, own address, web.base.url (in prose)
 
+**Structural gap**:
+A capability Ingress cannot provide in principle — inbound traffic from outside, a service worker, anonymous access — and that the Public origin carries instead. It is not a defect and no fix makes it go away.
+_Avoid_: 側欄版做不到, not supported, bug, STRUCTURAL (alone)
+
 ### Ingress mechanics
 
 **Runtime shim**:

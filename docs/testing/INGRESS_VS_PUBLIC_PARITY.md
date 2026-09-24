@@ -57,6 +57,8 @@
 部分能力 ingress **原理上不可能**達成（見 `RC-10`、`RC-15`）。這類項目不標 `GAP`，
 標 `STRUCTURAL`，並且**必須**在計劃中指定「由 public surface 承接」的替代路徑。
 若某功能既無 ingress 實作也無 public 承接，才升級為 Blocker。
+`STRUCTURAL` 就是 `CONTEXT.md` 的 **Structural gap**；給使用者看的清單在
+`odoo18ce/DOCS.md`「What only the Public origin can do」，新判出的 `STRUCTURAL` 要一併補進去。
 
 ---
 
@@ -123,7 +125,7 @@ Public 是**基準組**，Ingress 是**待測組**。所有比對方向都是「
 | `AD-4` | Host 守門 | 不適用 | 非預期 `Host` → **444** | 用錯誤 Host 打 8069 |
 | `AD-5` | `X-Frame-Options` | 移除 | 保留 | 比對回應標頭 |
 | `AD-6` | 匿名可達性 | 需 HA session | 完全匿名可達 | 無 HA cookie 打 ingress，須被擋 |
-| `AD-7` | LAN 主機埠 | 8069／8072 皆不對 HA host 發佈 | 同左 | 主機端 `ss -ltn` |
+| `AD-7` | LAN 主機埠 | 8069／8072 發佈到 HA 主機，只有 `lan_networks` 內的來源拿到 **LAN tier**（含資料庫管理）；add-on 網段 `172.30.32.0/23`（含 HA 主機本身與 Cloudflare tunnel）一律不算 LAN | 同左 | 從 `lan_networks` 外的來源打 8069／8072 的 `/web/database/manager`，不得回 200（未設 `public_url` 回 503；已設時 Host 不符回 444、Host 相符回 404）；add-on 啟動自我檢查另外驗 tunnel 那一側（`DOCS.md`「Start-time self-check」） |
 
 ---
 
@@ -369,6 +371,7 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 ## 10. 待安裝 app 的預先風險登記
 
 裝之前先讀這張表；每一項在安裝當下就要跑對應的 `U` 項目。
+安裝後的操作步驟見 `odoo18ce/DOCS.md`「Generated rewrites」一節末尾的 *After installing an application* 清單。
 
 ### 10.1 銷售 / 電商 / 金流
 
@@ -383,6 +386,9 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > `navigator.serviceWorker`（`RC-6`）。POS 的離線模式建立在 service worker 之上，
 > 因此**在 ingress 下極可能完全不可用**。安裝前必須先決定：POS 只走 public，
 > 或接受 ingress 下無離線能力。這是設計決策，不是 bug 修正。
+>
+> **已決定（2026-09-24，ADR 0011）**：POS 兩個 surface 都可用；離線銷售是 ingress 的
+> Structural gap，由 public 承接。測試時 ingress 的離線項目判 `STRUCTURAL`，並驗證 public 確實能離線。
 
 ### 10.2 服務 / 行銷 / 生產
 

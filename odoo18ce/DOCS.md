@@ -146,7 +146,7 @@ Two consequences worth knowing:
 
 The add-on has two simultaneous entrances:
 
-- **Home Assistant Ingress** — the sidebar panel (and the add-on page's OPEN WEB UI button) opens `/odoo`; HA authentication is followed by normal Odoo authentication. The HA origin must use HTTPS because the Odoo session cookie is deliberately marked `Secure`.
+- **Home Assistant Ingress** — the sidebar panel (and the add-on page's OPEN WEB UI button) opens `/odoo`; HA authentication is followed by normal Odoo authentication. Home Assistant may be opened over HTTPS or over plain http on the LAN: the Odoo session cookie is marked `Secure` only when the browser reached Home Assistant over HTTPS. Over plain http the browser withholds a few capabilities from the page; see "What only the Public origin can do" below.
 - **Cloudflare Tunnel** — publish the complete root-path Odoo UI/API/WebSocket by routing the hostname to `http://<repo-hash>-odoo18ce:8069` on the internal add-on network.
 
 The Cloudflare gateway blocks `/web/database/*`; database lifecycle management
@@ -315,6 +315,38 @@ own notification rather than stacking, and Ingress tokens are masked in
 both. Sending needs the Home Assistant API, which is why the add-on declares
 `homeassistant_api`; a notification that cannot be sent is logged and does
 not change the round.
+
+**After installing an application**, check it under Ingress before your
+users do. The Rewrite scan covers only whole-page navigations; the rest is a
+short checklist:
+
+1. Wait up to five minutes for a Rewrite scan round and read it in the add-on
+   log. If it added rules, the *Generated rewrites added* notification names
+   them; if a step failed, the failure notification says which.
+2. Open the application's main screens through Ingress and through the Public
+   origin, and compare them: nothing missing, nothing landing on the Home
+   Assistant page, no error dialog.
+3. Run the items the parity plan
+   (`docs/testing/INGRESS_VS_PUBLIC_PARITY.md`, sections 9 and 10) lists for
+   that application — above all any link it sends to people outside, and any
+   copy, download, camera or full-screen control.
+4. Anything that cannot work under Ingress in principle belongs in the list
+   below, served by the Public origin, not in a bug report.
+
+## What only the Public origin can do
+
+Some things cannot work through Ingress, whatever the add-on does. Each is a
+**Structural gap**: a limit of the sidebar entrance itself, not a bug, and the
+Public origin is where it works. Set `public_url` if you need any of them.
+
+| Capability | Why Ingress cannot provide it | Where it works |
+|---|---|---|
+| Anything a person or service outside Home Assistant opens: the website and shop for anonymous visitors, public survey answers, job applications, embedded live chat | Ingress answers only callers logged in to Home Assistant | Public origin |
+| Payment provider callbacks and returns (ECPay and others), webhooks, email tracking | The provider's server has no Home Assistant session | Public origin; the provider must be given the `public_url` address |
+| Point of Sale offline mode, installing Odoo as an app (PWA) | The Runtime shim disables service workers under Ingress (ADR 0011) | Public origin. POS itself works under Ingress while the network is up. |
+| Camera and barcode scanning, and copying through Odoo's own clipboard call | The browser offers them only on a secure page; Home Assistant over plain http is not one | Ingress over HTTPS, or the Public origin. Copy buttons still work over plain http through the add-on's fallback. |
+| A link Odoo builds in the page from the address bar and that is not listed under "Links the browser builds" | Through Ingress that address is Home Assistant's | Produce the link from the Public origin |
+| A sidebar address sent to someone else | It carries your Ingress session token and opens only for you | Send the Public origin address |
 
 ## Start-time self-check
 
