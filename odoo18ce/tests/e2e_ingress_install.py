@@ -114,7 +114,7 @@ class IngressApps:
         body = response.json()
         if response.status != 200 or "error" in body:
             raise RuntimeError("%s.%s failed: %s" % (model, method, body.get("error", {}).get("message")))
-        return body["result"]
+        return body.get("result")  # absent when the method returns None
 
     def modules(self, names: Sequence[str]) -> dict[str, dict]:
         rows = self.rpc("ir.module.module", "search_read", [[["name", "in", list(names)]]],
