@@ -1,0 +1,31 @@
+{"module": "contacts", "database": "odoo_parity", "state": "installed", "install_seconds": 18, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 258, "notifications": []}
+{"module": "mail", "database": "odoo_parity", "result": "already installed"}
+{"module": "account", "database": "odoo_parity", "state": "installed", "install_seconds": 33, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 228, "notifications": []}
+{"module": "calendar", "database": "odoo_parity", "state": "installed", "install_seconds": 21, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 289, "notifications": []}
+{"module": "contacts", "database": "odoo_parity", "result": "already installed"}
+{"module": "crm", "database": "odoo_parity", "state": "installed", "install_seconds": 21, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 274, "notifications": []}
+{"module": "hr", "database": "odoo_parity", "state": "installed", "install_seconds": 21, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 289, "notifications": []}
+{"module": "hr_skills", "database": "odoo_parity", "result": "already installed"}
+{"module": "mass_mailing", "database": "odoo_parity", "state": "installed", "install_seconds": 22, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 290, "notifications": []}
+{"module": "project", "database": "odoo_parity", "state": "installed", "install_seconds": 21, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 273, "notifications": []}
+{"module": "project_todo", "database": "odoo_parity", "result": "already installed"}
+{"module": "purchase", "database": "odoo_parity", "state": "installed", "install_seconds": 22, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 289, "notifications": []}
+{"module": "stock", "database": "odoo_parity", "state": "installed", "install_seconds": 19, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 289, "notifications": []}
+{"module": "website", "database": "odoo_parity", "state": "installed", "install_seconds": 40, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 274, "notifications": []}
+{"module": "event", "database": "odoo_parity", "state": "installed", "install_seconds": 16, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 274, "notifications": []}
+{"module": "hr_attendance", "database": "odoo_parity", "state": "installed", "install_seconds": 23, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 282, "notifications": []}
+{"module": "hr_expense", "database": "odoo_parity", "state": "installed", "install_seconds": 29, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 273, "notifications": []}
+{"module": "hr_holidays", "database": "odoo_parity", "state": "installed", "install_seconds": 23, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 289, "notifications": []}
+{"module": "hr_recruitment", "database": "odoo_parity", "state": "installed", "install_seconds": 27, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 282, "notifications": []}
+{"module": "hr_timesheet", "database": "odoo_parity", "state": "installed", "install_seconds": 24, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 273, "notifications": []}
+{"module": "im_livechat", "database": "odoo_parity", "state": "installed", "install_seconds": 24, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 288, "notifications": []}
+{"module": "ecpay_invoice_tw", "database": "odoo_parity", "state": "installed", "install_seconds": 16, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 152, "notifications": []}
+{"module": "mrp", "database": "odoo_parity", "result": "already installed"}
+{"module": "point_of_sale", "database": "odoo_parity", "state": "installed", "install_seconds": 23, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 273, "notifications": []}
+{"module": "sale_management", "database": "odoo_parity", "state": "installed", "install_seconds": 23, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 288, "notifications": []}
+{"module": "payment_ecpay", "database": "odoo_parity", "state": "installed", "install_seconds": 23, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 289, "notifications": []}
+{"module": "payment_ecpay_ecpg", "database": "odoo_parity", "state": "installed", "install_seconds": 18, "scan_rounds": [{"status": "up to date", "prefixes": []}], "scan_round_seconds": 274, "notifications": []}
+{"module": "survey", "database": "odoo_parity", "state": "installed", "install_seconds": 17, "scan_rounds": [{"status": "up to date", "prefixes": []}], "scan_round_seconds": 289, "notifications": []}
+{"module": "website_sale", "database": "odoo_parity", "state": "installed", "install_seconds": 22, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 288, "notifications": []}
+{"module": "ecpay_invoice_website", "database": "odoo_parity", "state": "installed", "install_seconds": 23, "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 289, "notifications": []}
+{"module": "mrp", "database": "odoo_parity", "state": "installed", "note": "Activate pressed by the run stopped for low memory; Odoo finished the install at 09:50:40Z; scan round read from the add-on log afterwards", "scan_rounds": [{"status": "unchanged", "prefixes": []}], "scan_round_seconds": 284, "notifications": []}
