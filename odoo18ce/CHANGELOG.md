@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.4 — 2026-09-24
 
 ### Added
 - The image now carries `python3-pycryptodome`, so WOOWTECH's ECPay
