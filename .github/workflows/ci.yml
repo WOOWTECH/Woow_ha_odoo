@@ -184,6 +184,22 @@ jobs:
           print(f"exception list: {len(exceptions)} entries")
           '
 
+      # Odoo refuses to install a module whose external_dependencies it
+      # cannot find, and it looks them up by PyPI distribution name first.
+      # WOOWTECH's ECPay e-invoice module (ecpay_odoo18) declares
+      # pycryptodomex and imports Cryptodome (issue #141), so both are asked
+      # the way Odoo asks them, through Odoo's own check.
+      - name: In-image contract (external Python dependencies)
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint python3 woow-ha-odoo-amd64:ci -c '
+          from odoo.modules.module import check_python_external_dependency
+          for dependency in ("pycryptodomex", "cryptography", "requests"):
+              check_python_external_dependency(dependency)
+              print(f"external dependency: {dependency} ok")
+          import Cryptodome.Cipher.AES
+          '
+
       # woow_base_url_guard raises ImportError when an Odoo nightly moves
       # res.users.authenticate, but Odoo's server-wide loader only logs that
       # and serves unguarded, and the Static tier tests the guard against a
