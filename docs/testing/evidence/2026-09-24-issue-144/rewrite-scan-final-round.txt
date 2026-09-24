@@ -123,4 +123,3 @@ Rewrite scan (apply): unchanged
   == odoo_test /web/assets/6c8f779/web.chartjs_lib.min.js (337,290 B)
        every root-relative literal is covered
   exception hits: /scoped_app WARN
-127.0.0.1 - - [24/Sep/2026:19:31:37 +0800] "GET /web/login HTTP/1.1" 200 21420 "-" "curl/7.88.1" xfo="SAMEORIGIN" upstream_xfo="SAMEORIGIN" proto="-" host="127.0.0.1:8069"

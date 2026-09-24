@@ -2,7 +2,7 @@
 """Pure self-tests for the Ingress install driver of the 29-module parity run."""
 import unittest
 
-from e2e_ingress_install import ScanRound, install_order, new_rewrite_notifications, scan_rounds
+from e2e_ingress_install import ScanRound, install_order, judge_install, new_rewrite_notifications, scan_rounds
 
 
 class InstallOrderTests(unittest.TestCase):
@@ -61,6 +61,28 @@ class NotificationTests(unittest.TestCase):
             [n["notification_id"] for n in new_rewrite_notifications(before, after)],
             ["odoo18ce_generated_rewrites_failed", "odoo18ce_generated_rewrites_added_bbbbbbbbbbbb"],
         )
+
+
+class JudgeInstallTests(unittest.TestCase):
+    def test_an_installed_module_with_a_healthy_round_in_five_minutes_passes(self) -> None:
+        self.assertEqual(judge_install("installed", [ScanRound("unchanged", ())], [], 289), [])
+
+    def test_each_broken_promise_is_named(self) -> None:
+        self.assertEqual(judge_install("to install", [], [], None),
+                         ["module is to install, not installed", "no Rewrite scan round was logged"])
+        self.assertEqual(judge_install("installed", [ScanRound("unchanged", ())], [], 301),
+                         ["the first round came after 301 s, not within 300 s"])
+
+    def test_a_round_that_raised_is_not_a_healthy_round(self) -> None:
+        raised = ScanRound("the reload step raised; the include file is untouched", ())
+        self.assertEqual(judge_install("installed", [raised], [], 60),
+                         ["the round ended 'the reload step raised; the include file is untouched'"])
+
+    def test_added_rules_need_a_notification(self) -> None:
+        added = [ScanRound("applied", ("/shop",))]
+        self.assertEqual(judge_install("installed", added, [], 60),
+                         ["rules were added (/shop) but no notification appeared"])
+        self.assertEqual(judge_install("installed", added, [{"notification_id": "x"}], 60), [])
 
 
 if __name__ == "__main__":

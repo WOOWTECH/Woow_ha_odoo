@@ -36,11 +36,24 @@ new Rewrite scan notifications read over the HA websocket.
   notification was raised (handoff #10).
 - `rewrite-scan-final-round.txt` is the full round after the last install:
   34 bundles, **FAIL 0**, WARN 37, INFO 486.
+- The records are appended run by run, so a module listed in two runs has
+  two records (`contacts`: installed, then "already installed"; `mrp`:
+  "already installed" in the resumed run, then the round read from the log).
+- The recorded round is the first one logged after the module showed as
+  installed (polled every 15 s). It can have started a few seconds before
+  the install ended; the next round, five minutes later, would then be the
+  first to read the new bundles. Every later round was `up to date` or
+  `unchanged` too, and the final round above covers all 29 modules.
+- These records predate `problems` (added after review); the driver now
+  fails an install whose round is late, unhealthy, or adds rules without a
+  notification.
 
 ## Crawl and diff — `crawl-diff.jsonl`
 
 `e2e_menu_action_adapter.py crawl` on both surfaces for the 24 top-level apps,
 in groups (the PC was short of memory), then `diff` per group, merged here.
+The crawl ran once after all 29 installs, not after each install: a crawl
+during installs would race Odoo's registry reloads.
 
 - 290 menus = **272 PARITY + 4 GAP + 14 skipped** (not read-only actions).
 - Per owning module (the menu xmlid's module): every module has `PARITY`
@@ -49,6 +62,12 @@ in groups (the PC was short of memory), then `diff` per group, merged here.
   (`website_sale` 15, `ecpay_invoice_tw` 1, `payment_ecpay` 1) or through
   their parent app (`sale_management` → `sale`, `ecpay_invoice_website` →
   `website`, `payment_ecpay_ecpg` → `account`).
+- `project_todo`'s one menu is a server action, skipped by the read-only
+  rule, so it has no judged screen.
+- `url_literals` keep public third-party links as they are (Odoo
+  documentation, Google Cloud console, sample `http://sampleN.com`); they
+  do not identify the host under test. Host URLs are masked to base codes
+  and every query string to `<redacted>`.
 - Two crawler false positives were fixed during the run (in this PR): sample
   records of an empty view show avatars picked at random, and a wizard
   action opens in a dialog. See the commit message.
@@ -70,4 +89,5 @@ hung on its splash screen on both surfaces. #161 holds the rest.
 ## Must-run U items owned elsewhere
 
 `U-E2`/`U-E3`/`U-E4` outbound URLs → #145; `U-E6` ECPay callback → #146;
-`U-F1`, `U-C24`, `U-C25`, `U-F5` and the mobile viewport → #143.
+`U-F1`, `U-C24`, `U-C25`, `U-C26`, `U-F5`, `U-D1`–`U-D6`, `U-B2` and the
+mobile viewport → #143. Parity plan section 10.4 maps each module to these.

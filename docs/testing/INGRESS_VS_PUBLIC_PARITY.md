@@ -365,7 +365,8 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 原本標「**待確認**」的前綴已於 2026-09-24 實測（#144，`odoo_parity` 裝齊 29 個模組，0.4.4）：
 > 最後一輪 Rewrite scan 讀 34 個 bundle，`FAIL 0`、`WARN 37`、`INFO 486`；上表各前綴都是 `INFO`
 > （Runtime shim 攔截），沒有產生任何 Generated rewrite。兩個 surface 的選單爬蟲比對 290 個選單：
-> 272 `PARITY`、4 `GAP`、14 跳過；這 13 個 app 全為 `PARITY`（`website` 的訪客清單除外，見 #160）。
+> 272 `PARITY`、4 `GAP`、14 跳過；這 13 個 app 的已比對選單全為 `PARITY`（`website` 的訪客清單除外，見 #160）。
+> `project_todo` 唯一的選單是 server action，依唯讀規則跳過，沒有可比對的畫面。
 > 證據在 `docs/testing/evidence/2026-09-24-issue-144/`。
 > 注意 `INFO` 表示「shim 攔得到這種用法」，不保證每個消費點都攔得到：`/barcodes/` 也是 `INFO`，
 > 但 `new Audio(url(...))` 仍逃逸（#159）；資料庫裡的 HTML（動作的 help）也不在 bundle 內（#158）。
@@ -439,7 +440,7 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 | `hr_attendance` / `hr_timesheet` | 5 / 7 `PARITY` | `U-C24`／`U-C25`／`U-F1` → #143 |
 | `hr_recruitment` | 14 `PARITY` | 對外職缺頁 `U-D7` 為 `STRUCTURAL`（RC-10） |
 
-第 9 節的 13 個 app 同一輪全為 `PARITY`，唯一例外是 `website` 的訪客清單：經 Ingress 瀏覽網站時，
+第 9 節的 13 個 app 同一輪已比對的選單全為 `PARITY`（`project_todo` 只有一個跳過的 server action），唯一例外是 `website` 的訪客清單：經 Ingress 瀏覽網站時，
 訪客紀錄把 HA 根網址存成頁面 URL（`U-C5`，#160）。
 
 ### 10.5 本輪未覆蓋的已知風險（明列，不假裝測過）

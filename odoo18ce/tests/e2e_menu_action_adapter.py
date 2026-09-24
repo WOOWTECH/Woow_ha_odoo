@@ -214,6 +214,11 @@ def addon_info_command(message_id: int, slug: str) -> dict[str, Any]:
     return _supervisor(message_id, "/addons/%s/info" % slug, "get")
 
 
+def notifications_command(message_id: int) -> dict[str, Any]:
+    # HA keeps persistent notifications behind the websocket only, not REST states.
+    return {"id": message_id, "type": "persistent_notification/get"}
+
+
 def ws_result(message: Mapping[str, Any], message_id: int) -> Any:
     """The result of command `message_id`, or None for any other message."""
     if message.get("type") != "result" or message.get("id") != message_id:
@@ -636,6 +641,10 @@ class IngressSession:
         if time.monotonic() - self._validated >= self.REFRESH_SECONDS:
             self._call(lambda i: validate_session_command(i, self.session))
             self._validated = time.monotonic()
+
+    def notifications(self) -> list[dict[str, Any]]:
+        """The persistent notifications Home Assistant holds now."""
+        return self._call(notifications_command) or []
 
     def close(self) -> None:
         self._stack.close()

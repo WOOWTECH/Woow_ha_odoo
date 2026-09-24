@@ -5,19 +5,51 @@ Issue #144's parity run installs 29 modules on a fresh database through the
 Ingress surface, never the Public origin or the command line: the install
 itself is part of what is tested. For each module in dependency order the
 driver opens the module's form in the Apps screen under the Ingress prefix,
-presses Activate, and waits until Odoo reports the module installed.
+presses Activate, waits until Odoo reports the module installed, then reads
+the next Rewrite scan round from the add-on log and the Rewrite scan
+notifications Home Assistant holds (handoff #10).
+
+The first round logged after the install may have started before the install
+finished; the driver does not tell the two apart.
 
 The pure parts are tested in the static tier by test_e2e_ingress_install.py.
 """
 from __future__ import annotations
 
+import argparse
+import json
+import os
+from pathlib import Path
 import re
+import shlex
+import subprocess
+import sys
+import time
 from typing import Iterable, Mapping, NamedTuple, Sequence
+
+from e2e_menu_action_adapter import SurfaceDriver, parse_env_file
+from e2e_menu_action_crawler import Surface
+
+# The Rewrite scan's own vocabulary, read from its source rather than copied.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "rootfs/usr/local/lib"))
+import rewrite_apply  # noqa: E402
 
 # `rewrite_apply.report` opens each round with this line and names the
 # prefixes it generated on an indented `prefixes:` line.
 _ROUND = re.compile(r"Rewrite scan \(apply\): (.+?)\s*$")
 _PREFIXES = re.compile(r"^\S*\s+prefixes: (.+?)\s*$")
+
+#: Every id the Rewrite scan notifies under starts with the added-rules id.
+REWRITE_NOTIFICATION_PREFIX = os.path.commonprefix(list(rewrite_apply.NOTIFICATION_IDS.values()))
+#: Handoff #10: a round within five minutes of the install.
+SCAN_ROUND_LIMIT_SECONDS = 300
+INSTALL_TIMEOUT_SECONDS = 1200
+#: Polling stops a little after the limit, so a late round is recorded as late.
+SCAN_WAIT_SECONDS = SCAN_ROUND_LIMIT_SECONDS + 120
+POLL_SECONDS = 15
+PAGE_TIMEOUT_MS = 120000
+BUTTON_TIMEOUT_MS = 60000
+UPDATE_LIST_TIMEOUT_MS = 300000
 
 
 class ScanRound(NamedTuple):
@@ -39,10 +71,6 @@ def scan_rounds(lines: Iterable[str]) -> list[ScanRound]:
     return rounds
 
 
-#: `rewrite_apply.NOTIFICATION_IDS`: every id the Rewrite scan notifies under.
-REWRITE_NOTIFICATION_PREFIX = "odoo18ce_generated_rewrites_"
-
-
 def new_rewrite_notifications(
     before: Iterable[Mapping[str, str]], after: Iterable[Mapping[str, str]],
 ) -> list[Mapping[str, str]]:
@@ -57,6 +85,28 @@ def new_rewrite_notifications(
         if n["notification_id"].startswith(REWRITE_NOTIFICATION_PREFIX)
         and (n["notification_id"], n.get("created_at")) not in seen
     ]
+
+
+def judge_install(
+    state: str, rounds: Sequence[ScanRound], notifications: Sequence[Mapping[str, str]],
+    round_seconds: int | None,
+) -> list[str]:
+    """What an install broke of #144's promise; empty when it kept all of it."""
+    problems = []
+    if state != "installed":
+        problems.append("module is %s, not installed" % state)
+    if not rounds:
+        problems.append("no Rewrite scan round was logged")
+        return problems
+    if round_seconds is not None and round_seconds > SCAN_ROUND_LIMIT_SECONDS:
+        problems.append("the first round came after %d s, not within %d s"
+                        % (round_seconds, SCAN_ROUND_LIMIT_SECONDS))
+    first = rounds[0]
+    if first.status not in rewrite_apply.HEALTHY_STATUSES:
+        problems.append("the round ended '%s'" % first.status)
+    if first.prefixes and not notifications:
+        problems.append("rules were added (%s) but no notification appeared" % " ".join(first.prefixes))
+    return problems
 
 
 def install_order(targets: Sequence[str], deps: Mapping[str, Iterable[str]]) -> list[str]:
@@ -90,17 +140,11 @@ def install_order(targets: Sequence[str], deps: Mapping[str, Iterable[str]]) -> 
 
 # --- Live driver ------------------------------------------------------------
 
-INSTALL_TIMEOUT_SECONDS = 1200
-#: The Rewrite scan runs a round every five minutes (services.d/rewrite-scan),
-#: measured between rounds, so one starts within five minutes plus a round.
-SCAN_WAIT_SECONDS = 420
-POLL_SECONDS = 15
-
 
 class IngressApps:
     """The Apps screen under the Ingress prefix, driven like an operator would."""
 
-    def __init__(self, driver) -> None:
+    def __init__(self, driver: SurfaceDriver) -> None:
         self.driver = driver
         self.page = driver.context.new_page()
 
@@ -135,41 +179,42 @@ class IngressApps:
     def update_list(self) -> None:
         """Apps > Update Apps List, so modules copied into the addons path show up."""
         self.page.goto(self.driver.base + "/odoo/action-base.action_view_base_module_update",
-                       wait_until="load", timeout=120000)
+                       wait_until="load", timeout=PAGE_TIMEOUT_MS)
         self.page.locator('button[name="update_module"]').click()
-        self.page.locator(".modal").wait_for(state="detached", timeout=300000)
+        self.page.locator(".modal").wait_for(state="detached", timeout=UPDATE_LIST_TIMEOUT_MS)
 
     def install(self, module_id: int) -> None:
         self.page.goto(self.driver.base + "/odoo/action-base.open_module_tree/%d" % module_id,
-                       wait_until="load", timeout=120000)
+                       wait_until="load", timeout=PAGE_TIMEOUT_MS)
         button = self.page.locator('button[name="button_immediate_install"]')
-        button.wait_for(timeout=60000)
+        button.wait_for(timeout=BUTTON_TIMEOUT_MS)
         button.click()
 
 
-def _notifications(driver) -> list[dict]:
-    return driver.ingress._call(lambda i: {"id": i, "type": "persistent_notification/get"}) or []
-
-
 def _log_since(command: str, since: int) -> list[str]:
-    import shlex
-    import subprocess
-
     done = subprocess.run(shlex.split(command.format(since=since)), capture_output=True,
                           text=True, encoding="utf-8", errors="replace", timeout=120)
     return (done.stdout + done.stderr).splitlines()
 
 
+def _wait_for(check, limit_seconds: int, driver: SurfaceDriver):
+    """Poll `check` until it returns something truthy or the limit passes."""
+    started = time.time()
+    value = None
+    while time.time() - started < limit_seconds:
+        time.sleep(POLL_SECONDS)
+        driver.ingress.keep_alive()
+        try:
+            value = check()
+        except Exception:  # noqa: BLE001 -- the registry reloads during an install
+            continue
+        if value:
+            break
+    return value
+
+
 def run_installs(modules: Sequence[str], log_command: str, out, *, update_list: bool) -> int:
-    import json
-    import os
-    import sys
-    import time
-
     from playwright.sync_api import sync_playwright
-
-    from e2e_menu_action_adapter import SurfaceDriver
-    from e2e_menu_action_crawler import Surface
 
     failures = 0
     with sync_playwright() as playwright:
@@ -187,45 +232,37 @@ def run_installs(modules: Sequence[str], log_command: str, out, *, update_list: 
                 raise RuntimeError("not in the Apps list: %s" % ", ".join(missing))
             for module in install_order(modules, apps.dependencies()):
                 record = {"module": module, "database": os.environ.get("ODOO_DB", "default")}
-                state = apps.modules([module])[module]["state"]
-                if state == "installed":
+                if apps.modules([module])[module]["state"] == "installed":
                     record.update(result="already installed")
                     out.write(json.dumps(record) + "\n")
                     out.flush()
                     continue
-                before = _notifications(driver)
+                before = driver.ingress.notifications()
                 started = time.time()
                 apps.install(known[module]["id"])
-                while time.time() - started < INSTALL_TIMEOUT_SECONDS:
-                    time.sleep(POLL_SECONDS)
-                    driver.ingress.keep_alive()
-                    try:
-                        state = apps.modules([module])[module]["state"]
-                    except Exception:  # noqa: BLE001 -- the registry reloads during an install
-                        continue
-                    if state == "installed":
-                        break
-                installed = int(time.time())
-                record.update(state=state, install_seconds=installed - int(started))
-                rounds: list[ScanRound] = []
-                while state == "installed" and time.time() - installed < SCAN_WAIT_SECONDS:
-                    time.sleep(POLL_SECONDS)
-                    driver.ingress.keep_alive()
-                    rounds = scan_rounds(_log_since(log_command, installed))
-                    if rounds:
-                        break
-                added = new_rewrite_notifications(before, _notifications(driver))
+                installed = _wait_for(
+                    lambda: apps.modules([module])[module]["state"] == "installed",
+                    INSTALL_TIMEOUT_SECONDS, driver)
+                state = "installed" if installed else apps.modules([module])[module]["state"]
+                done_at = int(time.time())
+                rounds = _wait_for(lambda: scan_rounds(_log_since(log_command, done_at)),
+                                   SCAN_WAIT_SECONDS, driver) if installed else []
+                round_seconds = int(time.time()) - done_at if rounds else None
+                added = new_rewrite_notifications(before, driver.ingress.notifications())
+                problems = judge_install(state, rounds or [], added, round_seconds)
                 record.update(
-                    scan_rounds=[r._asdict() for r in rounds],
-                    scan_round_seconds=int(time.time()) - installed if rounds else None,
+                    state=state, install_seconds=done_at - int(started),
+                    scan_rounds=[r._asdict() for r in rounds or []],
+                    scan_round_seconds=round_seconds,
                     notifications=[{"id": n["notification_id"], "title": n.get("title")} for n in added],
+                    problems=problems,
                 )
-                ok = state == "installed" and bool(rounds)
-                failures += not ok
+                failures += bool(problems)
                 out.write(json.dumps(driver.masker.value(record), ensure_ascii=False) + "\n")
                 out.flush()
-                print("%s %s %s" % ("OK  " if ok else "FAIL", module, record.get("state")), file=sys.stderr)
-                if state != "installed":
+                print("%s %s %s" % ("FAIL" if problems else "OK  ", module, "; ".join(problems) or state),
+                      file=sys.stderr)
+                if not installed:
                     break  # a later module may depend on this one
         finally:
             driver.close()
@@ -234,11 +271,6 @@ def run_installs(modules: Sequence[str], log_command: str, out, *, update_list: 
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    import argparse
-    import os
-
-    from e2e_menu_action_adapter import parse_env_file
-
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--modules", required=True, help="comma-separated module names")
     parser.add_argument("--log-command", required=True,
@@ -257,6 +289,4 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    import sys
-
     sys.exit(main())
