@@ -304,7 +304,12 @@ def is_prefix_escape(url: str, surface: Surface, origin: str, ingress_prefix: st
         return "/api/hassio_ingress/" in parts.path
     if _netloc(url) != _netloc(origin):
         return False
-    return not (parts.path == ingress_prefix or parts.path.startswith(str(ingress_prefix) + "/"))
+    if parts.path == ingress_prefix:
+        return False
+    if not parts.path.startswith(str(ingress_prefix) + "/"):
+        return True
+    # A second Ingress prefix under the first is the doubled prefix of U-A2.
+    return "/api/hassio_ingress/" in parts.path[len(str(ingress_prefix)):]
 
 
 def _is_loopback(host: str) -> bool:
@@ -376,6 +381,7 @@ class SurfaceObservation:
     view: str | None
     url_literals: Sequence[str] = ()
     url_violations: Sequence[Mapping[str, str]] = ()
+    http_5xx: int = 0
 
 
 def new_run_id() -> str:
@@ -411,7 +417,10 @@ def evidence_record(
         "signals": {name: int(observation.signals.get(name, 0)) for name in SIGNALS},
         "url_literals": sorted(set(observation.url_literals)),
         "url_violations": [dict(item) for item in observation.url_violations],
+        "http_5xx": int(observation.http_5xx),
     }
+    if observation.url_violations:
+        record["root_cause"] = ["RC-1", "RC-9"]
     record.update({"verdict": None, "severity": None, "artifacts": [], "notes": ""})
     return record
 
@@ -447,6 +456,26 @@ def _index(records: Iterable[Mapping[str, Any]], key: str) -> dict[str, Mapping[
     return indexed
 
 
+def _logical_literals(block: Mapping[str, Any]) -> set[str]:
+    """Masked literals with the Ingress prefix taken off, so both surfaces compare."""
+    return {
+        literal[len("<INGRESS_PREFIX>"):] if literal.startswith("<INGRESS_PREFIX>/") else literal
+        for literal in block.get("url_literals") or ()
+    }
+
+
+def _literal_differences(public: Mapping[str, Any], ingress: Mapping[str, Any]) -> list[str]:
+    """Section 1.1 item 3: the URLs on the screen point at the same places."""
+    left, right = _logical_literals(public), _logical_literals(ingress)
+    reasons = []
+    for name, only in (("public", left - right), ("ingress", right - left)):
+        if only:
+            shown = sorted(only)
+            more = " (+%d more)" % (len(shown) - 5) if len(shown) > 5 else ""
+            reasons.append("URL literals only on %s: %s%s" % (name, ", ".join(shown[:5]), more))
+    return reasons
+
+
 def _judge(public: Mapping[str, Any], ingress: Mapping[str, Any]) -> tuple[str, list[str]]:
     reasons: list[str] = []
     blocker = False
@@ -460,6 +489,8 @@ def _judge(public: Mapping[str, Any], ingress: Mapping[str, Any]) -> tuple[str, 
             if count:
                 reasons.append("%s %s=%d" % (name, signal, count))
                 blocker = blocker or signal == "route_escape"
+        # Section 1.3: a 5xx is a Blocker, a 4xx is Important.
+        blocker = blocker or bool(block.get("http_5xx"))
         for violation in block.get("url_violations") or ():
             reasons.append("%s U-C5 %s: %s" % (name, violation.get("reason"), violation.get("literal")))
             blocker = True
@@ -468,6 +499,7 @@ def _judge(public: Mapping[str, Any], ingress: Mapping[str, Any]) -> tuple[str, 
             left, right = (public.get("screen") or {}).get(part), (ingress.get("screen") or {}).get(part)
             if left != right:
                 reasons.append("%s: public=%s ingress=%s" % (part, left, right))
+        reasons.extend(_literal_differences(public, ingress))
     if not reasons:
         return "none", reasons
     return ("blocker" if blocker else "important"), reasons
@@ -587,12 +619,14 @@ _URL_LITERALS_JS = r"""() => {
   return [...out];
 }"""
 
-# The model and view of the current controller. `__WOWL_DEBUG__` exposes the
-# web client's root; the DOM class is the fallback for the view type.
+# The action, model and view of the current controller. `__WOWL_DEBUG__`
+# exposes the web client's root; the DOM class is the fallback for the view
+# type. Without it the action cannot be checked and stays null.
 _SCREEN_JS = r"""() => {
-  let model = null, view = null;
+  let model = null, view = null, action = null;
   try {
     const controller = odoo.__WOWL_DEBUG__.root.env.services.action.currentController;
+    action = (controller.action && controller.action.id) || null;
     model = (controller.action && controller.action.res_model) || null;
     view = (controller.view && controller.view.type) || null;
   } catch (error) {}
@@ -601,7 +635,7 @@ _SCREEN_JS = r"""() => {
     const match = node && [...node.classList].map(c => /^o_(\w+)_view$/.exec(c)).find(Boolean);
     view = match ? match[1] : null;
   }
-  return {model, view};
+  return {model, view, action};
 }"""
 
 
@@ -615,7 +649,7 @@ class SurfaceDriver:
         self.password = _require_env("ODOO_TEST_PASSWORD")
         public_base = os.environ.get("ODOO_PUBLIC_URL", "").rstrip("/")
         ha_base = os.environ.get("HA_BASE_URL", "").rstrip("/")
-        secrets = [self.password]
+        secrets = [self.login, self.password]
         if surface is Surface.PUBLIC:
             self.origin = _require_env("ODOO_PUBLIC_URL").rstrip("/")
             self.base = self.origin
@@ -705,6 +739,11 @@ class SurfaceDriver:
             page.wait_for_timeout(500)
             screen = page.evaluate(_SCREEN_JS) or {}
             literals = page.evaluate(_URL_LITERALS_JS)
+            loaded = screen.get("action")
+            if loaded is not None and str(loaded) != visit.action_id:
+                # U-C12: the menu's action must load, not a fallback such as Discuss.
+                available = False
+                result = "loaded action %s instead of %s" % (loaded, visit.action_id)
         except Exception as error:  # noqa: BLE001 -- every failure is evidence, not a crash
             available = False
             result = "error (%s): %s" % (classify_failure(error).value, (str(error).splitlines() or [""])[0])
@@ -724,6 +763,7 @@ class SurfaceDriver:
             route=route, model=screen.get("model"), view=screen.get("view"),
             url_literals=tuple(self.masker.text(literal) for literal in literals),
             url_violations=tuple(violations),
+            http_5xx=sum(1 for status, _ in responses if status >= 500),
         )
 
     def close(self) -> None:
@@ -746,7 +786,7 @@ def crawl(surface: Surface, apps: Sequence[str], out) -> int:
             scope = scope_from_web_menus(driver.web_menus(), apps)
             visits = plan_visits(scope)
             for skipped in scope.skipped:
-                identity = "menu:%s|%s" % (skipped.menu_id, skipped.action_ref.replace(",", ":"))
+                identity = control_identity(skipped.menu_id, *skipped.action_ref.split(","))
                 record = skipped_record(run, surface, module=skipped.app, identity=identity, reason=skipped.reason)
                 out.write(json.dumps(driver.masker.value(record), ensure_ascii=False, sort_keys=True) + "\n")
             signalled = 0

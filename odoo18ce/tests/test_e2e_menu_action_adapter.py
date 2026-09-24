@@ -169,7 +169,7 @@ class MaskingTests(unittest.TestCase):
         return Masker(
             bases={"<PUBLIC_BASE>": "https://odoo.example", "<HA_BASE>": HA},
             ingress_prefix=PREFIX,
-            secrets=("hunter2", "llat-secret", "sess-secret"),
+            secrets=("tester@example.com", "hunter2", "llat-secret", "sess-secret"),
         )
 
     def test_urls_become_base_codes_and_logical_paths(self) -> None:
@@ -181,12 +181,12 @@ class MaskingTests(unittest.TestCase):
 
     def test_credentials_and_foreign_ingress_tokens_never_survive(self) -> None:
         masked = self.masker().value({
-            "message": "login hunter2 failed with llat-secret on /api/hassio_ingress/other_tok/web",
+            "message": "login tester@example.com hunter2 failed with llat-secret on /api/hassio_ingress/other_tok/web",
             "nested": ["cookie sess-secret"],
             "password": "anything",
         })
         text = json.dumps(masked)
-        for secret in ("hunter2", "llat-secret", "sess-secret", "other_tok", "anything", "tok_ABC123"):
+        for secret in ("tester@example.com", "hunter2", "llat-secret", "sess-secret", "other_tok", "anything", "tok_ABC123"):
             self.assertNotIn(secret, text)
 
 
@@ -197,6 +197,7 @@ class SignalTests(unittest.TestCase):
         self.assertFalse(check(HA + PREFIX))
         self.assertTrue(check(HA + "/odoo/contacts"))
         self.assertTrue(check(HA + PREFIX + "x/odoo"))
+        self.assertTrue(check(HA + PREFIX + PREFIX + "/odoo"), "a doubled prefix is U-A2")
         self.assertTrue(check("ws://ha.example:8123/websocket"))
         self.assertFalse(check("https://fonts.example/x.woff"))
         self.assertFalse(check("data:image/png;base64,AAAA"))
@@ -260,6 +261,11 @@ class EvidenceAndDiffTests(unittest.TestCase):
         self.assertIsNone(item["verdict"])
         json.dumps(item)
 
+    def test_a_u_c5_violation_adds_its_root_cause(self) -> None:
+        self.assertEqual(record(Surface.PUBLIC)["root_cause"], ["RC-1"])
+        violated = record(Surface.PUBLIC, url_violations=({"literal": "x", "reason": "loopback"},))
+        self.assertEqual(violated["root_cause"], ["RC-1", "RC-9"])
+
     def test_identical_clean_runs_are_parity(self) -> None:
         merged = diff_runs([record(Surface.PUBLIC)], [record(Surface.HA_INGRESS)])
         self.assertEqual([(item["verdict"], item["severity"]) for item in merged], [("PARITY", "none")])
@@ -275,6 +281,10 @@ class EvidenceAndDiffTests(unittest.TestCase):
             "literal": (observation(), observation(url_violations=({"literal": "<HA_BASE>/odoo", "reason": "ha_origin"},)),
                         "blocker", "ingress U-C5 ha_origin: <HA_BASE>/odoo"),
             "baseline": (observation(signals=dict(ZERO, http_4xx_5xx=1)), observation(), "important", "public http_4xx_5xx=1"),
+            "5xx": (observation(), observation(signals=dict(ZERO, http_4xx_5xx=1), http_5xx=1), "blocker", "ingress http_4xx_5xx=1"),
+            "literals": (observation(url_literals=("<PUBLIC_BASE>/my/orders/4", "/odoo/contacts")),
+                         observation(url_literals=("<INGRESS_PREFIX>/odoo/contacts",)),
+                         "important", "URL literals only on public: <PUBLIC_BASE>/my/orders/4"),
             "unavailable": (observation(), observation(available=False, result="error: timeout"), "blocker", "ingress unavailable: error: timeout"),
         }
         for name, (public, ingress, severity, note) in cases.items():
