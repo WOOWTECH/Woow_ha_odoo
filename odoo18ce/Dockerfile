@@ -36,6 +36,12 @@ RUN apt-get update \
 #    0005), and the container had no YAML reader at all (ADR 0008). The
 #    Debian package, not pip: nothing else in this image installs Python
 #    from outside the distribution.
+#
+#    python3-pycryptodome is for WOOWTECH's ECPay e-invoice module
+#    (ecpay_odoo18), which declares pycryptodomex and imports Cryptodome.
+#    Debian ships exactly that: the package registers as pycryptodomex and
+#    provides the Cryptodome namespace, so Odoo's dependency check passes
+#    (issue #141).
 # ──────────────────────────────────────────────
 ARG ODOO_DEB_VERSION="18.0.20260914"
 ARG ODOO_DEB_SHA256="378a53702f9971722260d1182bfb7dd650e9c3b859f92b1c0d520a222e1bc3dd"
@@ -55,6 +61,7 @@ RUN apt-get update \
         git \
         nginx \
         python3-yaml \
+        python3-pycryptodome \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/odoo.deb
 

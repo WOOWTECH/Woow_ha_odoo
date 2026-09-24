@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+- The image now carries `python3-pycryptodome`, so WOOWTECH's ECPay
+  e-invoice module (`ecpay_invoice_tw` from `ecpay_odoo18`, placed in
+  `/share/odoo_addons/`) can be installed. It declares `pycryptodomex` and
+  imports `Cryptodome`; Odoo refused it with "External dependency
+  pycryptodomex not installed". The Debian package registers as
+  `pycryptodomex` and provides `Cryptodome`, so no pip install is involved.
+  The PR gate now runs Odoo's own external-dependency check for it in the
+  built image. Issue #141.
+
 ### Changed
 - The add-on's config folder is now mapped as `app_config:rw`, the name
   Supervisor 2026.07.1 gave it, instead of the legacy `addon_config:rw`.
