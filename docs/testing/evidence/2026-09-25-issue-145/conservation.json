@@ -1,11 +1,11 @@
 {
   "observed": 25,
   "counts": {
-    "PARITY": 23,
+    "PARITY": 22,
     "GAP": 2,
     "APPROVED-DIVERGENCE": 0,
     "STRUCTURAL": 0,
-    "NOT-RUN": 0
+    "NOT-RUN": 1
   },
   "missing": [],
   "unplanned": [],
@@ -13,7 +13,9 @@
   "unclassified": [],
   "gaps_without_issue": [],
   "structural_without_path": [],
-  "not_run": [],
+  "not_run": [
+    "check:U-E4|account|invoice PDF without Payment"
+  ],
   "balanced": true,
-  "qualified": true
+  "qualified": false
 }

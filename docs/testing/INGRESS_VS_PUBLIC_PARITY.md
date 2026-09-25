@@ -471,7 +471,8 @@ F、A、B、C、D 群組在 `odoo_parity`（0.4.4）各跑一次，外加 10.1�
 ### 10.7 對外產出物實測結果（2026-09-25／26，#145）
 
 E 群組（`U-E2`、`U-E3`、`U-E4`、`U-E5`、`U-E7`）與 `U-D8` 在 `odoo_parity`（0.4.4）上，每種產出物
-都從兩個 surface 的 UI 各產生一次。25 項 = 23 `PARITY` + 2 `GAP`，無 `NOT-RUN`，每個 `GAP` 都有 issue。
+都從兩個 surface 的 UI 各產生一次。25 項 = 22 `PARITY` + 2 `GAP` + 1 `NOT-RUN`，每個 `GAP` 都有 issue。
+`NOT-RUN` 是發票的 QR：台灣公司在 CE 沒有 QR 付款方式，ECPay 電子發票要先開立（#146）。本輪因此不算完整。
 E 群組的判定**不只比較兩邊**：產出物裡只要有 HA 位址、相對 URL 或 Ingress token 就是 `GAP`，
 兩邊一樣錯也一樣。證據與方法見 `docs/testing/evidence/2026-09-25-issue-145/`。
 
@@ -482,8 +483,9 @@ E 群組的判定**不只比較兩邊**：產出物裡只要有 HA 位址、相�
   Discuss 邀請、Live Chat 連結、會議 URL。全部在 Canonical URL 上，匿名瀏覽器都打得開。
 - **附件**：寄出的附件變成 `/web/content/…?access_token` 連結，在 Canonical URL 上。
 - **匯出**：link tracker 與會議的 xlsx、csv 匯出也都在 Canonical URL 上。
-- **QR**：活動票券的 QR 內容是報名條碼，不是 URL。台灣公司在 CE 沒有 QR 付款方式，發票沒有 QR。
-- **區網外可達性**：允許匿名存取的每個連結，都從 LAN 外的雲端瀏覽器（browserless）再開一次，全部打得開。
+- **QR**：活動票券的 QR 內容是報名條碼，不是 URL。發票沒有 QR，所以發票的 QR 檢查是 `NOT-RUN`。
+- **區網外可達性**：允許匿名存取的 34 個連結，都從 LAN 外的雲端瀏覽器（browserless）再開一次，全部打得開。
+- **沒有測到的部分**：密碼重設送出的是「邀請信」（測試使用者沒有登入過），連結格式相同。`U-E5` 只測了郵件附件連結。
 - **`GAP`**：
   - 發票「Download > PDF」在 Ingress 下請求 HA 根目錄，404，檔案沒有下載（#174）。「PDF without Payment」兩邊都正常。
   - Ingress 下的 `sitemap.xml` 仍以 HA 為基底（#172）。首頁 head 與 `robots.txt` 已是 Canonical URL，也就是 #164 修好了。

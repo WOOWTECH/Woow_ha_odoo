@@ -7,8 +7,8 @@ modules of #144, with the Canonical URL catch-up of #164 in place). Driver:
 static tests in `test_e2e_parity_outbound.py`. The mail sink is `smtp_capture_sink.py`.
 
 - **Public side**: a top-level page on the Public origin.
-- **Ingress side**: the add-on's panel in the Home Assistant frontend, with Odoo in its iframe, over
-  the plain-http LAN entrance. These are the same two sides as #143.
+- **Ingress side**: Odoo in its Ingress iframe inside the Home Assistant frontend, over the
+  plain-http LAN entrance. These are the same two sides as #143.
 - Each artefact was produced through the UI of each surface: a click in a dialog, a menu, a button
   or the chatter composer. The fixtures that need one copy per surface have one per surface, named
   after it.
@@ -20,7 +20,11 @@ Group E is built on the server, so the verdict does not only compare the two sur
 
 - both results match;
 - neither side raised a signal;
-- neither artefact holds a URL on Home Assistant, a relative URL or an Ingress token.
+- neither artefact holds a URL on Home Assistant, a relative URL or an Ingress token;
+- every anonymous link shows its record.
+
+An artefact with nothing to judge (no link, or a PDF with no QR code) cannot pass. It is `NOT-RUN`
+and names what blocks it.
 
 The same leak in both copies of a mail would still be a `GAP`. External links (odoo.com, the
 Outlook help page in the mailing template) and XML namespaces (w3.org, schema.org) are listed but
@@ -33,13 +37,14 @@ are not problems. The rule is in `outbound_record`.
 - off the LAN, from a browserless.io cloud Chrome whose egress address is not the office's
   (`off-lan.json`).
 
-Links that need a login are recorded, not opened: the approval mails' `/mail/view` for internal
-users, and the live chat loader script.
+Some links are recorded but not opened: links that need a login (the approval mails' `/mail/view`
+for internal users), and links that are not pages (the live chat widget's script and loader).
 
 ## Checks: `checks.jsonl`
 
-**Conservation**: 25 planned, 25 observed = **23 `PARITY` + 2 `GAP`**. Nothing is `NOT-RUN`,
-missing, duplicated or unclassified, and every `GAP` has an issue (`conservation.json`, qualified).
+**Conservation**: 25 planned, 25 observed = **22 `PARITY` + 2 `GAP` + 1 `NOT-RUN`**. Nothing is
+missing, duplicated or unclassified, and every `GAP` has an issue. The run does **not qualify** as
+complete, because one check is `NOT-RUN` (`conservation.json`).
 `python odoo18ce/tests/e2e_parity_outbound_live.py report checks.jsonl` recomputes it.
 
 ### GAP
@@ -49,13 +54,22 @@ missing, duplicated or unclassified, and every `GAP` has an issue (`conservation
 | `U-E4` invoice PDF | Action menu > Download > PDF works on the Public origin. Under Ingress the iframe requests `<HA_BASE>/account/download_invoice_documents/<id>/pdf` (404, `route_escape`) and no file lands. Odoo returns an `ir.actions.act_url` with `target: 'download'`. Why the Runtime shim misses it is still open | **#174** (new) |
 | `U-D8` generic | Under Ingress, `sitemap.xml` lists `<HA_BASE>` URLs. The head (canonical, `og:`, `twitter:`) and `robots.txt` are on `<PUBLIC_BASE>` on both surfaces, now that #164 fills `website.domain` | #172 |
 
+### NOT-RUN
+
+| Check | Blocked by |
+|---|---|
+| `U-E4` invoice PDF without Payment | The company has no QR payment method in Odoo CE (Taiwan), so the invoice has no QR code, and the PDF has no link either. The ECPay e-invoice print (`列印電子發票`) has QR codes but needs an issued e-invoice (#146). The QR decoding itself ran on the event ticket |
+
+`U-E4` invoice PDF (Download > PDF) is a `GAP`, not `NOT-RUN`: the Public origin gave a PDF with
+no QR code, but Ingress gave no file at all (#174).
+
 ### What each artefact holds
 
 | Item | Screens | Literal on both surfaces | Anonymous, LAN and off-LAN |
 |---|---|---|---|
 | `U-E2` mail | portal invitation, password reset, chatter notification, mass mailing, time off approval, expense approval | Every link on `<PUBLIC_BASE>`: signup/reset `/web/signup`, `/mail/view`, `/r/<code>`, `/mailing/<id>/confirm_unsubscribe`, the `/mail/track/…/blank.gif` pixel | Signup, reset, the tracked link (lands on Contact us), unsubscribe, the pixel and the notification's access-token link all open |
 | `U-E3` share | quotation, invoice, RFQ and task (portal.share); project (project.share.wizard); survey (survey.invite); dashboard (spreadsheet share); Discuss invitation; live chat widget and direct page; calendar meeting URL | Every link on `<PUBLIC_BASE>` | Each opens its record |
-| `U-E4` PDF and QR | invoice via Download > PDF, invoice via PDF without Payment, event Full Page Ticket | No link in any PDF; the ticket's one QR code holds the registration barcode, not a URL | not applicable |
+| `U-E4` PDF and QR | invoice via Download > PDF, invoice via PDF without Payment, event Full Page Ticket | No link in any PDF. The ticket's one QR code holds the registration barcode, not a URL. The invoices have no QR code | not applicable |
 | `U-E5` attachments | a file sent from the chatter becomes a download link | `<PUBLIC_BASE>/web/content/<id>?download=1&access_token=…` | Downloads the file (its content checked) |
 | `U-E7` exports | link trackers and calendar meetings, as xlsx and as csv | Tracked URL and Meeting URL columns on `<PUBLIC_BASE>` | not applicable |
 | `U-D8` SEO | sitemap, robots, home page head | see GAP | not applicable |
@@ -94,17 +108,26 @@ confirmation. None reached anyone.
 - **Mass mailing.** The body's `/unsubscribe_from_list` placeholder stays in the mail as
   `<PUBLIC_BASE>/unsubscribe_from_list`, next to the real `/mailing/<id>/confirm_unsubscribe` link
   that Odoo adds. Both are on the Canonical URL.
-- **Invoice QR.** The company is in Taiwan and has no QR payment method in CE, so the invoice has no
-  QR code. The ECPay e-invoice print (`列印電子發票`) needs an issued e-invoice (#146). The QR
-  decoding itself was exercised on the event ticket.
-- **The off-LAN pass.** It fetched each link from one page on the Public origin, with no
-  credentials. 32 of 34 showed their record. The two misses were the survey's start link, one link
-  shared by both surfaces: without cookies its redirect does not reach the survey page. A page
-  navigation from the same cloud browser showed the survey title, and `off-lan.json` records that
-  result.
-- **A duplicate run.** The first attempt at the final run lost its shell to a memory shortage, but
-  its Python process kept going, so two runs wrote the non-mail records. All 18 duplicated
-  identities agreed in verdict and in both results. The later record of each is kept.
+- **Password reset: what was not tested.** The marker users never logged in, so Odoo offers only
+  "Send an Invitation Email" and not "Send Password Reset Instructions". Both send a
+  `/web/signup?…token=` link built the same way, but the reset mail itself was not sent.
+- **`U-E5`: what was not tested.** Only the mail path was tested, where Odoo turns attachments into
+  links. Odoo 18 CE shows no other absolute attachment URL: chatter download links are relative and
+  stay inside the page's own prefix. The `og:image` URLs are covered by `U-D8`.
+- **Reachability is text matching.** A link "shows its record" when the page contains the record's
+  name, or a word such as "password" (signup and reset) or "contact" (the tracked link lands on
+  Contact us). The dashboard, meeting link and pixel have no text to match: they pass on HTTP 200
+  without landing on `/web/login`.
+- **The off-LAN pass.** Every page was opened by navigation, as a person does. The four attachment
+  downloads and tracking pixels are not pages, so they were fetched with no credentials. All 34 links
+  showed their record, from two cloud addresses, neither of them the office's. A first pass fetched
+  every link; the survey start link then failed, because its redirect needs a cookie that such a
+  fetch does not keep. That is why pages are now navigated.
+- **Two record sets.** After review (commit `fc5faaf`), `U-E3`, `U-E4` and `U-D8` were run again and
+  the captured mail was judged again, so these records follow the final rules. The four `U-E7`
+  records come from the first final run; their code path did not change. An earlier attempt at the
+  final run lost its shell to a memory shortage while its Python process kept writing, so two runs
+  wrote records. All 18 duplicated identities agreed, and none of them is in this file.
 - **Not repeated.** `U-C20` (print report) is a group C item, so #143 ran it; the section 10.4 rows
   that point `U-C20` at #145 are covered there.
 
