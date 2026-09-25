@@ -181,13 +181,13 @@ def plan(
 
 # --- the inputs and the writer ------------------------------------------------
 
-def canonical_url_from_environment(lib: Path | str = MAINTENANCE_LIB) -> str | None:
+def canonical_url_from_environment() -> str | None:
     """This start's Canonical URL, by the maintenance library's own rule.
 
     The inputs are the three the bootstrap exports, under the same names;
     the wrapper CLI puts them in the environment from the same places.
     """
-    spec = importlib.util.spec_from_file_location("odoo_maintenance", lib)
+    spec = importlib.util.spec_from_file_location("odoo_maintenance", MAINTENANCE_LIB)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.canonical_url(
@@ -202,7 +202,6 @@ def odoo_shell(
     conf: str,
     environment: Mapping[str, str],
     *,
-    lib: Path | str = MAINTENANCE_LIB,
     runner: Callable = subprocess.run,
 ) -> subprocess.CompletedProcess:
     """Run the maintenance library for one database, the way the bootstrap does.
@@ -216,7 +215,7 @@ def odoo_shell(
     return runner(
         ["s6-setuidgid", "odoo", "/usr/bin/odoo", "shell",
          "-c", conf, "-d", database, "--no-http"],
-        input=Path(lib).read_text(encoding="utf-8"),
+        input=MAINTENANCE_LIB.read_text(encoding="utf-8"),
         env=dict(environment),
         capture_output=True,
         text=True,
@@ -250,11 +249,16 @@ def catch_up(
 
 # --- the step -----------------------------------------------------------------
 
+#: `main`'s default for `canonical`: read this start's inputs from the
+#: environment. A test passes a value, or None for "no Canonical URL".
+FROM_ENVIRONMENT = object()
+
+
 def main(
     argv=None,
     run_query: scan.QueryRunner | None = None,
     run_shell: ShellRunner | None = None,
-    canonical: str | None | object = ...,
+    canonical: str | None | object = FROM_ENVIRONMENT,
     out: Callable[[str], None] = print,
 ) -> int:
     parser = argparse.ArgumentParser(
@@ -267,7 +271,7 @@ def main(
                         help="the Odoo configuration odoo shell reads")
     arguments = parser.parse_args(argv)
 
-    if canonical is ...:
+    if canonical is FROM_ENVIRONMENT:
         canonical = canonical_url_from_environment()
     if not canonical:
         # No Canonical URL this start: the bootstrap said so once, at start.

@@ -27,11 +27,13 @@
 # the Canonical URL.
 #
 # Exit status: 0 when every database is up to date or was written, 1 when
-# the listing, a read or an `odoo shell` failed. The service loop treats a
-# non-zero exit as a warning and runs the next round five minutes later
-# (ADR 0009); nothing here can stop the container.
+# the listing, a read or an `odoo shell` failed. `set -e` is kept, as in
+# every CLI under /usr/local/bin (ADR 0009): the one command that may fail
+# has its status captured, so the exit is the library's answer, never an
+# early one. The service loop treats a non-zero exit as a warning and runs
+# the next round five minutes later; nothing here can stop the container.
 # ==============================================================================
-set -uo pipefail
+set -euo pipefail
 
 CONF="${1:-/data/odoo.conf}"
 LIB="/usr/local/lib/canonical_catchup.py"

@@ -52,6 +52,10 @@ _Avoid_: auto rule, dynamic rule, 自動修正 (as a noun)
 The add-on's own analysis of the served asset bundles that classifies every root-relative literal by how it is consumed and yields the Generated rewrites. The Literal rewrite gate is the same analysis run from outside against a Public origin.
 _Avoid_: 守門 (for the in-container run), auto-fix, self-check
 
+**Canonical URL catch-up**:
+The step at the end of every Rewrite scan round that writes the Canonical URL into the default website's `domain` of a database whose `website` module appeared after the start, through the same maintenance library the start uses; it reads through `psql` and loads no registry for a database that needs nothing.
+_Avoid_: domain fix, website domain sync, periodic bootstrap
+
 ### Lifecycle
 
 **Release**:

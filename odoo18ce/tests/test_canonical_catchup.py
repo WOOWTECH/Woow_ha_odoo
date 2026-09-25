@@ -206,6 +206,21 @@ def test_the_plan_reuses_the_scans_database_listing() -> None:
     assert (DB, scan.IS_ODOO_SQL) in run_query.calls
 
 
+def test_the_query_picks_the_record_the_maintenance_library_writes() -> None:
+    """The SQL re-states the library's ORM choice; this pins the two together.
+
+    `apply()` writes `website.default_website` and falls back to the lowest
+    id. A read that picked a different record would decide from one
+    website's domain and write another's, every round.
+    """
+    library = (LIB_DIR / "odoo-maintenance.py").read_text(encoding="utf-8")
+    assert 'env.ref("website.default_website"' in library
+    assert 'search([], order="id", limit=1)' in library
+    sql = catchup.DEFAULT_WEBSITE_DOMAIN_SQL
+    assert "d.module = 'website' AND d.name = 'default_website'" in sql
+    assert "ORDER BY d.id IS NULL, w.id" in sql and "LIMIT 1" in sql
+
+
 # --- the step, end to end with the writer stubbed -----------------------------
 
 def run_main(run_query, shell=None, canonical=CANONICAL, conf="/data/odoo.conf"):
@@ -344,6 +359,10 @@ def test_the_cli_feeds_the_library_the_bootstraps_inputs_and_forwards_its_lines(
     assert "literal_rewrite_auto" not in code_of(CLI), (
         "the option freezes Generated rewrites, not the Canonical URL"
     )
+    # Every CLI under /usr/local/bin keeps `set -e` (ADR 0009); the one
+    # command that may fail has its status captured.
+    assert "set -euo pipefail" in script
+    assert 'OUTPUT="$(python3 "${LIB}" --conf "${CONF}")" || STATUS=$?' in script
 
 
 def test_the_image_makes_the_new_files_readable() -> None:
@@ -378,9 +397,12 @@ def drive_service(round_status: int, catchup_status: int) -> tuple:
     with tempfile.TemporaryDirectory() as tmp:
         log = Path(tmp) / "log"
         log.touch()
+        # The round writes its report and sends its notification itself
+        # (rewrite_apply.main), so the stub does both, then exits.
         round_script = Path(tmp) / "round"
         round_script.write_text(
-            f"#!/bin/sh\necho 'round report line' >> \"{log.as_posix()}\"\nexit {round_status}\n",
+            f"#!/bin/sh\necho 'round report line' >> \"{log.as_posix()}\"\n"
+            f"echo 'NOTIFY round' >> \"{log.as_posix()}\"\nexit {round_status}\n",
             encoding="utf-8",
         )
         catchup_script = Path(tmp) / "catchup"
@@ -412,6 +434,12 @@ def test_a_failed_catch_up_does_not_change_the_round_or_end_the_loop() -> None:
     )
     catchup_warnings = [l for l in lines if l.startswith("WARN ") and "catch-up" in l]
     assert len(catchup_warnings) == 1 and "exit 1" in catchup_warnings[0]
+    # The round's notification is the round's own and went out before the
+    # catch-up ran; the catch-up sends none of its own (the brief keeps the
+    # two existing notifications the only ones).
+    notifications = [l for l in lines if l.startswith("NOTIFY ")]
+    assert notifications == ["NOTIFY round"]
+    assert lines.index("NOTIFY round") < lines.index("catch-up line")
     assert lines[-1] == "SLEEP 300", "the loop goes on to the next round"
 
 
