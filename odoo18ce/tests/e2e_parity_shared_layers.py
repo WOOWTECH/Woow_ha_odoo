@@ -49,7 +49,7 @@ def _rc(text: str) -> str:
     return "/".join(part if part.startswith(("RC-", "AD-")) else "RC-" + part for part in parts)
 
 
-# Parity plan section 6, groups F, A, B, C, D (E is #145).
+# Parity plan section 6. Group E is run by e2e_parity_outbound.py (#145).
 CATALOG: Mapping[str, Item] = {item.id: item for item in [
     *_items("F", "L0/L2", [
         ("U-F1", "RC-3", "iframe allow capability list"),
@@ -119,6 +119,15 @@ CATALOG: Mapping[str, Item] = {item.id: item for item in [
         ("U-D7", "RC-10", "anonymous front end"),
         ("U-D8", "RC-9", "SEO outputs"),
     ]),
+    *_items("E", "L5", [
+        ("U-E1", "RC-9", "web.base.url survives an Ingress login"),
+        ("U-E2", "RC-9", "links in outgoing mail"),
+        ("U-E3", "RC-9", "share link fields"),
+        ("U-E4", "RC-9", "links and QR codes in reports"),
+        ("U-E5", "RC-9", "absolute attachment URLs"),
+        ("U-E6", "RC-10", "external callback entries"),
+        ("U-E7", "RC-9", "URLs in exported files"),
+    ]),
 ]}
 
 # Issue #143's comment: parity plan section 10 screens a generic run misses.
@@ -144,8 +153,8 @@ MODULE_SCREENS: tuple[tuple[str, str, str], ...] = (
 
 
 def planned_checks() -> list[tuple[str, str, str]]:
-    """Every catalogued item once on a generic screen, then each module screen."""
-    return [(item, "shared", "generic") for item in CATALOG] + list(MODULE_SCREENS)
+    """Every item of groups F, A, B, C, D once on a generic screen, then each module screen."""
+    return [(item, "shared", "generic") for item, entry in CATALOG.items() if entry.group != "E"] + list(MODULE_SCREENS)
 
 
 def check_identity(item: str, module: str, screen: str) -> str:

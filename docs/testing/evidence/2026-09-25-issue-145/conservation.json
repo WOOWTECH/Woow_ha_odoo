@@ -1,0 +1,19 @@
+{
+  "observed": 25,
+  "counts": {
+    "PARITY": 23,
+    "GAP": 2,
+    "APPROVED-DIVERGENCE": 0,
+    "STRUCTURAL": 0,
+    "NOT-RUN": 0
+  },
+  "missing": [],
+  "unplanned": [],
+  "duplicates": [],
+  "unclassified": [],
+  "gaps_without_issue": [],
+  "structural_without_path": [],
+  "not_run": [],
+  "balanced": true,
+  "qualified": true
+}

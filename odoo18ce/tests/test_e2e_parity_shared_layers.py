@@ -30,11 +30,11 @@ def ok(result: str = "done", **details) -> Outcome:
 
 
 class CatalogTests(unittest.TestCase):
-    def test_the_catalog_holds_groups_f_a_b_c_d_of_the_parity_plan(self) -> None:
+    def test_the_catalog_holds_groups_f_a_b_c_d_e_of_the_parity_plan(self) -> None:
         counts = {}
         for item in CATALOG.values():
             counts[item.group] = counts.get(item.group, 0) + 1
-        self.assertEqual(counts, {"F": 5, "A": 10, "B": 8, "C": 27, "D": 8})
+        self.assertEqual(counts, {"F": 5, "A": 10, "B": 8, "C": 27, "D": 8, "E": 7})
         self.assertEqual(CATALOG["U-C4"].root_cause, ("RC-3",))
         self.assertEqual(CATALOG["U-F5"].layer, "L0/L2")
         self.assertEqual(CATALOG["U-D7"].root_cause, ("RC-10",))
@@ -46,7 +46,8 @@ class CatalogTests(unittest.TestCase):
 
     def test_the_plan_runs_every_item_once_plus_each_module_screen(self) -> None:
         plan = planned_checks()
-        self.assertEqual(len(plan), len(CATALOG) + len(MODULE_SCREENS))
+        shared = [item for item in CATALOG.values() if item.group != "E"]
+        self.assertEqual(len(plan), len(shared) + len(MODULE_SCREENS))
         self.assertEqual(len(set(plan)), len(plan))
         self.assertIn(("U-C4", "shared", "generic"), plan)
         self.assertIn(("U-C4", "survey", "survey share dialog"), plan)

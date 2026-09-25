@@ -467,6 +467,27 @@ F、A、B、C、D 群組在 `odoo_parity`（0.4.4）各跑一次，外加 10.1�
   #158、#159、#160，行動版沒有新增。
 - P-5 未過：`website` 在 add-on 啟動後才安裝，`website.domain` 空白到下次重啟（#164），`U-D8` 因此是 `GAP`。
 
+
+### 10.7 對外產出物實測結果（2026-09-25／26，#145）
+
+E 群組（`U-E2`、`U-E3`、`U-E4`、`U-E5`、`U-E7`）與 `U-D8` 在 `odoo_parity`（0.4.4）上，每種產出物
+都從兩個 surface 的 UI 各產生一次。25 項 = 23 `PARITY` + 2 `GAP`，無 `NOT-RUN`，每個 `GAP` 都有 issue。
+E 群組的判定**不只比較兩邊**：產出物裡只要有 HA 位址、相對 URL 或 Ingress token 就是 `GAP`，
+兩邊一樣錯也一樣。證據與方法見 `docs/testing/evidence/2026-09-25-issue-145/`。
+
+- **郵件**：攔截用的 SMTP sink 在 add-on 容器內（只收、不轉寄），收件者一律是
+  `e2-<what>-<surface>@example.invalid`。檢查的郵件有邀請、密碼重設、chatter 通知、群發（追蹤連結、
+  退訂、追蹤像素）、請假與費用審核。所有連結都在 Canonical URL 上。
+- **分享對話框**：共 10 個。portal.share 四個（報價、發票、採購、任務），另有專案、問卷、儀表板、
+  Discuss 邀請、Live Chat 連結、會議 URL。全部在 Canonical URL 上，匿名瀏覽器都打得開。
+- **附件**：寄出的附件變成 `/web/content/…?access_token` 連結，在 Canonical URL 上。
+- **匯出**：link tracker 與會議的 xlsx、csv 匯出也都在 Canonical URL 上。
+- **QR**：活動票券的 QR 內容是報名條碼，不是 URL。台灣公司在 CE 沒有 QR 付款方式，發票沒有 QR。
+- **區網外可達性**：允許匿名存取的每個連結，都從 LAN 外的雲端瀏覽器（browserless）再開一次，全部打得開。
+- **`GAP`**：
+  - 發票「Download > PDF」在 Ingress 下請求 HA 根目錄，404，檔案沒有下載（#174）。「PDF without Payment」兩邊都正常。
+  - Ingress 下的 `sitemap.xml` 仍以 HA 為基底（#172）。首頁 head 與 `robots.txt` 已是 Canonical URL，也就是 #164 修好了。
+
 ---
 
 ## 11. 已確認的落差登記
@@ -575,6 +596,13 @@ python3 odoo18ce/tests/e2e_parity_shared_layers_live.py pcheck --env-file .env -
 python3 odoo18ce/tests/e2e_parity_shared_layers_live.py fixtures --env-file .env --db <DB> --run-id <RUN_ID>
 python3 odoo18ce/tests/e2e_parity_shared_layers_live.py run --env-file .env --db <DB> --run-id <RUN_ID> --out checks.jsonl
 python3 odoo18ce/tests/e2e_parity_shared_layers_live.py report checks.jsonl --issues issues.json
+# 對外產出物 E 群組與 U-D8（#145）：容器內先起 SMTP sink，建 fixture，跑 check 與寄信，
+# 把 sink 收到的 .eml 複製出來再判郵件，LAN 外開完匿名連結後做守恆檢查，最後 teardown
+python3 odoo18ce/tests/e2e_parity_outbound_live.py fixtures --env-file .env --db <DB> --run-id <RUN_ID>
+python3 odoo18ce/tests/e2e_parity_outbound_live.py run --env-file .env --db <DB> --run-id <RUN_ID> --out checks.jsonl
+python3 odoo18ce/tests/e2e_parity_outbound_live.py mail --env-file .env --db <DB> --run-id <RUN_ID> --mail-dir mail/ --out checks.jsonl
+python3 odoo18ce/tests/e2e_parity_outbound_live.py report checks.jsonl --off-lan off-lan.json --issues issues.json
+python3 odoo18ce/tests/e2e_parity_outbound_live.py teardown --env-file .env --db <DB> --run-id <RUN_ID>
 python3 odoo18ce/tests/e2e_settings_ingress.py
 ```
 

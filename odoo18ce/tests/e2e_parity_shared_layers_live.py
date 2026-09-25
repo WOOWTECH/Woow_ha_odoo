@@ -2707,21 +2707,27 @@ def check_d8(run: Run) -> None:
         side.settle()
         found["head"] = side.root.evaluate("""() => [...document.querySelectorAll(
           'link[rel=canonical], link[rel=alternate], meta[property="og:url"], meta[property="og:image"], '
-          + 'meta[name="twitter:image"], link[rel~=icon]')].map(e => e.href || e.content).filter(Boolean)""")
+          + 'meta[name="twitter:image"], link[rel~=icon]')].map(e => e.getAttribute('href') || e.content)
+          .filter(Boolean)""")
+        # A root-relative value (the favicon) is the site's own resource, not
+        # an outbound URL: the page loads it under whatever prefix it is on.
+        found["head"] = [url for url in found["head"] if urlsplit(url).netloc]
         # XML namespace URIs are names, not links.
         namespaces = ("www.sitemaps.org", "www.w3.org", "www.google.com")
-        bases = sorted({"%s://%s" % (urlsplit(url).scheme, urlsplit(url).netloc) for urls in found.values()
-                        for url in urls if urlsplit(url).netloc and urlsplit(url).hostname not in namespaces})
-        masked = [run.env.mask(base) for base in bases]
+        by_source = {source: sorted({run.env.mask("%s://%s" % (urlsplit(url).scheme, urlsplit(url).netloc))
+                                     for url in urls if urlsplit(url).netloc
+                                     and urlsplit(url).hostname not in namespaces})
+                     for source, urls in found.items()}
+        masked = sorted({base for bases in by_source.values() for base in bases})
         wrong = [base for base in masked if base != "<PUBLIC_BASE>"]
         return Outcome(True, "all SEO URLs on <PUBLIC_BASE>" if not wrong else "SEO URLs on %s" % ", ".join(wrong),
-                       details={"bases": masked})
+                       details={"bases": masked, "by_source": by_source})
 
     public, ingress = run.both(probe)
     run.record("U-D8", "shared", "generic", public, ingress,
                notes="sitemap.xml, robots.txt, and the home page's canonical, alternate, og:url, og:image, "
-                     "twitter:image and icon links. P-5 (website.domain) fails on odoo_parity, which is the "
-                     "setting these URLs are built from.")
+                     "twitter:image and icon links (root-relative icons are the page's own resources). The "
+                     "head's URLs are built from website.domain (P-5).")
 
 
 # --- P-Check ------------------------------------------------------------------
