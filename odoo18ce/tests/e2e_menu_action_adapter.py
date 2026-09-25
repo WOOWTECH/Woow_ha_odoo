@@ -381,6 +381,7 @@ class RunInfo:
     run_id: str
     target: str
     database: str
+    client: str = CLIENT
 
 
 @dataclass(frozen=True)
@@ -396,6 +397,24 @@ class SurfaceObservation:
     http_5xx: int = 0
 
 
+# Odoo 18 switches to its small-screen layout below this width.
+_SMALL_SCREEN_WIDTH = 768
+
+
+def parse_viewport(text: str) -> tuple[tuple[int, int], str]:
+    """`390x844` -> the viewport and the client label its records carry.
+
+    A width Odoo lays out for small screens is labelled mobile-emulation: it
+    is the desktop browser at phone size, not a phone or the Companion app.
+    """
+    match = re.fullmatch(r"([1-9][0-9]{1,4})x([1-9][0-9]{1,4})", text.strip())
+    if not match:
+        raise ValueError("viewport must look like 390x844, got %r" % text)
+    width, height = int(match.group(1)), int(match.group(2))
+    kind = "mobile-emulation-chrome" if width < _SMALL_SCREEN_WIDTH else "desktop-chrome"
+    return (width, height), "%s-%dx%d" % (kind, width, height)
+
+
 def new_run_id() -> str:
     return "WOOW-PARITY-" + dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
@@ -406,7 +425,7 @@ def _base_record(run: RunInfo, module: str, identity: str, screen: Mapping[str, 
         "run_id": run.run_id,
         "target": run.target,
         "database": run.database,
-        "client": CLIENT,
+        "client": run.client,
         "layer": "L3",
         "item": "U-C12",
         "root_cause": ["RC-1"],
@@ -694,7 +713,9 @@ _SCREEN_JS = r"""() => {
 class SurfaceDriver:
     """Logs in on one surface and opens planned visits, reading only."""
 
-    def __init__(self, surface: Surface, browser, *, ignore_https_errors: bool) -> None:
+    def __init__(
+        self, surface: Surface, browser, *, ignore_https_errors: bool, viewport: tuple[int, int] = (1920, 1080),
+    ) -> None:
         self.surface = surface
         self.ingress: IngressSession | None = None
         self.login = _require_env("ODOO_TEST_LOGIN")
@@ -724,7 +745,7 @@ class SurfaceDriver:
             secrets=tuple(secrets),
         )
         self.context = browser.new_context(
-            viewport={"width": 1920, "height": 1080}, ignore_https_errors=ignore_https_errors,
+            viewport={"width": viewport[0], "height": viewport[1]}, ignore_https_errors=ignore_https_errors,
         )
         if self.ingress:
             host = urlsplit(self.origin)
@@ -828,16 +849,17 @@ class SurfaceDriver:
             self.ingress.close()
 
 
-def crawl(surface: Surface, apps: Sequence[str], out) -> int:
+def crawl(surface: Surface, apps: Sequence[str], out, *, viewport: str = "1920x1080") -> int:
     from playwright.sync_api import sync_playwright
 
-    run = RunInfo(new_run_id(), os.environ.get("PARITY_TARGET", "local"), os.environ.get("ODOO_DB", "default"))
+    size, client = parse_viewport(viewport)
+    run = RunInfo(new_run_id(), os.environ.get("PARITY_TARGET", "local"), os.environ.get("ODOO_DB", "default"), client)
     ignore_https = os.environ.get("IGNORE_HTTPS_ERRORS", "0") == "1"
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         driver = None
         try:
-            driver = SurfaceDriver(surface, browser, ignore_https_errors=ignore_https)
+            driver = SurfaceDriver(surface, browser, ignore_https_errors=ignore_https, viewport=size)
             driver.log_in()
             scope = scope_from_web_menus(driver.web_menus(), apps)
             visits = plan_visits(scope)
@@ -874,6 +896,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     crawl_parser.add_argument("--apps", required=True, help="comma-separated module names, e.g. contacts,project")
     crawl_parser.add_argument("--out", required=True, help="JSONL evidence file to write")
     crawl_parser.add_argument("--env-file", help="read unset credentials from this NAME=value file")
+    crawl_parser.add_argument("--viewport", default="1920x1080",
+                              help="WIDTHxHEIGHT; below 768 wide Odoo uses its mobile layout (default 1920x1080)")
     diff_parser = commands.add_parser("diff", help="judge a Public origin run against an Ingress run")
     diff_parser.add_argument("public_run")
     diff_parser.add_argument("ingress_run")
@@ -886,7 +910,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 parse_env_file(env_file, os.environ)
         apps = [app.strip() for app in args.apps.split(",") if app.strip()]
         with open(args.out, "w", encoding="utf-8") as out:
-            return crawl(Surface(args.surface), apps, out)
+            return crawl(Surface(args.surface), apps, out, viewport=args.viewport)
 
     with open(args.public_run, encoding="utf-8") as public, open(args.ingress_run, encoding="utf-8") as ingress:
         merged = diff_runs(read_records(public), read_records(ingress))

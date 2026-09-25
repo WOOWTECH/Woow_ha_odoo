@@ -448,9 +448,24 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 | 項目 | 為何重要 | 處置 |
 |---|---|---|
 | HA 手機 App WebView | WebView 版本、剪貼簿權限、下載、新分頁行為都與桌機 Chrome 不同；多數 ingress 獨有 bug 只在此浮現 | 下一輪納入；本輪結論不得外推到 App |
-| 行動版視窗（390×844） | Odoo 切換到行動版 layout，選單與對話框行為不同 | 同上 |
+| 行動版視窗（390×844） | Odoo 切換到行動版 layout，選單與對話框行為不同 | 桌機 Chrome 的行動版模擬已於 2026-09-25 跑過選單爬蟲（#143，見 10.6）；實機仍未覆蓋 |
 | Safari／非 Chromium | 第三方 cookie、SharedWorker、clipboard 限制不同 | 同上 |
 | 開發者模式差集 | 由 `docs/plans/2026-09-05-odoo-developer-mode-delta-tdd.md` 承接 | 交叉引用，不重複 |
+
+### 10.6 共用層實測結果（2026-09-25，#143）
+
+F、A、B、C、D 群組在 `odoo_parity`（0.4.4）各跑一次，外加 10.1–10.3 指定的模組畫面；Ingress 端是 HA 前端
+面板裡的 iframe（plain-http LAN 入口），`U-C25` 走 https 入口。75 項 = 51 `PARITY` + 9 `GAP` + 1
+`APPROVED-DIVERGENCE` + 5 `STRUCTURAL` + 9 `NOT-RUN`；每個 `GAP` 都有 issue（#159、#164–#170）。
+`NOT-RUN`：POS 兩項（#161）、`U-A9`（無 60 秒以上的動作）、`U-C22`（只有一種語言）、`/event` 與活動報名
+（未裝 `website_event`）、CE 沒有該控制項的三個模組畫面（MRP 工作中心與工單、出勤 kiosk 全螢幕）。證據與方法見 `docs/testing/evidence/2026-09-25-issue-143/`。
+
+- **`U-F1` 上界**：Ingress iframe 與 HA **同源**，沒有 `allow`、沒有 `sandbox`，政策全部放行；唯一限制是
+  plain-http 不是安全環境（clipboard-write、camera、microphone）。`G-02` 的未知因此有答案：HA 沒有擋，
+  複製鈕靠 #60 的 fallback，相機要 https 入口（實測可用）。
+- 390×844 行動版模擬爬蟲：299 個選單 = 281 `PARITY` + 4 `GAP` + 14 跳過，4 個 `GAP` 就是桌機已登記的
+  #158、#159、#160，行動版沒有新增。
+- P-5 未過：`website` 在 add-on 啟動後才安裝，`website.domain` 空白到下次重啟（#164），`U-D8` 因此是 `GAP`。
 
 ---
 
@@ -495,6 +510,10 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
   "notes": "..."
 }
 ```
+
+共用層 driver（#143）的記錄另有：`verdict` 可為 `NOT-RUN`（此時 `severity` 為 null、必填 `blocked_by`
+說明阻擋原因，未執行的 surface 為 null）、`screen.name`（受測畫面名稱）、`STRUCTURAL` 必填的 `public_path`、
+`GAP` 立案後的 `issue`。每筆同時帶兩個 surface，`control_identity` 為 `check:<item>|<module>|<screen>`。
 
 **去識別化硬性規則**：不得寫入憑證、ingress token、原始 URL、query string、cookie 值、
 真實客戶資料。URL 一律以「基底代號 + 規範路徑」記錄（例：`<PUBLIC_BASE>/my/orders/42`）。
@@ -549,6 +568,12 @@ ODOO_BASE_URL=<INGRESS_BASE> ... python3 odoo18ce/tests/e2e_adversarial.py
 python3 odoo18ce/tests/e2e_menu_action_adapter.py crawl --surface public     --apps contacts,project --env-file .env --out public.jsonl
 python3 odoo18ce/tests/e2e_menu_action_adapter.py crawl --surface ha_ingress --apps contacts,project --env-file .env --out ingress.jsonl
 python3 odoo18ce/tests/e2e_menu_action_adapter.py diff public.jsonl ingress.jsonl --out diff.jsonl
+# 行動版模擬：crawl 加 --viewport 390x844
+# 共用層 F/A/B/C/D（#143）：先 P-Check、建 P-7 fixture，再跑全部 check，最後守恆檢查
+python3 odoo18ce/tests/e2e_parity_shared_layers_live.py pcheck --env-file .env --db <DB>
+python3 odoo18ce/tests/e2e_parity_shared_layers_live.py fixtures --env-file .env --db <DB> --run-id <RUN_ID>
+python3 odoo18ce/tests/e2e_parity_shared_layers_live.py run --env-file .env --db <DB> --run-id <RUN_ID> --out checks.jsonl
+python3 odoo18ce/tests/e2e_parity_shared_layers_live.py report checks.jsonl --issues issues.json
 python3 odoo18ce/tests/e2e_settings_ingress.py
 ```
 
