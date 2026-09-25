@@ -14,8 +14,7 @@
         [--off-lan results.json --off-lan-browser "..."]
     python odoo18ce/tests/e2e_parity_outbound_live.py teardown --env-file .env --db odoo_parity --run-id ...
 
-Each artefact is produced once from the Public origin and once inside the
-Home Assistant panel, the same two surfaces as e2e_parity_shared_layers_live.py
+Each artefact is produced once from the Public origin and once under Ingress, the same two surfaces as e2e_parity_shared_layers_live.py
 (whose sides, login and masking this reuses). Mail is triggered through the
 UI of each surface to a recipient named after that surface
 (`e2-<what>-<surface>@example.invalid`), goes out through an `ir.mail_server`
@@ -44,6 +43,8 @@ from urllib.parse import urlsplit
 from e2e_menu_action_adapter import RunInfo, new_run_id, parse_env_file, sanitize_diagnostic
 from e2e_parity_outbound import (
     Bases,
+    check_identity,
+    classify_url,
     csv_strings,
     extract_urls,
     literal_findings,
@@ -230,25 +231,29 @@ class OutboundRun(Run):
     def emit(self, item: str, module: str, screen: str, public: Outcome, ingress: Outcome, **kwargs) -> None:
         self.write(outbound_record(self.info, item, module, screen, public, ingress, bases=self.bases, **kwargs))
 
-    def reach(self, identity: str, side: str, url: str, expect: str | None) -> str:
+    def reach(self, identity: str, side: str, url: str, expect: str | None) -> dict[str, Any]:
         """Open `url` in a browser with no session (on the LAN) and remember it for the off-LAN pass."""
+        link = self.env.mask(url_shape(url))  # what the evidence may show of it: no id or token
         self.reach_list = [entry for entry in self.reach_list
                            if (entry["identity"], entry["side"], entry["url"]) != (identity, side, url)]
-        # `link` is what the evidence may show of it: masked, no id or token.
-        self.reach_list.append({"identity": identity, "side": side, "url": url, "expect": expect,
-                                "link": self.env.mask(url_shape(url))})
+        self.reach_list.append({"identity": identity, "side": side, "url": url, "expect": expect, "link": link})
         _save(reach_path(self.info.run_id), self.reach_list)
         context = self.browser.new_context()
         try:
             response = context.request.get(url, max_redirects=10, timeout=TIMEOUT)
             text = response.text() if response.ok and expect else ""  # a pixel or a file is not text
-            final = response.url
-        except Exception as error:  # noqa: BLE001 -- unreachable is the result
-            return "unreachable (%s)" % type(error).__name__
+            status, final = response.status, response.url
+        except Exception:  # noqa: BLE001 -- unreachable is the result
+            return {"link": link, "status": None, "shown": False}
         finally:
             context.close()
         shown = (expect.lower() in text.lower()) if expect else (response.ok and "/web/login" not in final)
-        return "HTTP %d, %s" % (response.status, "shows the record" if shown else "record not shown")
+        return {"link": link, "status": status, "shown": shown}
+
+
+def reach_summary(reached: list[dict[str, Any]]) -> str:
+    return "; ".join("HTTP %s, %s" % (entry["status"], "shows the record" if entry["shown"] else "record not shown")
+                     for entry in reached)
 
 
 def _load(path: str, default):
@@ -264,8 +269,6 @@ def _save(path: str, value) -> None:
 
 
 def base_code(run: OutboundRun, url: str) -> str:
-    from e2e_parity_outbound import classify_url
-
     kind = classify_url(url, run.bases)
     return {"canonical": "<PUBLIC_BASE>", "ingress-token": "<INGRESS_BASE>", "ha": "<HA_BASE>"}.get(kind, kind)
 
@@ -273,19 +276,12 @@ def base_code(run: OutboundRun, url: str) -> str:
 def link_outcome(run: OutboundRun, identity: str, side: Side, links: list[str], anonymous: dict[str, str | None]) -> Outcome:
     """A share link (or links) as an Outcome: where it points, and what a visitor sees."""
     findings = literal_findings(links, run.bases)
-    opened = []
-    for link in links:
-        if link in anonymous:
-            opened.append(run.reach(identity, side.name, link, anonymous[link]))
+    reached = [run.reach(identity, side.name, link, anonymous[link]) for link in links if link in anonymous]
     result = "links on %s" % ", ".join(sorted({base_code(run, link) for link in links})) if links else "no link"
-    if opened:
-        result += "; anonymous browser: %s" % "; ".join(opened)
-    return Outcome(True, result, details={"literal": findings,
+    if reached:
+        result += "; anonymous browser: %s" % reach_summary(reached)
+    return Outcome(True, result, details={"literal": findings, "reach": reached,
                                           "paths": sorted({url_shape(link) for link in links})})
-
-
-def identity_of(item: str, module: str, screen: str) -> str:
-    return "check:%s|%s|%s" % (item, module, screen)
 
 
 # --- U-E3: share dialogs ----------------------------------------------------------
@@ -445,14 +441,15 @@ def check_e3(run: OutboundRun) -> None:
          "Calendar event > Odoo meeting: the Videocall URL, set on each surface's own event."),
     ]
     for module, screen, get, expect, notes in screens:
-        identity = identity_of("U-E3", module, screen)
+        identity = check_identity("U-E3", module, screen)
 
         def probe(side: Side, get=get, expect=expect, module=module) -> Outcome:
             value = get(run, side)
             links = value if isinstance(value, list) else [value]
-            anonymous = {link: expect for link in links if not link.endswith(".js") and "/loader/" not in link}
-            if module == "im_livechat":
+            if module == "im_livechat":  # the widget's script and loader are not pages
                 anonymous = {link: expect for link in links if "/im_livechat/support/" in link}
+            else:
+                anonymous = {link: expect for link in links}
             return link_outcome(run, identity, side, links, anonymous)
 
         public, ingress = run.both(probe)
@@ -488,6 +485,8 @@ def print_report(side: Side, model: str, record_id: int, labels: tuple[str, ...]
 
 
 def check_e4(run: OutboundRun) -> None:
+    no_qr = ("the company has no QR payment method (Taiwan, Odoo CE), so the invoice carries no QR code; the "
+             "ECPay e-invoice print needs an issued e-invoice (#146)")
     for module, screen, model, key, label, notes in (
         ("account", "invoice PDF", "account.move", "invoice", ("Download", "PDF"),
          "Action menu > Download > PDF on a posted invoice. The company has no QR payment method for Taiwan, so "
@@ -512,7 +511,8 @@ def check_e4(run: OutboundRun) -> None:
                                                                               for p in payloads})})
 
         public, ingress = run.both(probe)
-        run.emit("U-E4", module, screen, public, ingress, notes=notes)
+        run.emit("U-E4", module, screen, public, ingress, notes=notes,
+                 blocked_by=no_qr if module == "account" else None)
 
 
 # --- U-E7: exported files -----------------------------------------------------------
@@ -658,7 +658,7 @@ def trigger_mail(run: OutboundRun, screens: set[str] | None = None, sides: set[s
         for side in run.sides:
             if sides and side.name not in sides:
                 continue
-            entry = {"identity": identity_of(item, module, screen), "side": side.name,
+            entry = {"identity": check_identity(item, module, screen), "check": [item, module, screen], "side": side.name,
                      "recipient": recipient(what, side.name), "triggered": True, "error": None}
             side.close_chat_windows()
             try:
@@ -714,7 +714,7 @@ def judge_mail(run: OutboundRun, mail_dir: str) -> None:
     for entry in run.mail_plan:
         by_identity.setdefault(entry["identity"], {})[entry["side"]] = entry
     for identity, sides in by_identity.items():
-        _, item, module, screen = re.match(r"check:(U-[A-Z]\d+)\|([^|]+)\|(.+)", identity).group(0, 1, 2, 3)
+        item, module, screen = sides["public"]["check"]
         outcomes = []
         for side_name in ("public", "ingress"):
             entry = sides[side_name]
@@ -727,19 +727,20 @@ def judge_mail(run: OutboundRun, mail_dir: str) -> None:
                 continue
             urls = sorted({url for message in mine for url in message["urls"]})
             findings = literal_findings(urls, run.bases)
-            opened = []
+            reached, missing = [], []
             for pattern, expect in ANONYMOUS_MAIL_LINKS.get(screen, []):
-                link = next((url for url in urls if re.search(pattern, url)
-                             and not url.startswith("/")), None)
+                link = next((url for url in urls if re.search(pattern, url) and not url.startswith("/")), None)
                 if link:
-                    opened.append(run.reach(identity, side_name, link, expect))
+                    reached.append(run.reach(identity, side_name, link, expect))
                 else:
-                    opened.append("no %s link" % pattern)
+                    missing.append(pattern)
             result = "%d mail(s), links on %s" % (len(mine), ", ".join(sorted(findings["counts"])) or "nothing")
-            if opened:
-                result += "; anonymous browser: %s" % "; ".join(opened)
+            if reached:
+                result += "; anonymous browser: %s" % reach_summary(reached)
+            if missing:
+                result += "; no link for %s" % ", ".join(missing)
             outcomes.append(Outcome(True, result, details={
-                "literal": findings, "subjects": sorted({message["subject"] for message in mine}),
+                "literal": findings, "reach": reached, "subjects": sorted({message["subject"] for message in mine}),
                 "paths": sorted({url_shape(url) for url in urls})}))
         run.emit(item, module, screen, outcomes[0], outcomes[1],
                 notes="Triggered through the UI of each surface; captured by the SMTP sink, never relayed.")
@@ -748,7 +749,7 @@ def judge_mail(run: OutboundRun, mail_dir: str) -> None:
 # --- Command line -------------------------------------------------------------------
 
 ORDER = {"U-E3": check_e3, "U-E4": check_e4, "U-E7": check_e7, "U-E2": trigger_mail,
-         "U-D8": lambda run: CHECKS["U-D8"](run)}
+         "U-D8": CHECKS["U-D8"]}
 
 
 def main(argv=None) -> int:

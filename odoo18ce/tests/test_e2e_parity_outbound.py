@@ -178,24 +178,45 @@ class RecordTests(unittest.TestCase):
 
     def test_equal_clean_results_are_parity(self) -> None:
         record = outbound_record(RUN, "U-E2", "portal", "portal invitation",
-                                 self.outcome([PUBLIC + "/a"]), self.outcome([PUBLIC + "/b"]))
+                                 self.outcome([PUBLIC + "/a"]), self.outcome([PUBLIC + "/b"]), bases=BASES)
         self.assertEqual((record["verdict"], record["severity"]), ("PARITY", "none"))
 
     def test_the_same_leak_on_both_surfaces_is_still_a_gap(self) -> None:
         # The Canonical URL is an absolute requirement, not a comparison.
         leak = [HA + PREFIX + "/web/signup"]
-        record = outbound_record(RUN, "U-E2", "portal", "portal invitation", self.outcome(leak), self.outcome(leak))
+        record = outbound_record(RUN, "U-E2", "portal", "portal invitation", self.outcome(leak), self.outcome(leak),
+                                 bases=BASES)
         self.assertEqual((record["verdict"], record["severity"]), ("GAP", "blocker"))
         self.assertIn("ingress-token", record["notes"])
 
     def test_an_ha_url_without_the_token_is_important(self) -> None:
         record = outbound_record(RUN, "U-E7", "calendar", "meeting export xlsx",
-                                 self.outcome([PUBLIC + "/a"]), self.outcome([HA + "/b"]))
+                                 self.outcome([PUBLIC + "/a"]), self.outcome([HA + "/b"]), bases=BASES)
         self.assertEqual((record["verdict"], record["severity"]), ("GAP", "important"))
+
+    def test_an_artefact_with_nothing_to_judge_is_not_run_and_says_why(self) -> None:
+        # A PDF without a QR code, or a mail without a link, cannot pass a check about them.
+        empty = Outcome(True, "0 QR code(s)", details={"literal": qr_findings([], [], BASES)})
+        with self.assertRaises(ValueError):
+            outbound_record(RUN, "U-E4", "account", "invoice PDF without Payment", empty, empty, bases=BASES)
+        record = outbound_record(RUN, "U-E4", "account", "invoice PDF without Payment", empty, empty, bases=BASES,
+                                 blocked_by="no QR payment method for Taiwan in CE")
+        self.assertEqual((record["verdict"], record["blocked_by"]), ("NOT-RUN", "no QR payment method for Taiwan in CE"))
+
+    def test_a_link_an_anonymous_browser_cannot_open_is_a_gap_even_on_both_sides(self) -> None:
+        def reached(shown):
+            findings = literal_findings([PUBLIC + "/a"], BASES)
+            return Outcome(True, "same", details={"literal": findings,
+                                                  "reach": [{"link": "<PUBLIC_BASE>/a", "status": 404, "shown": shown}]})
+        record = outbound_record(RUN, "U-E3", "project", "task Share", reached(False), reached(False), bases=BASES)
+        self.assertEqual((record["verdict"], record["severity"]), ("GAP", "important"))
+        self.assertIn("public anonymous: <PUBLIC_BASE>/a not shown (HTTP 404)", record["notes"])
+        self.assertEqual(outbound_record(RUN, "U-E3", "project", "task Share", reached(True), reached(True),
+                                         bases=BASES)["verdict"], "PARITY")
 
     def test_off_lan_results_merge_into_their_record(self) -> None:
         record = outbound_record(RUN, "U-E3", "project", "task Share",
-                                 self.outcome([PUBLIC + "/a"]), self.outcome([PUBLIC + "/b"]))
+                                 self.outcome([PUBLIC + "/a"]), self.outcome([PUBLIC + "/b"]), bases=BASES)
         merged = merge_off_lan([record], [
             {"identity": record["control_identity"], "side": "public", "status": 200, "shown": True, "link": "/a"},
             {"identity": record["control_identity"], "side": "ingress", "status": 200, "shown": True, "link": "/b"},
@@ -210,7 +231,7 @@ class RecordTests(unittest.TestCase):
 
     def test_merging_twice_replaces_the_earlier_off_lan_result(self) -> None:
         record = outbound_record(RUN, "U-E3", "project", "task Share",
-                                 self.outcome([PUBLIC + "/a"]), self.outcome([PUBLIC + "/b"]))
+                                 self.outcome([PUBLIC + "/a"]), self.outcome([PUBLIC + "/b"]), bases=BASES)
         result = {"identity": record["control_identity"], "side": "public", "status": 200, "shown": True, "link": "/a"}
         once = merge_off_lan([record], [result], browser="b")
         twice = merge_off_lan(once, [result], browser="b")

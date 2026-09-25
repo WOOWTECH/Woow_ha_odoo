@@ -5,7 +5,7 @@ Group E is what the server builds for the outside world: links in outgoing
 mail (`U-E2`), share dialogs (`U-E3`), report PDFs and their QR codes
 (`U-E4`), absolute attachment URLs (`U-E5`) and exported files (`U-E7`);
 `U-D8` adds the SEO outputs. Each artefact is produced once from the
-Public origin and once from inside the Home Assistant panel, and every URL
+Public origin and once under Ingress, and every URL
 in it is classified against the **Canonical URL**.
 
 Unlike groups F-D, the verdict is not only a comparison of the two
@@ -35,7 +35,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import urlsplit
 
 from e2e_menu_action_adapter import RunInfo
-from e2e_parity_shared_layers import Outcome, check_identity, check_record, judge
+from e2e_parity_shared_layers import NOT_RUN, Outcome, check_identity, check_record, judge
 
 OUTBOUND_SCREENS: tuple[tuple[str, str, str], ...] = (
     ("U-E2", "portal", "portal invitation"),
@@ -221,34 +221,45 @@ def qr_findings(payloads: Sequence[str], pdf_links: Sequence[str], bases: Bases)
 # --- Records --------------------------------------------------------------------
 
 
-def _literal_of(outcome: Outcome) -> Mapping[str, Any]:
-    details = outcome.details or {}
-    return details.get("literal") or {}
+def _details_of(outcome: Outcome) -> Mapping[str, Any]:
+    return outcome.details or {}
 
 
-def outbound_record(run: RunInfo, item: str, module: str, screen: str, public: Outcome, ingress: Outcome,
-                    **kwargs) -> dict[str, Any]:
-    """One group-E check: a comparison of the surfaces, plus the Canonical URL as an absolute rule."""
+def outbound_record(run: RunInfo, item: str, module: str, screen: str, public: Outcome, ingress: Outcome, *,
+                    bases: Bases, blocked_by: str | None = None, **kwargs) -> dict[str, Any]:
+    """One group-E check: a comparison of the surfaces, plus absolute rules for each artefact.
+
+    - a URL off the Canonical URL is a GAP (Blocker with an Ingress token), even on both surfaces;
+    - an anonymous link (`details["reach"]`) that does not show its record is an Important GAP;
+    - an artefact with nothing to judge (`literal["ok"]` false without a problem: no link, no QR code)
+      cannot pass, so the check is NOT-RUN and must say what blocks it.
+    """
     verdict, severity, reasons = judge(public, ingress)
-    bases = kwargs.pop("bases", None)
+    empty = False
     for name, outcome in (("public", public), ("ingress", ingress)):
-        for url in _literal_of(outcome).get("problems", []):
-            kind = classify_url(url, bases) if bases else _kind_of_problem(url)
+        literal = _details_of(outcome).get("literal") or {}
+        for url in literal.get("problems", []):
+            kind = classify_url(url, bases)
             reasons.append("%s literal: %s %s" % (name, kind, url_shape(url)))
             verdict = "GAP"
             if kind == "ingress-token":
                 severity = "blocker"
             elif severity == "none":
                 severity = "important"
+        for reached in _details_of(outcome).get("reach", []):
+            if not reached["shown"]:
+                reasons.append("%s anonymous: %s not shown (HTTP %s)" % (name, reached["link"], reached["status"]))
+                verdict = "GAP"
+                severity = "important" if severity == "none" else severity
+        empty = empty or (outcome.available and literal and not literal.get("ok") and not literal.get("problems"))
     notes = "; ".join(filter(None, [kwargs.pop("notes", ""), *reasons]))
+    if verdict == "PARITY" and empty:
+        if not blocked_by:
+            raise ValueError("%s %s: the artefact holds nothing to judge; name what blocks the check" % (item, screen))
+        return check_record(run, item, module=module, screen=screen, public=public, ingress=ingress,
+                            verdict=NOT_RUN, blocked_by=blocked_by, notes=notes, **kwargs)
     return check_record(run, item, module=module, screen=screen, public=public, ingress=ingress,
                         verdict=verdict, severity=severity, notes=notes, **kwargs)
-
-
-def _kind_of_problem(url: str) -> str:
-    if "/api/hassio_ingress/" in url or "<INGRESS_PREFIX>" in url or "<INGRESS_BASE>" in url:
-        return "ingress-token"
-    return "relative" if url.startswith("/") else "ha"
 
 
 def merge_off_lan(records: Iterable[Mapping[str, Any]], results: Iterable[Mapping[str, Any]], *,

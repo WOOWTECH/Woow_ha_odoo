@@ -42,6 +42,7 @@ from e2e_menu_action_adapter import (
     parse_env_file,
     sanitize_diagnostic,
 )
+from e2e_parity_outbound import NAMESPACE_HOSTS  # XML namespace URIs are names, not links
 from e2e_parity_shared_layers import (
     NOT_RUN,
     Outcome,
@@ -2705,21 +2706,21 @@ def check_d8(run: Run) -> None:
             found[path] = sorted(set(re.findall(r"https?://[^\s<\"']+", body)))
         side.goto("/")
         side.settle()
-        found["head"] = side.root.evaluate("""() => [...document.querySelectorAll(
+        head = side.root.evaluate("""() => [...document.querySelectorAll(
           'link[rel=canonical], link[rel=alternate], meta[property="og:url"], meta[property="og:image"], '
-          + 'meta[name="twitter:image"], link[rel~=icon]')].map(e => e.getAttribute('href') || e.content)
-          .filter(Boolean)""")
-        # A root-relative value (the favicon) is the site's own resource, not
-        # an outbound URL: the page loads it under whatever prefix it is on.
-        found["head"] = [url for url in found["head"] if urlsplit(url).netloc]
-        # XML namespace URIs are names, not links.
-        namespaces = ("www.sitemaps.org", "www.w3.org", "www.google.com")
+          + 'meta[name="twitter:image"], link[rel~=icon]')].map(e => [e.matches('link[rel~=icon]'),
+                                                                        e.getAttribute('href') || e.content])
+          .filter(pair => pair[1])""")
+        # A root-relative icon is the page's own resource, loaded under whatever prefix the page is on;
+        # any other root-relative value (canonical, og:url) is an outbound URL that has lost its base.
+        found["head"] = [url for icon, url in head if not (icon and not urlsplit(url).netloc)]
+        relative = [url for url in found["head"] if not urlsplit(url).netloc]
         by_source = {source: sorted({run.env.mask("%s://%s" % (urlsplit(url).scheme, urlsplit(url).netloc))
                                      for url in urls if urlsplit(url).netloc
-                                     and urlsplit(url).hostname not in namespaces})
+                                     and urlsplit(url).hostname not in NAMESPACE_HOSTS})
                      for source, urls in found.items()}
         masked = sorted({base for bases in by_source.values() for base in bases})
-        wrong = [base for base in masked if base != "<PUBLIC_BASE>"]
+        wrong = [base for base in masked if base != "<PUBLIC_BASE>"] + (["relative URLs"] if relative else [])
         return Outcome(True, "all SEO URLs on <PUBLIC_BASE>" if not wrong else "SEO URLs on %s" % ", ".join(wrong),
                        details={"bases": masked, "by_source": by_source})
 
