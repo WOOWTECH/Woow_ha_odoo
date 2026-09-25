@@ -1,0 +1,26 @@
+{
+  "observed": 75,
+  "counts": {
+    "PARITY": 54,
+    "GAP": 9,
+    "APPROVED-DIVERGENCE": 1,
+    "STRUCTURAL": 5,
+    "NOT-RUN": 6
+  },
+  "missing": [],
+  "unplanned": [],
+  "duplicates": [],
+  "unclassified": [],
+  "gaps_without_issue": [],
+  "structural_without_path": [],
+  "not_run": [
+    "check:U-F5|point_of_sale|POS receipt print",
+    "check:U-A9|shared|generic",
+    "check:U-C22|shared|generic",
+    "check:U-C25|point_of_sale|POS product scan",
+    "check:U-D6|event|event registration",
+    "check:U-D7|event|/event"
+  ],
+  "balanced": true,
+  "qualified": false
+}

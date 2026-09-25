@@ -20,6 +20,7 @@ from e2e_menu_action_adapter import (
     ingress_session_command,
     is_prefix_escape,
     parse_env_file,
+    parse_viewport,
     plan_visits,
     read_records,
     scope_from_web_menus,
@@ -358,6 +359,26 @@ class EvidenceAndDiffTests(unittest.TestCase):
         self.assertEqual(len(read_records([good, ""])), 1)
         with self.assertRaisesRegex(ValueError, "schema"):
             read_records([json.dumps({"schema": "other/v1"})])
+
+
+class ViewportTests(unittest.TestCase):
+    def test_the_default_client_is_the_desktop_baseline(self) -> None:
+        self.assertEqual(record(Surface.PUBLIC)["client"], "desktop-chrome-1920x1080")
+
+    def test_a_small_viewport_is_labelled_as_mobile_layout_emulation(self) -> None:
+        self.assertEqual(parse_viewport("390x844"), ((390, 844), "mobile-emulation-chrome-390x844"))
+        self.assertEqual(parse_viewport("1920x1080"), ((1920, 1080), "desktop-chrome-1920x1080"))
+
+    def test_the_run_carries_its_client_into_every_record(self) -> None:
+        run = RunInfo(run_id=RUN.run_id, target="local", database="example_db",
+                      client="mobile-emulation-chrome-390x844")
+        item = evidence_record(run, Surface.PUBLIC, module="contacts", identity="i", observation=observation())
+        self.assertEqual(item["client"], "mobile-emulation-chrome-390x844")
+
+    def test_a_malformed_viewport_is_refused(self) -> None:
+        for bad in ("390", "x844", "0x844", "390x844x2", "abc"):
+            with self.assertRaises(ValueError, msg=bad):
+                parse_viewport(bad)
 
 
 if __name__ == "__main__":
