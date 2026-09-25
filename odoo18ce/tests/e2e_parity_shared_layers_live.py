@@ -85,10 +85,9 @@ class Env:
     def mask(self, value: Any) -> Any:
         masked = _mask_tokens(self.masker().value(value))
         # A host or IP that slipped in another form (ws origin, bare host).
-        for base in (self.public, self.ha, self.ha_https):
+        for base, label in ((self.public, "<PUBLIC_HOST>"), (self.ha, "<HA_HOST>"), (self.ha_https, "<HA_HTTPS_HOST>")):
             if base:
-                host = urlsplit(base).hostname or ""
-                masked = _replace_everywhere(masked, host, "<%s_HOST>" % ("PUBLIC" if base == self.public else "HA"))
+                masked = _replace_everywhere(masked, urlsplit(base).hostname or "", label)
         return masked
 
 
@@ -331,15 +330,7 @@ class IngressSide(Side):
         return self.root.frame_element()
 
     def start(self) -> None:
-        # Before any frontend script runs, or it redirects to /auth/authorize first.
-        # Only the HA document gets it; the Ingress iframe shares the origin.
-        self.context.add_init_script(
-            """(() => { if (window.top !== window) return;
-              localStorage.setItem('hassTokens', JSON.stringify({
-                access_token: %s, token_type: 'Bearer', expires_in: 315360000, hassUrl: %s,
-                clientId: %s + '/', expires: Date.now() + 315360000000, refresh_token: ''})); })()"""
-            % (json.dumps(self.env.token), json.dumps(self.ha), json.dumps(self.ha))
-        )
+        self.sign_in_frontend()
         self.page.goto(self.ha + "/" + self.env.slug, wait_until="domcontentloaded", timeout=TIMEOUT)
         frame = self._find_frame()
         path = urlsplit(frame.url).path
@@ -349,6 +340,17 @@ class IngressSide(Side):
         self.env.prefix = match.group(1)
         self.recorder = Recorder(self.page, self.surface, self.ha, self.env.prefix)
         self.log_in()
+
+    def sign_in_frontend(self) -> None:
+        """Before any frontend script runs, or it redirects to /auth/authorize
+        first. Only the HA document gets it; the Ingress iframe shares the origin."""
+        self.context.add_init_script(
+            """(() => { if (window.top !== window) return;
+              localStorage.setItem('hassTokens', JSON.stringify({
+                access_token: %s, token_type: 'Bearer', expires_in: 315360000, hassUrl: %s,
+                clientId: %s + '/', expires: Date.now() + 315360000000, refresh_token: ''})); })()"""
+            % (json.dumps(self.env.token), json.dumps(self.ha), json.dumps(self.ha))
+        )
 
     def log_in(self) -> None:
         self.root.goto(self.base + "/web/login", wait_until="domcontentloaded", timeout=TIMEOUT)
@@ -406,7 +408,7 @@ class Run:
                 side.page.screenshot(path=os.path.join(ARTIFACTS, "%s-%s.png" % (self.info.run_id, side.name)))
                 step = side.step
                 outcome = Outcome(False, "error%s: %s" % (" at " + step if step else "",
-                                                          sanitize_diagnostic((str(error).splitlines() or [""])[0])))
+                                                          self.env.mask((str(error).splitlines() or [""])[0])))
             side.step = None
             signals = side.recorder.since(mark)
             details = dict(outcome.details)
@@ -994,12 +996,7 @@ def fresh_side(run: Run, kind: type, **kwargs) -> Side:
 
 def open_ha_panel(side: IngressSide) -> None:
     """IngressSide.start without the Odoo login."""
-    side.context.add_init_script(
-        """(() => { if (window.top !== window) return;
-          localStorage.setItem('hassTokens', JSON.stringify({
-            access_token: %s, token_type: 'Bearer', expires_in: 315360000, hassUrl: %s,
-            clientId: %s + '/', expires: Date.now() + 315360000000, refresh_token: ''})); })()"""
-        % (json.dumps(side.env.token), json.dumps(side.ha), json.dumps(side.ha)))
+    side.sign_in_frontend()
     side.page.goto(side.ha + "/" + side.env.slug, wait_until="domcontentloaded", timeout=TIMEOUT)
     side._frame = side._find_frame()
     side.recorder = Recorder(side.page, side.surface, side.ha, side.env.prefix)
@@ -1088,7 +1085,7 @@ def check_b2(run: Run) -> None:
         problems = session_cookie_problems(cookie, surface=side.surface, ingress_prefix=side.env.prefix, https=https)
         shown = cookie and {key: cookie.get(key) for key in ("path", "secure", "httpOnly", "sameSite")}
         return Outcome(True, "attributes as expected" if not problems else "; ".join(problems),
-                       details={"session_id_attributes": shown})
+                       details={"flags": shown})
 
     public, ingress = run.both(attributes)
     run.record("U-B2", "shared", "generic", public, ingress,
@@ -1116,7 +1113,7 @@ def check_b2(run: Run) -> None:
         cookie = session_cookie(side)
         return Outcome(True, "cart kept after reload" if kept else "cart empty after reload",
                        details={"cart_quantity_after_add": added,
-                                "session_cookie_path": cookie and cookie.get("path")})
+                                "path_scope": cookie and cookie.get("path")})
 
     public, ingress = run.both(cart)
     run.record("U-B2", "website_sale", "/shop/cart", public, ingress,
@@ -2195,6 +2192,20 @@ def fullscreen_via_click(side: Side, locator=None) -> str:
     return "no fullscreen (%s)" % (state[0] or "request not made")
 
 
+NO_CONTROL = "no %s control"
+
+
+def record_screen(run: Run, item: str, module: str, screen: str, public: Outcome, ingress: Outcome,
+                  control: str, **kwargs) -> None:
+    """Record a module screen; one that offers no such control tested nothing."""
+    absent = NO_CONTROL % control
+    if absent in public.result and absent in ingress.result and not any(ingress.signals.values()):
+        run.record(item, module, screen, public, ingress, verdict=NOT_RUN,
+                   blocked_by="Odoo 18 CE offers no %s control on this screen" % control, **kwargs)
+    else:
+        run.record(item, module, screen, public, ingress, **kwargs)
+
+
 @check("U-C24")
 def check_c24(run: Run) -> None:
     def generic(side: Side) -> Outcome:
@@ -2211,11 +2222,11 @@ def check_c24(run: Run) -> None:
         open_form(side, "mrp.workcenter", run.fx["workcenter"])
         control = side.root.locator("button:has(.fa-expand), [title*='ull screen'], [title*='ullscreen']")
         if not control.count():
-            return Outcome(True, "no fullscreen control on this screen")
+            return Outcome(True, "no fullscreen control on this screen")  # NO_CONTROL % "fullscreen"
         return Outcome(True, fullscreen_via_click(side, control.first))
 
     public, ingress = run.both(workcenter)
-    run.record("U-C24", "mrp", "MRP work center", public, ingress, model="mrp.workcenter",
+    record_screen(run, "U-C24", "mrp", "MRP work center", public, ingress, "fullscreen", model="mrp.workcenter",
                notes="The fixture work center's form. Odoo 18 CE's work center has no tablet or fullscreen view "
                      "(Shop Floor is Enterprise); a control, if present, is pressed.")
 
@@ -2234,7 +2245,7 @@ def check_c24(run: Run) -> None:
     public, ingress = run.both(kiosk)
     for side in run.sides:
         side.ensure_logged_in()
-    run.record("U-C24", "hr_attendance", "attendance kiosk mode", public, ingress,
+    record_screen(run, "U-C24", "hr_attendance", "attendance kiosk mode", public, ingress, "fullscreen",
                notes="Attendance > Kiosk Mode; its fullscreen control pressed if it has one.")
 
 
@@ -2286,7 +2297,7 @@ def check_c25(run: Run) -> None:
                 control = side.root.locator("button:has(.fa-camera), .o_barcode_mobile_container button, "
                                             "button:has-text('Scan')")
                 if not control.count():
-                    return Outcome(True, "%s: no camera control" % label)
+                    return Outcome(True, "%s: no camera control" % label)  # NO_CONTROL % "camera"
                 control.first.click()
                 side.page.wait_for_timeout(3000)
                 live = side.root.evaluate("() => [...document.querySelectorAll('video')].some(v => v.srcObject)")
@@ -2301,8 +2312,8 @@ def check_c25(run: Run) -> None:
             public, ingress = pair(camera_on(route, screen))
             for side in sides:
                 side.ensure_logged_in()
-            run.record("U-C25", module, screen, public, ingress,
-                       notes="The screen's camera/scan control pressed if it has one; Ingress through https.")
+            record_screen(run, "U-C25", module, screen, public, ingress, "camera",
+                          notes="The screen's camera/scan control pressed if it has one; Ingress through https.")
     finally:
         https.close()
 
@@ -2813,7 +2824,7 @@ def fixture_path(run_id: str) -> str:
 # --- Command line -------------------------------------------------------------
 
 
-def open_sides(env: Env, playwright, browser, *, viewport=(1920, 1080)):
+def open_sides(env: Env, browser, *, viewport=(1920, 1080)):
     public = PublicSide(env, browser, viewport=viewport)
     ingress = IngressSide(env, browser, viewport=viewport)
     ingress.start()
@@ -2868,7 +2879,7 @@ def main(argv=None) -> int:
         )
         public = ingress = None
         try:
-            public, ingress = open_sides(env, playwright, browser)
+            public, ingress = open_sides(env, browser)
             if args.command == "pcheck":
                 failed = 0
                 for check_id, passed, detail in pcheck(env, public, ingress):
@@ -2879,7 +2890,7 @@ def main(argv=None) -> int:
                 ids = create_fixtures(public, args.run_id)
                 with open(fixture_path(args.run_id), "w", encoding="utf-8") as handle:
                     json.dump(ids, handle, indent=2)
-                print("P-7 fixtures: %s" % json.dumps(ids))
+                print("P-7 fixtures: %s" % json.dumps(env.mask(ids)))
                 return 0
             run_info = RunInfo(args.run_id or new_run_id(), env.target, env.db)
             items = [item.strip() for item in args.only.split(",")] if args.only else list(CHECKS)
@@ -2894,7 +2905,7 @@ def main(argv=None) -> int:
                     try:
                         function(run)
                     except Exception as error:  # noqa: BLE001 -- the conservation report shows what is missing
-                        print("CHECK CRASHED %s: %s" % (item, sanitize_diagnostic((str(error).splitlines() or [""])[0])),
+                        print("CHECK CRASHED %s: %s" % (item, env.mask((str(error).splitlines() or [""])[0])),
                               file=sys.stderr)
                         for side in (public, ingress):
                             try:
@@ -2913,5 +2924,10 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as error:  # noqa: BLE001 -- never print an unmasked secret
-        print("parity run failed: %s" % sanitize_diagnostic(str(error)), file=sys.stderr)
+        message = sanitize_diagnostic(str(error))
+        try:  # the hosts and credentials too, when the environment names them
+            message = Env(os.environ.get("ODOO_DB", "")).mask(message)
+        except Exception:  # noqa: BLE001 -- a missing variable was the failure
+            pass
+        print("parity run failed: %s" % message, file=sys.stderr)
         sys.exit(2)

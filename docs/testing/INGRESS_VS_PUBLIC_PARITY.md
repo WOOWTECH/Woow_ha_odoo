@@ -455,10 +455,10 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 ### 10.6 共用層實測結果（2026-09-25，#143）
 
 F、A、B、C、D 群組在 `odoo_parity`（0.4.4）各跑一次，外加 10.1–10.3 指定的模組畫面；Ingress 端是 HA 前端
-面板裡的 iframe（plain-http LAN 入口），`U-C25` 走 https 入口。75 項 = 54 `PARITY` + 9 `GAP` + 1
-`APPROVED-DIVERGENCE` + 5 `STRUCTURAL` + 6 `NOT-RUN`；每個 `GAP` 都有 issue（#159、#164–#170）。
+面板裡的 iframe（plain-http LAN 入口），`U-C25` 走 https 入口。75 項 = 51 `PARITY` + 9 `GAP` + 1
+`APPROVED-DIVERGENCE` + 5 `STRUCTURAL` + 9 `NOT-RUN`；每個 `GAP` 都有 issue（#159、#164–#170）。
 `NOT-RUN`：POS 兩項（#161）、`U-A9`（無 60 秒以上的動作）、`U-C22`（只有一種語言）、`/event` 與活動報名
-（未裝 `website_event`）。證據與方法見 `docs/testing/evidence/2026-09-25-issue-143/`。
+（未裝 `website_event`）、CE 沒有該控制項的三個模組畫面（MRP 工作中心與工單、出勤 kiosk 全螢幕）。證據與方法見 `docs/testing/evidence/2026-09-25-issue-143/`。
 
 - **`U-F1` 上界**：Ingress iframe 與 HA **同源**，沒有 `allow`、沒有 `sandbox`，政策全部放行；唯一限制是
   plain-http 不是安全環境（clipboard-write、camera、microphone）。`G-02` 的未知因此有答案：HA 沒有擋，
@@ -510,6 +510,10 @@ F、A、B、C、D 群組在 `odoo_parity`（0.4.4）各跑一次，外加 10.1�
   "notes": "..."
 }
 ```
+
+共用層 driver（#143）的記錄另有：`verdict` 可為 `NOT-RUN`（此時 `severity` 為 null、必填 `blocked_by`
+說明阻擋原因，未執行的 surface 為 null）、`screen.name`（受測畫面名稱）、`STRUCTURAL` 必填的 `public_path`、
+`GAP` 立案後的 `issue`。每筆同時帶兩個 surface，`control_identity` 為 `check:<item>|<module>|<screen>`。
 
 **去識別化硬性規則**：不得寫入憑證、ingress token、原始 URL、query string、cookie 值、
 真實客戶資料。URL 一律以「基底代號 + 規範路徑」記錄（例：`<PUBLIC_BASE>/my/orders/42`）。

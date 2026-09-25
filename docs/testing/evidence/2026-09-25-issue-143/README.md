@@ -34,15 +34,19 @@ once on an ordinary screen (`generic`), plus the module screens the issue
 lists (parity plan section 10).
 
 **Conservation (parity plan section 12)**: 75 planned, 75 observed =
-54 `PARITY` + 9 `GAP` + 1 `APPROVED-DIVERGENCE` + 5 `STRUCTURAL` + 6 `NOT-RUN`;
+51 `PARITY` + 9 `GAP` + 1 `APPROVED-DIVERGENCE` + 5 `STRUCTURAL` + 9 `NOT-RUN`;
 no check missing, duplicated or unclassified. The run does **not qualify** as
-complete: six checks are `NOT-RUN` (below). Every `GAP` has an issue and every `STRUCTURAL` names its Public origin path; `conservation.json` is the report.
+complete: nine checks are `NOT-RUN` (below). Every `GAP` has an issue and every `STRUCTURAL` names its Public origin path; `conservation.json` is the report.
 `python odoo18ce/tests/e2e_parity_shared_layers_live.py report <checks.jsonl>`
 recomputes it.
 
-Six records were rerun inside the same run after a harness fix, because
+Some records were rerun inside the same run after a harness fix, because
 their first attempt gave the same wrong result on both surfaces (`U-C6`,
-`U-C9`, `U-C17`, `U-F5` with `U-C18`/`U-C20`); each says so in its notes.
+`U-C9`, `U-C17`, `U-F5` with `U-C18`/`U-C20`), and `U-B2` after review
+(its attribute block had been redacted by key name); each says so in its
+notes. After review, three module screens that offer no such control
+(`U-C24` MRP work center and attendance kiosk, `U-C25` MRP work order) were
+reclassified from `PARITY` to `NOT-RUN`: nothing was tested on them.
 
 ### GAP
 
@@ -82,6 +86,7 @@ nothing of Odoo; the Public origin answers anonymously.
 | `U-A9` generic | No server action on `odoo_parity` runs longer than 60 s |
 | `U-C22` generic | Only `en_US` is active; the translation button needs a second language |
 | `U-D6` event registration, `U-D7` `/event` | `website_event` is not among the 29 installed modules |
+| `U-C24` MRP work center, `U-C24` attendance kiosk, `U-C25` MRP work order scan | Odoo 18 CE offers no fullscreen / camera control on these screens (Shop Floor is Enterprise); the generic `U-C24`/`U-C25` checks and the kiosk's badge scanner cover the capability |
 
 ## Results worth knowing
 
@@ -97,7 +102,10 @@ nothing of Odoo; the Public origin answers anonymously.
   SHA-256.
 - **`U-A8`/`U-F4` uploads**: Ingress accepted 100 MiB; the Public origin
   refused 100 MiB with 413 (the Cloudflare tunnel's 100 MB body limit), 10 MiB
-  passed. 500 MiB was not tried for that reason.
+  passed. 500 MiB was not tried for that reason. The verdict is `PARITY`
+  because Ingress reaches what the Public origin does; the limits differ and
+  are recorded. The Supervisor's timeout (the second half of `U-F4`) was not
+  measured: no action on this database runs long enough (`U-A9`).
 - **`U-A4`**: `e2e_literal_rewrite_gate.py` against the Public origin's
   bundles exits 0 (no unregistered `FAIL`).
 - **`U-A7`**: Ingress load of `/odoo` took 2.5x the Public origin's at worst
@@ -113,7 +121,12 @@ nothing of Odoo; the Public origin answers anonymously.
   visitor on the Public origin reached the operator, who answered from each
   surface's Discuss.
 - **`U-D5`**: the Share link produced under Ingress is on `<PUBLIC_BASE>` and
-  opens for a browser with no session (task and quotation).
+  opens for a browser with no session (task and quotation). Both Share
+  dialogs produce the same kind of link (`/mail/view?…`, which redirects to
+  the portal page), so the two records differ only in the record shared.
+- **`U-C27`** checks only that the service worker exists on the Public origin
+  and not under Ingress; using the Public origin offline was not exercised
+  (POS offline is #161).
 - **Found while building the harness**: the attendance kiosk page logs the
   current user out, and a live chat visitor's chat window stays open on the
   operator's screen across pages; the driver logs back in and closes chat

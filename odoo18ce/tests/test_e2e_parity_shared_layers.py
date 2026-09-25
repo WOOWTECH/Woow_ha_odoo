@@ -243,5 +243,61 @@ class LiveHelperTests(unittest.TestCase):
         self.assertEqual(xlsx_rows(buffer.getvalue()), 2)
 
 
+class LiveMaskTests(unittest.TestCase):
+    ENVIRON = {"ODOO_PUBLIC_URL": "https://odoo.example.test", "HA_BASE_URL": "http://10.1.2.3:8123",
+               "HA_HTTPS_BASE_URL": "https://ha.example.test", "HA_TOKEN": "tok-SECRET-123",
+               "ADDON_SLUG": "abc_odoo18ce", "ODOO_TEST_LOGIN": "tester@example.test",
+               "ODOO_TEST_PASSWORD": "pw-SECRET-456"}
+
+    def env(self):
+        from unittest import mock
+
+        from e2e_parity_shared_layers_live import Env
+
+        with mock.patch.dict("os.environ", self.ENVIRON, clear=False):
+            env = Env("example_db")
+        env.prefix = PREFIX
+        return env
+
+    def test_bases_hosts_prefix_and_credentials_are_masked(self) -> None:
+        env = self.env()
+        text = ("http://10.1.2.3:8123%s/odoo https://odoo.example.test/shop https://ha.example.test/x "
+                "ws://10.1.2.3:8123/api/websocket host 10.1.2.3 and ha.example.test "
+                "tok-SECRET-123 tester@example.test pw-SECRET-456" % PREFIX)
+        masked = env.mask({"notes": text})["notes"]
+        for secret in ("10.1.2.3", "odoo.example.test", "ha.example.test", "tok-SECRET-123", "tester@example.test",
+                       "pw-SECRET-456", "tok_ABC123"):
+            self.assertNotIn(secret, masked)
+        self.assertIn("<INGRESS_BASE>/odoo", masked)
+        self.assertIn("<PUBLIC_BASE>/shop", masked)
+        self.assertIn("<HA_HTTPS_BASE>/x", masked)
+        self.assertIn("<HA_HOST>", masked)
+        self.assertIn("<HA_HTTPS_HOST>", masked)
+
+
+class ScreenRecordTests(unittest.TestCase):
+    def recorded(self, public: str, ingress: str) -> dict:
+        from e2e_parity_shared_layers_live import record_screen
+
+        written = []
+
+        class FakeRun:
+            def record(self, item, module, screen, public, ingress, **kwargs):
+                written.append(check_record(RUN, item, module=module, screen=screen, public=public,
+                                            ingress=ingress, **kwargs))
+
+        record_screen(FakeRun(), "U-C25", "mrp", "MRP work order scan", ok(public), ok(ingress), "camera")
+        return written[0]
+
+    def test_a_screen_without_the_control_tested_nothing(self) -> None:
+        record = self.recorded("scan: no camera control", "scan: no camera control")
+        self.assertEqual(record["verdict"], NOT_RUN)
+        self.assertIn("no camera control", record["blocked_by"])
+
+    def test_a_screen_with_the_control_is_judged(self) -> None:
+        self.assertEqual(self.recorded("scan: camera streaming", "scan: camera streaming")["verdict"], "PARITY")
+        self.assertEqual(self.recorded("scan: camera streaming", "scan: no camera control")["verdict"], "GAP")
+
+
 if __name__ == "__main__":
     unittest.main()
