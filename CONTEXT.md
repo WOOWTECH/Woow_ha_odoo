@@ -19,7 +19,7 @@ The privilege level granted on the published origin ports to callers whose sourc
 _Avoid_: local access, trusted network, direct access
 
 **Canonical URL**:
-The value the maintenance bootstrap writes into `web.base.url` and the default website's `domain` on every start, and then locks with `web.base.url.freeze`. It is the Public origin when `public_url` is set, otherwise the Home Assistant host's LAN address with the published Odoo port. A stored value that carries an Ingress token is never kept as the Canonical URL.
+The value the maintenance bootstrap writes into `web.base.url` and the default website's `domain` on every start, and then locks with `web.base.url.freeze`. When the `website` module appears after a start, the Rewrite scan service's round writes the default website's `domain` too, through the same library. It is the Public origin when `public_url` is set, otherwise the Home Assistant host's LAN address with the published Odoo port. A stored value that carries an Ingress token is never kept as the Canonical URL.
 _Avoid_: base url, own address, web.base.url (in prose)
 
 **Structural gap**:
@@ -51,6 +51,10 @@ _Avoid_: auto rule, dynamic rule, 自動修正 (as a noun)
 **Rewrite scan**:
 The add-on's own analysis of the served asset bundles that classifies every root-relative literal by how it is consumed and yields the Generated rewrites. The Literal rewrite gate is the same analysis run from outside against a Public origin.
 _Avoid_: 守門 (for the in-container run), auto-fix, self-check
+
+**Canonical URL catch-up**:
+The step at the end of every Rewrite scan round that writes the Canonical URL into the default website's `domain` of a database whose `website` module appeared after the start, through the same maintenance library the start uses; it reads through `psql` and loads no registry for a database that needs nothing.
+_Avoid_: domain fix, website domain sync, periodic bootstrap
 
 ### Lifecycle
 

@@ -1,0 +1,25 @@
+# run 1: build 0.4.4-202609252034 (PR #173 as opened), database catchup164
+# (lines copied from `docker logs app_local_odoo18ce` during the run; the container was restarted for run 2)
+[21:35:10] INFO: Rewrite scan: waiting for PostgreSQL to become ready...
+[21:35:10] INFO: Rewrite scan: PostgreSQL is ready
+Rewrite scan (apply): up to date
+[21:35:12] INFO: Database 'catchup164' not found, initializing...
+[21:35:36] INFO: Database 'catchup164' initialized
+[21:35:38] INFO: maintenance db=catchup164: web.base.url=http://<LAN_IPV4>:8169 web.base.url.freeze=True website module not installed
+[21:35:42] INFO: maintenance db=dbleak: web.base.url=http://<LAN_IPV4>:8169 web.base.url.freeze=True website.domain=http://<LAN_IPV4>:8169
+[21:35:45] INFO: Self-check: http://<LAN_IPV4>:8069/web/database/manager answered 503, the restricted tier; the database manager is closed to the tunnel
+Rewrite scan (apply): unchanged
+  catchup164: ok
+[21:40:17] INFO: maintenance db=catchup164: web.base.url=http://<LAN_IPV4>:8169 web.base.url.freeze=True website.domain=http://<LAN_IPV4>:8169
+
+# run 2: build 0.4.4-202609252144 (with the post-commit signal), database catchup164b
+[21:46:04] INFO: Runtime shim Canonical URL = http://<LAN_IPV4>:8169
+[21:46:04] INFO: Rewrite scan: waiting for PostgreSQL to become ready...
+[21:46:05] INFO: Rewrite scan: PostgreSQL is ready
+Rewrite scan (apply): up to date
+[21:46:30] INFO: Database 'catchup164b' initialized
+[21:46:33] INFO: maintenance db=catchup164: web.base.url=http://<LAN_IPV4>:8169 web.base.url.freeze=True website.domain=http://<LAN_IPV4>:8169
+[21:46:35] INFO: maintenance db=catchup164b: web.base.url=http://<LAN_IPV4>:8169 web.base.url.freeze=True website module not installed
+[21:46:39] INFO: maintenance db=dbleak: web.base.url=http://<LAN_IPV4>:8169 web.base.url.freeze=True website.domain=http://<LAN_IPV4>:8169
+Rewrite scan (apply): unchanged
+[21:51:13] INFO: maintenance db=catchup164b: web.base.url=http://<LAN_IPV4>:8169 web.base.url.freeze=True website.domain=http://<LAN_IPV4>:8169

@@ -1,0 +1,59 @@
+# run 1: build 0.4.4-202609252034 (PR #173 as opened), database catchup164
+2026-09-25T21:36:25 status 200 final <HA_BASE><INGRESS_PREFIX>/web/login?redirect=%2Fodoo%3F | no outbound head links
+2026-09-25T21:36:45 status 200 final <HA_BASE><INGRESS_PREFIX>/web/login?redirect=%2Fodoo%3F | no outbound head links
+2026-09-25T21:37:11 status 200 final <HA_BASE><INGRESS_PREFIX>/web/login?redirect=%2Fodoo%3F | no outbound head links
+2026-09-25T21:37:34 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:37:54 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:38:15 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:38:35 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:38:55 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:39:15 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:39:35 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:39:55 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:40:15 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:40:35 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:40:55 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:41:15 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:41:35 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:41:56 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:42:16 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:42:36 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:42:56 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=http://<LAN_IPV4>:8169, og:image=http://<LAN_IPV4>:8169, twitter:image=http://<LAN_IPV4>:8169, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:43:16 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=http://<LAN_IPV4>:8169, og:image=http://<LAN_IPV4>:8169, twitter:image=http://<LAN_IPV4>:8169, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:43:36 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=http://<LAN_IPV4>:8169, og:image=http://<LAN_IPV4>:8169, twitter:image=http://<LAN_IPV4>:8169, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:43:56 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=http://<LAN_IPV4>:8169, og:image=http://<LAN_IPV4>:8169, twitter:image=http://<LAN_IPV4>:8169, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:44:16 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=http://<LAN_IPV4>:8169, og:image=http://<LAN_IPV4>:8169, twitter:image=http://<LAN_IPV4>:8169, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:44:36 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=http://<LAN_IPV4>:8169, og:image=http://<LAN_IPV4>:8169, twitter:image=http://<LAN_IPV4>:8169, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:44:57 fetch failed: HTTP Error 502: Bad Gateway
+2026-09-25T21:45:17 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=http://<LAN_IPV4>:8169, og:image=http://<LAN_IPV4>:8169, twitter:image=http://<LAN_IPV4>:8169, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:45:37 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=http://<LAN_IPV4>:8169, og:image=http://<LAN_IPV4>:8169, twitter:image=http://<LAN_IPV4>:8169, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:45:58 fetch failed: HTTP Error 502: Bad Gateway
+2026-09-25T21:46:18 fetch failed: HTTP Error 502: Bad Gateway
+2026-09-25T21:46:38 fetch failed: HTTP Error 502: Bad Gateway
+2026-09-25T21:46:58 status 200 final <HA_BASE><INGRESS_PREFIX>/web/login?redirect=%2Fodoo%3F | no outbound head links
+2026-09-25T21:47:18 status 200 final <HA_BASE><INGRESS_PREFIX>/web/login?redirect=%2Fodoo%3F | no outbound head links
+2026-09-25T21:47:38 status 200 final <HA_BASE><INGRESS_PREFIX>/web/login?redirect=%2Fodoo%3F | no outbound head links
+2026-09-25T21:47:59 status 200 final <HA_BASE><INGRESS_PREFIX>/web/login?redirect=%2Fodoo%3F | no outbound head links
+2026-09-25T21:48:19 status 200 final <HA_BASE><INGRESS_PREFIX>/web/login?redirect=%2Fodoo%3F | no outbound head links
+2026-09-25T21:48:43 status 200 final <HA_BASE><INGRESS_PREFIX>/web/login?redirect=%2Fodoo%3F | no outbound head links
+2026-09-25T21:49:06 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:49:27 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:49:47 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:50:07 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:50:28 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+
+# run 2: build 0.4.4-202609252144 (with the post-commit signal), database catchup164b
+2026-09-25T21:47:34 status 200 final <HA_BASE><INGRESS_PREFIX>/web/login?redirect=%2Fodoo%3F | no outbound head links
+2026-09-25T21:47:54 status 200 final <HA_BASE><INGRESS_PREFIX>/web/login?redirect=%2Fodoo%3F | no outbound head links
+2026-09-25T21:48:14 status 200 final <HA_BASE><INGRESS_PREFIX>/web/login?redirect=%2Fodoo%3F | no outbound head links
+2026-09-25T21:48:34 status 200 final <HA_BASE><INGRESS_PREFIX>/web/login?redirect=%2Fodoo%3F | no outbound head links
+2026-09-25T21:49:06 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:49:27 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:49:47 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:50:07 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:50:28 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:50:48 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:51:08 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=<HA_BASE>, og:image=<HA_BASE>, twitter:image=<HA_BASE>, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:51:28 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=http://<LAN_IPV4>:8169, og:image=http://<LAN_IPV4>:8169, twitter:image=http://<LAN_IPV4>:8169, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:51:48 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=http://<LAN_IPV4>:8169, og:image=http://<LAN_IPV4>:8169, twitter:image=http://<LAN_IPV4>:8169, canonical=http://<LAN_IPV4>:8169
+2026-09-25T21:52:08 status 200 final <HA_BASE><INGRESS_PREFIX>/ | og:url=http://<LAN_IPV4>:8169, og:image=http://<LAN_IPV4>:8169, twitter:image=http://<LAN_IPV4>:8169, canonical=http://<LAN_IPV4>:8169
