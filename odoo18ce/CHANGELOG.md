@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- A `website` module installed after the add-on started now gets the
+  Canonical URL as the default website's domain within five minutes,
+  without a restart. The maintenance bootstrap mirrors the value once, at
+  start, and only when the module is already installed; a `website` added
+  later through the Apps screen kept an empty domain, so under Ingress the
+  home page's canonical, `og:url`, `og:image` and `twitter:image` links
+  carried the Home Assistant address. The Rewrite scan service's round now
+  ends with a Canonical URL catch-up: a `psql` read per database, and the
+  maintenance library through `odoo shell` only for a database whose domain
+  is empty or differs. The add-on log shows the same
+  `maintenance db=<name>: … website.domain=<Canonical URL>` line the start
+  writes. Issue #164.
+
 ## 0.4.4 — 2026-09-24
 
 ### Added

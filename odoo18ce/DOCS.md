@@ -200,7 +200,11 @@ does not depend on the Supervisor being able to answer.
 
 With a Canonical URL, `web.base.url` is set to it, `web.base.url.freeze`
 is set to `True`, and the default website's domain (when the `website`
-module is installed) is set to the same value. Without one, an existing
+module is installed) is set to the same value. A `website` module installed
+after the add-on started gets the domain within five minutes, from the
+Rewrite scan service's next round, with no restart: the add-on log then
+shows `maintenance db=<name>: … website.domain=<Canonical URL>` the way the
+start does. Without one, an existing
 clean `web.base.url` is frozen as it is; an absent value and Odoo's install
 default `http://localhost:8070` are left alone and not frozen, and a
 token-carrying value is removed, each with a warning in the add-on log that
