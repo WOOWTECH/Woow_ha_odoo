@@ -303,6 +303,23 @@ def test_the_canonical_url_comes_from_the_maintenance_library(monkeypatch) -> No
     assert catchup.canonical_url_from_environment() is None
 
 
+def test_the_library_signals_the_workers_after_its_commit() -> None:
+    """A write from `odoo shell` reaches the database, not the workers' caches.
+
+    Measured on the test host: after the catch-up wrote the domain, the
+    Ingress home page kept `og:url` and `og:image` on the Home Assistant
+    address until `registry.signal_changes()` was called by hand, and
+    moved onto the Canonical URL within one fetch after it. An RPC request
+    makes that call after its commit (odoo/service/model.py); the library's
+    entry block must make it too, after the commit and before it exits.
+    """
+    library = (LIB_DIR / "odoo-maintenance.py").read_text(encoding="utf-8")
+    entry = library[library.index('if __name__ == "__main__":'):]
+    assert "env.cr.commit()" in entry
+    assert "env.registry.signal_changes()" in entry
+    assert entry.index("env.cr.commit()") < entry.index("env.registry.signal_changes()")
+
+
 def test_the_writer_is_the_bootstraps_odoo_shell_invocation() -> None:
     """Same user, same binary, same flags, same library on stdin."""
     calls: list = []

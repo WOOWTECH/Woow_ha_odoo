@@ -14,7 +14,10 @@
   maintenance library through `odoo shell` only for a database whose domain
   is empty or differs. The add-on log shows the same
   `maintenance db=<name>: … website.domain=<Canonical URL>` line the start
-  writes. Issue #164.
+  writes. The maintenance library now also signals the running workers
+  after its commit, the way an RPC request does; without that the home
+  page kept `og:url` and `og:image` on the old address until the next
+  restart. Issue #164.
 
 ## 0.4.4 — 2026-09-24
 
