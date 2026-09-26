@@ -347,10 +347,15 @@ Public origin is where it works. Set `public_url` if you need any of them.
 |---|---|---|
 | Anything a person or service outside Home Assistant opens: the website and shop for anonymous visitors, public survey answers, job applications, embedded live chat | Ingress answers only callers logged in to Home Assistant | Public origin |
 | Payment provider callbacks and returns (ECPay and others), webhooks, email tracking | The provider's server has no Home Assistant session | Public origin; the provider must be given the `public_url` address |
-| Point of Sale offline mode, installing Odoo as an app (PWA) | The Runtime shim disables service workers under Ingress (ADR 0011) | Public origin. POS itself works under Ingress while the network is up. |
+| Installing Odoo as an app (PWA), and the web client's offline page | The Runtime shim disables service workers under Ingress (ADR 0011) | Public origin |
 | Camera and barcode scanning, and copying through Odoo's own clipboard call | The browser offers them only on a secure page; Home Assistant over plain http is not one | Ingress over HTTPS, or the Public origin. Copy buttons still work over plain http through the add-on's fallback. |
 | A link Odoo builds in the page from the address bar and that is not listed under "Links the browser builds" | Through Ingress that address is Home Assistant's | Produce the link from the Public origin |
 | A sidebar address sent to someone else, or a link to one screen | An Ingress address carries your session token and opens only for you; and the browser's address bar shows only the add-on panel, not the Odoo screen inside it, so a copied address opens the panel's start screen | Send the Public origin address of that screen |
+
+Point of Sale is not on this list. It works through Ingress and keeps selling
+through a network outage there too: a till that is already open validates
+sales offline and sends them to Odoo when the network is back. On either
+entrance, `/pos/ui` cannot be reloaded while the network is down.
 
 ## Start-time self-check
 

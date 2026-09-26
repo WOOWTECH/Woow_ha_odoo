@@ -40,3 +40,33 @@ orders — and for a till that can stop when the network stops.
 - `DOCS.md` lists POS offline mode among the things only the Public origin
   can do.
 - A future change to the shim's service-worker handling reopens this ADR.
+
+## Postscript (2026-09-26, #161)
+
+The premise above is wrong for Odoo 18 CE. Its Point of Sale has no service
+worker. The only worker is the web client's `/web/service-worker.js`, with
+scope `/odoo`, and it only shows an offline page when a navigation fails.
+POS keeps selling through an outage inside the page it has already loaded.
+
+The #161 run (`docs/testing/evidence/2026-09-26-issue-161/`) did the same
+steps on the Public origin and under Ingress over the plain-http LAN
+entrance. It loaded `/pos/ui`, cut the network with the browser's offline
+emulation and sold one product for cash:
+
+- **In-page offline sale: the same on both surfaces.** The till showed
+  "Connection Lost" and validated the sale. When the network came back, the
+  order reached the server within 3 seconds, as a paid `pos.order` in the
+  open session. `PARITY`.
+- **Reloading `/pos/ui` offline: fails on both surfaces** with
+  `net::ERR_INTERNET_DISCONNECTED`. `PARITY`.
+
+So offline POS selling is **not** a Structural gap of Ingress, and a till
+that must keep selling through an outage does not need the Public origin.
+The decision stands that POS is installed and usable on both surfaces. The
+consequences change: the parity run records POS offline as `PARITY`, and
+`DOCS.md` no longer lists POS offline mode among the things only the Public
+origin can do. What the shim's service-worker rule still costs Ingress is
+installing Odoo as an app (PWA) and the web client's offline page.
+
+The title no longer holds: offline selling works on both surfaces, not
+only on the Public origin. The file name is kept so that links to this ADR still work.

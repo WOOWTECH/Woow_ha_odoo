@@ -240,7 +240,7 @@ L0  通道               ← nginx 監聽、header、壓縮、快取、緩衝、
 | `U-C24` | 全螢幕 | RC-3 | 任何請求全螢幕的介面（看板全螢幕、編輯器、工作中心） | 能進入全螢幕；不能則列 `GAP` 並標註需 iframe `allow` |
 | `U-C25` | 相機／掃碼 | RC-3 | 任何需要 `getUserMedia` 的介面（條碼掃描、簽名拍照） | 能取得裝置授權；不能則列 `GAP` 並標註需 iframe `allow` |
 | `U-C26` | 即時（bus） | RC-7/8 | 兩個瀏覽器情境（A=ingress、B=public）互推訊息 | `/websocket` 回 101、worker bundle 200、雙向 ≤ 10s 不需重整 |
-| `U-C27` | Service Worker 依賴功能 | **RC-6** | 檢查 PWA 安裝提示、離線可用性、背景同步 | ingress 下必然不可用 → 標 `STRUCTURAL`，並記錄哪些模組依賴它 |
+| `U-C27` | Service Worker 依賴功能 | **RC-6** | 檢查 PWA 安裝提示、離線可用性、背景同步 | ingress 下必然不可用 → 標 `STRUCTURAL`，並記錄哪些模組依賴它（POS 不依賴：離線銷售是頁內機制，#161） |
 
 ### D 群組 — 前台 / Portal 共用原語（L4）
 
@@ -384,7 +384,7 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 |---|---|---|---|
 | `sale_management` | `/sale/`、`/my/orders`、`/my/quotes` | RC-9 | `U-E3`、`U-E2`、`U-C20`、`U-D5` |
 | `website_sale` | `/shop/`、`/shop/cart`、`/shop/checkout`、`/shop/payment` | RC-9、**RC-10** | `U-D1`–`U-D7`、`U-E6`；購物車 cookie 走 `U-B2` |
-| `point_of_sale` | `/pos/`、`/pos/ui`、`/pos_self_order/` | **RC-6**、RC-3、RC-8 | **`U-C27`（離線能力在 ingress 必失效）**、`U-C24` 全螢幕、`U-C25` 掃碼、`U-F5` 收據列印 |
+| `point_of_sale` | `/pos/`、`/pos/ui`、`/pos_self_order/` | RC-3、RC-8 | `U-C27`（頁內離線銷售與斷網重整；實測兩邊相同，`PARITY`，#161）、`U-C24` 全螢幕、`U-C25` 掃碼、`U-F5` 收據列印 |
 | 金流串接（ECPay：`ecpay_invoice_tw`、`ecpay_invoice_website`、`payment_ecpay`、`payment_ecpay_ecpg`） | `/payment/`、各 provider 專屬 return/notify 路徑 | **RC-10、RC-9** | **`U-E6`（return_url／notify_url 必須是 public 且對外可達）**；ingress 原理上無法承接回呼 → `STRUCTURAL` |
 
 > **POS 特別警告**：ingress 的 shim 主動反註冊 service worker 並偽造
@@ -400,6 +400,13 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 在 public 也失敗。POS 18 的離線是頁內機制：頁面已載入時斷網，會出現「Connection Lost …
 > limited functionality」並可繼續操作，不需要 service worker，預期兩個 surface 相同。
 > 斷網成交再同步的完整驗證尚未完成，ADR 0011 的前提待重審，都記在 #161。
+>
+> **結果（2026-09-26，#161）**：兩個 surface 都在頁面已載入時斷網（瀏覽器離線模擬），以現金成交一筆；
+> 恢復網路後 3 秒內訂單以 paid 的 `pos.order` 出現在同一 session → `PARITY`。斷網重整 `/pos/ui`
+> 兩邊都 `net::ERR_INTERNET_DISCONNECTED` → `PARITY`。所以 POS 離線銷售**不是** ingress 的
+> Structural gap，不需要 public 承接；ADR 0011 已加附記（保留「兩個 surface 都可用」的決定）。
+> `RC-6` 在 ingress 仍拿走的只有 PWA 安裝與 web client 的離線頁（`U-C27` generic）。
+> 證據：`docs/testing/evidence/2026-09-26-issue-161/`。
 
 ### 10.2 服務 / 行銷 / 生產
 
@@ -430,7 +437,7 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 |---|---|---|
 | `sale_management` | 經 `sale` 選單，23 `PARITY` | `U-E3`／`U-E2`／`U-C20`／`U-D5` → #145 |
 | `website_sale` | 15 `PARITY` | `U-D1`–`U-D6`、`U-B2` → #143；`U-D7`、`U-E6` 為 `STRUCTURAL`（RC-10） |
-| `point_of_sale` | 19 `PARITY` | `U-C27` 見 10.1 的實測修正與 #161；`U-C24`／`U-C25`／`U-F5` → #143 |
+| `point_of_sale` | 19 `PARITY` | `U-C27` 離線銷售、斷網重整各 1 `PARITY`（#161，見 10.1）；`U-C24`／`U-C25`／`U-F5` → #143 |
 | ECPay 4 模組 | `ecpay_invoice_tw`、`payment_ecpay` 各 1 `PARITY`；另兩個無自有選單 | `U-E6` 實際付款與回呼 → #146 |
 | `survey` | 4 `PARITY`、**2 `GAP`**（同一動作） | 範例圖片逃逸 → **#158**；`U-E3`／`U-C4` → #145 |
 | `im_livechat` | 8 `PARITY` | 外嵌 script 為 `STRUCTURAL`（RC-10）；`U-C26` → #143 |
