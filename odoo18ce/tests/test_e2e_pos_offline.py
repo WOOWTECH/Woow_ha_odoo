@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static-tier tests for the pure parts of the POS offline run (#161).
+"""Static-tier tests for the pure parts of the POS runs (#161, #143).
 
 Nothing here opens a browser or reads credentials.
 """
@@ -7,7 +7,7 @@ import unittest
 
 from e2e_menu_action_adapter import RunInfo
 from e2e_parity_shared_layers import Outcome
-from e2e_pos_offline_live import net_error, pos_records, reload_outcome, sale_outcome
+from e2e_pos_offline_live import net_error, pos_records, receipt_print_outcome, reload_outcome, sale_outcome
 
 RUN = RunInfo(run_id="WOOW-PARITY-20260926T000000Z", target="local", database="example_db")
 UUID = "0f6c1d9e-1111-4222-8333-944455556666"
@@ -65,6 +65,38 @@ class ReloadOutcomeTests(unittest.TestCase):
     def test_a_reload_that_brings_the_till_back_is_a_different_result(self) -> None:
         self.assertEqual(reload_outcome(None, till_loaded=True).result, "offline reload loads the till")
         self.assertEqual(reload_outcome(None, till_loaded=False).result, "offline reload shows no till")
+
+
+def printed(**overrides):
+    state = {"receipt_shown": True, "print_calls": 1, "receipt_chars": 420, "has_order_name": True,
+             "images": [{"src": "/web/image/res.company/1/logo", "loaded": True}]}
+    state.update(overrides)
+    return state
+
+
+class ReceiptPrintTests(unittest.TestCase):
+    def test_print_called_on_the_orders_receipt_is_printed(self) -> None:
+        outcome = receipt_print_outcome(printed())
+        self.assertTrue(outcome.available)
+        self.assertEqual(outcome.result, "receipt printed")
+        self.assertEqual(outcome.details["images"], 1)
+
+    def test_a_sale_that_never_reached_the_receipt_screen_tested_nothing(self) -> None:
+        outcome = receipt_print_outcome(printed(receipt_shown=False, print_calls=0))
+        self.assertFalse(outcome.available)
+
+    def test_a_print_button_that_never_calls_print_is_its_own_result(self) -> None:
+        self.assertEqual(receipt_print_outcome(printed(print_calls=0)).result, "print() never called")
+
+    def test_print_on_a_receipt_without_the_order_is_not_a_receipt(self) -> None:
+        outcome = receipt_print_outcome(printed(has_order_name=False))
+        self.assertEqual(outcome.result, "print() called without the order's receipt")
+
+    def test_images_that_did_not_load_are_counted_and_named(self) -> None:
+        broken = {"src": "/web/image/res.company/1/logo", "loaded": False}
+        outcome = receipt_print_outcome(printed(images=[broken, {"src": "/x.png", "loaded": True}]))
+        self.assertEqual(outcome.result, "receipt printed; 1 of 2 images did not load")
+        self.assertEqual(outcome.details["broken_images"], ["/web/image/res.company/1/logo"])
 
 
 class RecordTests(unittest.TestCase):

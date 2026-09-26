@@ -17,6 +17,10 @@ leaves one paid order per surface in it. Signals are counted while the
 browser is online; what failed while it was offline is expected and goes
 into the details.
 
+The shared-layer run (#143) uses the till helpers here for U-F5 (receipt
+print) and U-C25 (camera scan); unlike this run, they open a session through
+the till's Opening Control when the config has none.
+
 Environment and surfaces as in e2e_parity_shared_layers_live.py.
 """
 from __future__ import annotations
@@ -76,6 +80,24 @@ def reload_outcome(error: str | None, *, till_loaded: bool) -> Outcome:
     return Outcome(True, "offline reload loads the till" if till_loaded else "offline reload shows no till")
 
 
+def receipt_print_outcome(state: Mapping[str, Any]) -> Outcome:
+    """What Print Full Receipt did (#143, U-F5): POS 18 CE without a printer calls window.print()."""
+    images = state.get("images") or []
+    broken = [image["src"] for image in images if not image.get("loaded")]
+    details = {"print_calls": state.get("print_calls", 0), "receipt_chars": state.get("receipt_chars", 0),
+               "images": len(images), "broken_images": broken}
+    if not state.get("receipt_shown"):
+        return Outcome(False, "the sale never reached the receipt screen", details=details)
+    if not state.get("print_calls"):
+        return Outcome(True, "print() never called", details=details)
+    if not state.get("has_order_name"):
+        return Outcome(True, "print() called without the order's receipt", details=details)
+    if broken:
+        return Outcome(True, "receipt printed; %d of %d images did not load" % (len(broken), len(images)),
+                       details=details)
+    return Outcome(True, "receipt printed", details=details)
+
+
 def pos_records(run: RunInfo, public_sale: Outcome, ingress_sale: Outcome,
                 public_reload: Outcome, ingress_reload: Outcome) -> list[dict[str, Any]]:
     common = {"module": "point_of_sale", "route": ROUTE}
@@ -106,14 +128,16 @@ def enter_till(side: Side) -> None:
     products = root.locator("article.product").first
     deadline = time.time() + TIMEOUT / 1000
     while time.time() < deadline:
-        if products.is_visible():
-            return
         # The Opening Control dialog's button first: its label is also the screen's.
+        # The grid already shows behind that dialog, so it counts only without one.
         for button in (root.locator(".modal button", has_text="Open Register"),
                        root.get_by_text("Open Register"), root.get_by_text("Unlock Register")):
             if button.first.is_visible():
                 button.first.click()
                 break
+        else:
+            if products.is_visible():
+                return
         side.page.wait_for_timeout(1000)
     raise RuntimeError("POS never showed its product grid")
 
@@ -202,6 +226,81 @@ def offline_sale(side: Side, server: Side, session_id: int, config_id: int) -> t
     finally:
         side.context.set_offline(False)
     return sale, reload_outcome(error, till_loaded=till_loaded)
+
+
+# --- Live helpers the shared-layer run uses (#143: U-F5 receipt, U-C25 scan) ---
+
+_ORDER_NAME = """() => {
+  const pos = window.posmodel || (odoo.__WOWL_DEBUG__ && odoo.__WOWL_DEBUG__.root.env.services.pos);
+  const order = pos.getOrder ? pos.getOrder() : pos.get_order();
+  return order.pos_reference || order.name || '';
+}"""
+# printWeb mounts the receipt in `.render-container`, then calls window.print;
+# the stub keeps what would have been printed and prints nothing.
+_PRINT_STUB = """() => {
+  window.__parityPrint = [];
+  window.print = () => {
+    const box = document.querySelector('.render-container');
+    window.__parityPrint.push({ text: box ? box.innerText : '',
+                                images: box ? [...box.querySelectorAll('img')].map(img => img.src) : [] });
+  };
+}"""
+_URL_LOADS = """async (src) => {
+  if (src.startsWith('data:')) return true;
+  try { return (await fetch(src, { credentials: 'include' })).ok; } catch (error) { return false; }
+}"""
+
+
+def pos_config_id(side: Side, name: str = "Furniture Shop") -> int:
+    rows = side.rpc("pos.config", "search_read", [[["name", "=", name]]], {"fields": ["id"]})
+    if not rows:
+        raise RuntimeError("no pos.config named %r" % name)
+    return rows[0]["id"]
+
+
+def open_till(side: Side, config_id: int) -> None:
+    side.close_chat_windows()
+    side.goto("%s?config_id=%d" % (ROUTE, config_id), wait="domcontentloaded")
+    enter_till(side)
+    side.settle()
+
+
+def print_receipt(side: Side, config_id: int) -> dict[str, Any]:
+    """Sell one product and press Print Full Receipt; what print() was given."""
+    open_till(side, config_id)
+    root = side.root
+    name = root.evaluate(_ORDER_NAME)
+    root.evaluate(_PRINT_STUB)
+    state: dict[str, Any] = {"receipt_shown": sell_one(side), "print_calls": 0}
+    if not state["receipt_shown"]:
+        return state
+    root.locator("button.print", has_text="Print Full Receipt").first.click()
+    calls: list[dict[str, Any]] = []
+    for _ in range(15):
+        calls = root.evaluate("() => window.__parityPrint") or []
+        if calls:
+            break
+        side.page.wait_for_timeout(1000)
+    state["print_calls"] = len(calls)
+    if calls:
+        printed = calls[0]
+        state["receipt_chars"] = len(printed["text"])
+        state["has_order_name"] = bool(name) and name in printed["text"]
+        state["images"] = [{"src": src, "loaded": root.evaluate(_URL_LOADS, src)} for src in printed["images"]]
+    return state
+
+
+def camera_scan(side: Side, config_id: int) -> str:
+    """The product screen's barcode button, which opens the camera scanner."""
+    open_till(side, config_id)
+    control = side.root.locator("button:has(i.fa-barcode)")
+    if not control.count():
+        return "POS product scan: no camera control"
+    control.first.click()
+    side.page.wait_for_timeout(3000)
+    live = side.root.evaluate("() => [...document.querySelectorAll('video')].some(v => v.srcObject)")
+    control.first.click()  # Stop
+    return "POS product scan: camera %s" % ("streaming" if live else "not streaming")
 
 
 def main(argv=None) -> int:

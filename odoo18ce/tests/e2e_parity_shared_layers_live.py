@@ -732,8 +732,16 @@ def check_f5(run: Run) -> None:
     run.record("U-F5", "shared", "generic", public, ingress,
                notes="Report (sale order PDF), export (xlsx) and attachment, each triggered in the page; on "
                      "Ingress inside the HA panel's iframe.")
-    run.not_run("U-F5", "point_of_sale", "POS receipt print", "#161",
-                "POS hangs on its splash screen on both surfaces, so no receipt can be printed.")
+
+    # Imported here: the POS module imports this one.
+    from e2e_pos_offline_live import pos_config_id, print_receipt, receipt_print_outcome
+
+    config_id = pos_config_id(run.public)
+    public, ingress = run.both(lambda side: receipt_print_outcome(print_receipt(side, config_id)))
+    run.record("U-F5", "point_of_sale", "POS receipt print", public, ingress, route="/pos/ui",
+               notes="One Desk Pad sold for cash in the Furniture Shop till, then Print Full Receipt. With no "
+                     "printer, POS 18 CE mounts the receipt and calls window.print(); the run stubs print() to "
+                     "keep the receipt and fetches its images on that surface.")
 
 
 # --- Group A: channel and URL rewriting ---------------------------------------------
@@ -2260,10 +2268,8 @@ _CAMERA_JS = """async () => {
 
 @check("U-C25")
 def check_c25(run: Run) -> None:
-    run.not_run("U-C25", "point_of_sale", "POS product scan", "#161",
-                "POS hangs on its splash screen on both surfaces.")
     screens = [("shared", "generic"), ("mrp", "MRP work order scan"), ("hr_attendance", "attendance kiosk badge scan"),
-               ("event", "event registration desk")]
+               ("event", "event registration desk"), ("point_of_sale", "POS product scan")]
     if not run.env.ha_https:
         for module, screen in screens:
             run.not_run("U-C25", module, screen, "no https Home Assistant entrance (HA_HTTPS_BASE_URL unset)",
@@ -2315,6 +2321,14 @@ def check_c25(run: Run) -> None:
                 side.ensure_logged_in()
             record_screen(run, "U-C25", module, screen, public, ingress, "camera",
                           notes="The screen's camera/scan control pressed if it has one; Ingress through https.")
+
+        from e2e_pos_offline_live import camera_scan, pos_config_id  # the POS module imports this one
+
+        config_id = pos_config_id(run.public)
+        public, ingress = pair(lambda side: Outcome(True, camera_scan(side, config_id)))
+        record_screen(run, "U-C25", "point_of_sale", "POS product scan", public, ingress, "camera", route="/pos/ui",
+                      notes="The till's barcode button (shown only where getUserMedia exists) opens the camera "
+                            "scanner, then is pressed again to stop; Ingress through https.")
     finally:
         https.close()
 
