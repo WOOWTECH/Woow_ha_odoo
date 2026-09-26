@@ -13,7 +13,7 @@ RUN = RunInfo(run_id="WOOW-PARITY-20260926T000000Z", target="local", database="e
 UUID = "0f6c1d9e-1111-4222-8333-944455556666"
 
 
-def local(**overrides):
+def facts(**overrides):
     facts = {"uuid": UUID, "went_offline": True, "validated_offline": True, "offline_notice": "Connection Lost"}
     facts.update(overrides)
     return facts
@@ -28,26 +28,26 @@ def row(**overrides):
 
 class SaleOutcomeTests(unittest.TestCase):
     def test_an_order_sold_offline_and_found_in_the_session_after_reconnect_is_synced(self) -> None:
-        outcome = sale_outcome(local(), [row()], session_id=5)
+        outcome = sale_outcome(facts(), [row()], session_id=5)
         self.assertTrue(outcome.available)
         self.assertEqual(outcome.result, "offline sale reached the server after reconnect")
         self.assertEqual(outcome.details["server_order"]["state"], "paid")
 
     def test_an_order_missing_on_the_server_is_not_synced(self) -> None:
-        outcome = sale_outcome(local(), [], session_id=5)
+        outcome = sale_outcome(facts(), [], session_id=5)
         self.assertEqual(outcome.result, "offline sale not on the server after reconnect")
 
     def test_an_order_in_another_session_does_not_count(self) -> None:
-        outcome = sale_outcome(local(), [row(session_id=[9, "POS/00009"])], session_id=5)
+        outcome = sale_outcome(facts(), [row(session_id=[9, "POS/00009"])], session_id=5)
         self.assertEqual(outcome.result, "offline sale landed in another session")
 
     def test_a_till_that_never_went_offline_did_not_test_anything(self) -> None:
-        outcome = sale_outcome(local(went_offline=False), [row()], session_id=5)
+        outcome = sale_outcome(facts(went_offline=False), [row()], session_id=5)
         self.assertFalse(outcome.available)
         self.assertIn("never offline", outcome.result)
 
     def test_a_sale_the_till_refused_to_validate_offline_is_its_own_result(self) -> None:
-        outcome = sale_outcome(local(validated_offline=False), [], session_id=5)
+        outcome = sale_outcome(facts(validated_offline=False), [], session_id=5)
         self.assertEqual(outcome.result, "till could not validate the sale offline")
 
 

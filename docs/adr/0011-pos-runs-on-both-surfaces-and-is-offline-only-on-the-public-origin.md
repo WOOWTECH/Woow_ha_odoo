@@ -54,9 +54,9 @@ entrance. It loaded `/pos/ui`, cut the network with the browser's offline
 emulation and sold one product for cash:
 
 - **In-page offline sale: the same on both surfaces.** The till showed
-  "Connection Lost" and validated the sale. When the network came back, the
-  order reached the server within 3 seconds, as a paid `pos.order` in the
-  open session. `PARITY`.
+  "Connection Lost" and validated the sale. About 3 seconds after the
+  network came back, the order was on the server as a paid `pos.order` in
+  the open session. `PARITY`.
 - **Reloading `/pos/ui` offline: fails on both surfaces** with
   `net::ERR_INTERNET_DISCONNECTED`. `PARITY`.
 
@@ -69,4 +69,5 @@ origin can do. What the shim's service-worker rule still costs Ingress is
 installing Odoo as an app (PWA) and the web client's offline page.
 
 The title no longer holds: offline selling works on both surfaces, not
-only on the Public origin. The file name is kept so that links to this ADR still work.
+only on the Public origin. The file name is kept so that links to this ADR
+still work.

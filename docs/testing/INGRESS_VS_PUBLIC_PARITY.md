@@ -384,16 +384,16 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 |---|---|---|---|
 | `sale_management` | `/sale/`、`/my/orders`、`/my/quotes` | RC-9 | `U-E3`、`U-E2`、`U-C20`、`U-D5` |
 | `website_sale` | `/shop/`、`/shop/cart`、`/shop/checkout`、`/shop/payment` | RC-9、**RC-10** | `U-D1`–`U-D7`、`U-E6`；購物車 cookie 走 `U-B2` |
-| `point_of_sale` | `/pos/`、`/pos/ui`、`/pos_self_order/` | RC-3、RC-8 | `U-C27`（頁內離線銷售與斷網重整；實測兩邊相同，`PARITY`，#161）、`U-C24` 全螢幕、`U-C25` 掃碼、`U-F5` 收據列印 |
+| `point_of_sale` | `/pos/`、`/pos/ui`、`/pos_self_order/` | RC-6、RC-3、RC-8 | `U-C27`（頁內離線銷售與斷網重整；實測兩邊相同，`PARITY`，#161）、`U-C24` 全螢幕、`U-C25` 掃碼、`U-F5` 收據列印 |
 | 金流串接（ECPay：`ecpay_invoice_tw`、`ecpay_invoice_website`、`payment_ecpay`、`payment_ecpay_ecpg`） | `/payment/`、各 provider 專屬 return/notify 路徑 | **RC-10、RC-9** | **`U-E6`（return_url／notify_url 必須是 public 且對外可達）**；ingress 原理上無法承接回呼 → `STRUCTURAL` |
 
-> **POS 特別警告**：ingress 的 shim 主動反註冊 service worker 並偽造
+> **POS 特別警告**（2026-09-26 已由下方 #161 結果推翻，僅留作紀錄）：ingress 的 shim 主動反註冊 service worker 並偽造
 > `navigator.serviceWorker`（`RC-6`）。POS 的離線模式建立在 service worker 之上，
 > 因此**在 ingress 下極可能完全不可用**。安裝前必須先決定：POS 只走 public，
 > 或接受 ingress 下無離線能力。這是設計決策，不是 bug 修正。
 >
-> **已決定（2026-09-24，ADR 0011）**：POS 兩個 surface 都可用；離線銷售是 ingress 的
-> Structural gap，由 public 承接。測試時 ingress 的離線項目判 `STRUCTURAL`，並驗證 public 確實能離線。
+> **已決定（2026-09-24，ADR 0011）**：POS 兩個 surface 都可用（仍有效）；~~離線銷售是 ingress 的
+> Structural gap，由 public 承接。測試時 ingress 的離線項目判 `STRUCTURAL`，並驗證 public 確實能離線。~~（已由下方結果取代）
 >
 > **實測修正（2026-09-24，#161）**：Odoo 18 CE 的 POS **沒有自己的 service worker**；唯一的
 > `/web/service-worker.js` 範圍是 `/odoo`，只在導覽失敗時顯示離線頁。所以 `/pos/ui` 斷網重整
@@ -402,7 +402,7 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 斷網成交再同步的完整驗證尚未完成，ADR 0011 的前提待重審，都記在 #161。
 >
 > **結果（2026-09-26，#161）**：兩個 surface 都在頁面已載入時斷網（瀏覽器離線模擬），以現金成交一筆；
-> 恢復網路後 3 秒內訂單以 paid 的 `pos.order` 出現在同一 session → `PARITY`。斷網重整 `/pos/ui`
+> 恢復網路後約 3 秒（第二次查詢）訂單即以 paid 的 `pos.order` 出現在同一 session → `PARITY`。斷網重整 `/pos/ui`
 > 兩邊都 `net::ERR_INTERNET_DISCONNECTED` → `PARITY`。所以 POS 離線銷售**不是** ingress 的
 > Structural gap，不需要 public 承接；ADR 0011 已加附記（保留「兩個 surface 都可用」的決定）。
 > `RC-6` 在 ingress 仍拿走的只有 PWA 安裝與 web client 的離線頁（`U-C27` generic）。

@@ -31,7 +31,7 @@ from typing import Any, Mapping, Sequence
 
 from e2e_menu_action_adapter import RunInfo, new_run_id, parse_env_file
 from e2e_parity_shared_layers import Outcome, check_record
-from e2e_parity_shared_layers_live import Env, Side, open_sides
+from e2e_parity_shared_layers_live import ARTIFACTS, Env, Side, open_sides
 
 TIMEOUT = 60_000
 ROUTE = "/pos/ui"
@@ -42,15 +42,15 @@ SYNC_WAIT_S = 90
 # --- Pure parts (static tier: test_e2e_pos_offline.py) -------------------------
 
 
-def sale_outcome(local: Mapping[str, Any], server_rows: Sequence[Mapping[str, Any]], *, session_id: int) -> Outcome:
+def sale_outcome(facts: Mapping[str, Any], server_rows: Sequence[Mapping[str, Any]], *, session_id: int) -> Outcome:
     """What became of the sale the till made offline, judged from the server."""
-    details: dict[str, Any] = {key: local.get(key) for key in
+    details: dict[str, Any] = {key: facts.get(key) for key in
                                ("went_offline", "validated_offline", "offline_notice", "synced_after_s")}
-    if not local.get("went_offline"):
+    if not facts.get("went_offline"):
         return Outcome(False, "the till was never offline", details=details)
-    if not local.get("validated_offline"):
+    if not facts.get("validated_offline"):
         return Outcome(True, "till could not validate the sale offline", details=details)
-    order = next((row for row in server_rows if row.get("uuid") == local.get("uuid")), None)
+    order = next((row for row in server_rows if row.get("uuid") == facts.get("uuid")), None)
     if order is None:
         return Outcome(True, "offline sale not on the server after reconnect", details=details)
     details["server_order"] = {key: order.get(key) for key in
@@ -108,13 +108,12 @@ def enter_till(side: Side) -> None:
     while time.time() < deadline:
         if products.is_visible():
             return
-        dialog_open = root.locator(".modal button", has_text="Open Register")
-        if dialog_open.count() and dialog_open.first.is_visible():
-            dialog_open.first.click()
-        elif root.get_by_text("Open Register").count() and root.get_by_text("Open Register").first.is_visible():
-            root.get_by_text("Open Register").first.click()
-        elif root.get_by_text("Unlock Register").count() and root.get_by_text("Unlock Register").first.is_visible():
-            root.get_by_text("Unlock Register").first.click()
+        # The Opening Control dialog's button first: its label is also the screen's.
+        for button in (root.locator(".modal button", has_text="Open Register"),
+                       root.get_by_text("Open Register"), root.get_by_text("Unlock Register")):
+            if button.first.is_visible():
+                button.first.click()
+                break
         side.page.wait_for_timeout(1000)
     raise RuntimeError("POS never showed its product grid")
 
@@ -143,7 +142,7 @@ def sell_one(side: Side) -> bool:
         return False
 
 
-def add_signals(*blocks: Mapping[str, int]) -> dict[str, int]:
+def sum_signals(*blocks: Mapping[str, int]) -> dict[str, int]:
     total: dict[str, int] = {}
     for block in blocks:
         for name, count in block.items():
@@ -153,22 +152,23 @@ def add_signals(*blocks: Mapping[str, int]) -> dict[str, int]:
 
 def offline_sale(side: Side, server: Side, session_id: int, config_id: int) -> tuple[Outcome, Outcome]:
     recorder = side.recorder
+    till = "%s?config_id=%d" % (ROUTE, config_id)
     side.close_chat_windows()
     start = recorder.mark()
-    side.goto("%s?config_id=%d" % (ROUTE, config_id), wait="domcontentloaded")
+    side.goto(till, wait="domcontentloaded")
     enter_till(side)
     side.settle()
     online_before = recorder.since(start)
     online_details = recorder.details(start)
 
-    local: dict[str, Any] = {"went_offline": False, "validated_offline": False}
+    facts: dict[str, Any] = {"went_offline": False, "validated_offline": False}
     offline_mark = recorder.mark()
     side.context.set_offline(True)
     try:
-        local["went_offline"] = side.root.evaluate("() => !navigator.onLine")
-        local["uuid"] = side.root.evaluate(_ORDER_UUID)
-        local["validated_offline"] = sell_one(side)
-        local["offline_notice"] = offline_notice(side)
+        facts["went_offline"] = side.root.evaluate("() => !navigator.onLine")
+        facts["uuid"] = side.root.evaluate(_ORDER_UUID)
+        facts["validated_offline"] = sell_one(side)
+        facts["offline_notice"] = offline_notice(side)
         offline_seen = recorder.details(offline_mark)
     finally:
         side.context.set_offline(False)
@@ -176,16 +176,16 @@ def offline_sale(side: Side, server: Side, session_id: int, config_id: int) -> t
     started = time.time()
     rows: list[dict[str, Any]] = []
     while time.time() - started < SYNC_WAIT_S:
-        rows = server.rpc("pos.order", "search_read", [[["uuid", "=", local.get("uuid")]]],
+        rows = server.rpc("pos.order", "search_read", [[["uuid", "=", facts.get("uuid")]]],
                           {"fields": ["uuid", "session_id", "state", "amount_total", "pos_reference"]})
         if rows:
-            local["synced_after_s"] = round(time.time() - started)
+            facts["synced_after_s"] = round(time.time() - started)
             break
         side.page.wait_for_timeout(3000)
     side.settle()
-    sale = sale_outcome(local, rows, session_id=session_id)
+    sale = sale_outcome(facts, rows, session_id=session_id)
     sale = Outcome(sale.available, sale.result,
-                   add_signals(online_before, recorder.since(restored)),
+                   sum_signals(online_before, recorder.since(restored)),
                    {**sale.details, "offline_window": {k: v for k, v in offline_seen.items() if v},
                     "online_signal_sources": {k: v for k, v in online_details.items() if v}})
 
@@ -194,7 +194,7 @@ def offline_sale(side: Side, server: Side, session_id: int, config_id: int) -> t
     till_loaded = False
     try:
         try:
-            side.goto("%s?config_id=%d" % (ROUTE, config_id), wait="domcontentloaded")
+            side.goto(till, wait="domcontentloaded")
             side.root.locator("article.product, .modal button").first.wait_for(timeout=15_000)
             till_loaded = True
         except Exception as caught:  # noqa: BLE001 -- the failure is the result
@@ -238,7 +238,14 @@ def main(argv=None) -> int:
                   file=sys.stderr)
             outcomes = {}
             for side in (public, ingress):
-                outcomes[side.name] = offline_sale(side, public, session_id, config_id)
+                try:
+                    outcomes[side.name] = offline_sale(side, public, session_id, config_id)
+                except Exception as error:  # noqa: BLE001 -- a failure is evidence, as in Run.both
+                    side.context.set_offline(False)
+                    os.makedirs(ARTIFACTS, exist_ok=True)
+                    side.page.screenshot(path=os.path.join(ARTIFACTS, "%s-pos-%s.png" % (info.run_id, side.name)))
+                    failed = Outcome(False, "error: %s" % env.mask((str(error).splitlines() or [""])[0]))
+                    outcomes[side.name] = (failed, failed)
                 print("%s: %s / %s" % (side.name, outcomes[side.name][0].result, outcomes[side.name][1].result),
                       file=sys.stderr)
             records = pos_records(info, outcomes["public"][0], outcomes["ingress"][0],

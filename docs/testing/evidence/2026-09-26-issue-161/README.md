@@ -29,16 +29,21 @@ The maintainer approved these writes (triage, 2026-09-25, and again in the sessi
 2026-09-26): closing `POS/00001`, one new session, one offline cash sale per surface, and closing
 the session afterwards.
 
+The issue asks for a fresh session on each surface. The run used one fresh session for both,
+`POS/00002`, opened just before it, because the approval covered one. Each side had its own
+browser context and its own till, and the check requires the order to be in that session.
+
 ## Checks: `checks.jsonl`
 
 | Check | Public origin | Ingress | Verdict |
 |---|---|---|---|
-| `U-C27` POS offline sale | the till showed "Connection Lost" and validated the sale. After reconnect, the order was on the server in 3 s | the same, 3 s | `PARITY` |
+| `U-C27` POS offline sale | the till showed "Connection Lost" and validated the sale. After reconnect, the order was on the server about 3 s later | the same | `PARITY` |
 | `U-C27` POS offline reload | `net::ERR_INTERNET_DISCONNECTED` | `net::ERR_INTERNET_DISCONNECTED` | `PARITY` |
 
 The sale on each side was one "Desk Pad" (NT$ 2) paid in cash. The run takes the order's `uuid`
 from the till before it validates offline, then looks for that `uuid` on the server after the
-network comes back:
+network comes back. It looks right at reconnect and then every 3 s; `synced_after_s: 3` means it was not there at
+reconnect and was there at the next look:
 
 | Surface | `pos.order` | Reference | Session | State after the run | Amount |
 |---|---|---|---|---|---|
