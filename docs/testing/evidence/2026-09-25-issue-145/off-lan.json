@@ -1,0 +1,280 @@
+{
+ "browser": "browserless.io cloud Chrome",
+ "date": "2026-09-26",
+ "egress": "two cloud addresses, neither the office's public address (all three checked; none recorded)",
+ "method": "navigation: the page is opened and must contain the expected text; fetch (attachment downloads and the tracking pixel, which are not pages): fetch() with no credentials from a page on the Public origin",
+ "results": [
+  {
+   "identity": "check:U-E3|sale_management|quotation Share",
+   "side": "public",
+   "link": "<PUBLIC_BASE>/mail/view",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|sale_management|quotation Share",
+   "side": "ingress",
+   "link": "<PUBLIC_BASE>/mail/view",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|account|invoice Share",
+   "side": "public",
+   "link": "<PUBLIC_BASE>/mail/view",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|account|invoice Share",
+   "side": "ingress",
+   "link": "<PUBLIC_BASE>/mail/view",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|purchase|purchase order Share",
+   "side": "public",
+   "link": "<PUBLIC_BASE>/mail/view",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|purchase|purchase order Share",
+   "side": "ingress",
+   "link": "<PUBLIC_BASE>/mail/view",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|project|task Share",
+   "side": "public",
+   "link": "<PUBLIC_BASE>/mail/view",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|project|task Share",
+   "side": "ingress",
+   "link": "<PUBLIC_BASE>/mail/view",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|project|project Share",
+   "side": "public",
+   "link": "<PUBLIC_BASE>/mail/view",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|project|project Share",
+   "side": "ingress",
+   "link": "<PUBLIC_BASE>/mail/view",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|survey|survey Share",
+   "side": "public",
+   "link": "<PUBLIC_BASE>/survey/start/<token>",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|survey|survey Share",
+   "side": "ingress",
+   "link": "<PUBLIC_BASE>/survey/start/<token>",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|spreadsheet_dashboard|dashboard Share",
+   "side": "public",
+   "link": "<PUBLIC_BASE>/dashboard/share/<id>/<token>",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|spreadsheet_dashboard|dashboard Share",
+   "side": "ingress",
+   "link": "<PUBLIC_BASE>/dashboard/share/<id>/<token>",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|mail|Discuss channel invitation",
+   "side": "public",
+   "link": "<PUBLIC_BASE>/chat/<id>/<token>",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|mail|Discuss channel invitation",
+   "side": "ingress",
+   "link": "<PUBLIC_BASE>/chat/<id>/<token>",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|im_livechat|live chat channel links",
+   "side": "public",
+   "link": "<PUBLIC_BASE>/im_livechat/support/<id>",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|im_livechat|live chat channel links",
+   "side": "ingress",
+   "link": "<PUBLIC_BASE>/im_livechat/support/<id>",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|calendar|meeting link",
+   "side": "public",
+   "link": "<PUBLIC_BASE>/calendar/join_videocall/<token>",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E3|calendar|meeting link",
+   "side": "ingress",
+   "link": "<PUBLIC_BASE>/calendar/join_videocall/<token>",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E2|portal|portal invitation",
+   "side": "public",
+   "link": "<PUBLIC_BASE>/web/signup",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E2|portal|portal invitation",
+   "side": "ingress",
+   "link": "<PUBLIC_BASE>/web/signup",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E2|mass_mailing|tracking and unsubscribe",
+   "side": "public",
+   "link": "<PUBLIC_BASE>/r/<token>/m/<id>",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E2|mass_mailing|tracking and unsubscribe",
+   "side": "public",
+   "link": "<PUBLIC_BASE>/mailing/<id>/confirm_unsubscribe",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E2|mass_mailing|tracking and unsubscribe",
+   "side": "public",
+   "link": "<PUBLIC_BASE>/mail/track/<id>/<token>/blank.gif",
+   "status": 200,
+   "shown": true,
+   "method": "fetch"
+  },
+  {
+   "identity": "check:U-E2|mass_mailing|tracking and unsubscribe",
+   "side": "ingress",
+   "link": "<PUBLIC_BASE>/r/<token>/m/<id>",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E2|mass_mailing|tracking and unsubscribe",
+   "side": "ingress",
+   "link": "<PUBLIC_BASE>/mailing/<id>/confirm_unsubscribe",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E2|mass_mailing|tracking and unsubscribe",
+   "side": "ingress",
+   "link": "<PUBLIC_BASE>/mail/track/<id>/<token>/blank.gif",
+   "status": 200,
+   "shown": true,
+   "method": "fetch"
+  },
+  {
+   "identity": "check:U-E5|mail|attachment links in outgoing mail",
+   "side": "public",
+   "link": "<PUBLIC_BASE>/web/content/<id>",
+   "status": 200,
+   "shown": true,
+   "method": "fetch"
+  },
+  {
+   "identity": "check:U-E5|mail|attachment links in outgoing mail",
+   "side": "ingress",
+   "link": "<PUBLIC_BASE>/web/content/<id>",
+   "status": 200,
+   "shown": true,
+   "method": "fetch"
+  },
+  {
+   "identity": "check:U-E2|auth_signup|password reset",
+   "side": "public",
+   "link": "<PUBLIC_BASE>/web/signup",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E2|auth_signup|password reset",
+   "side": "ingress",
+   "link": "<PUBLIC_BASE>/web/signup",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E2|mail|chatter notification",
+   "side": "public",
+   "link": "<PUBLIC_BASE>/mail/view",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  },
+  {
+   "identity": "check:U-E2|mail|chatter notification",
+   "side": "ingress",
+   "link": "<PUBLIC_BASE>/mail/view",
+   "status": 200,
+   "shown": true,
+   "method": "navigation"
+  }
+ ]
+}
