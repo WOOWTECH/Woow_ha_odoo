@@ -86,6 +86,9 @@ on the Public origin either. With the page loaded, cutting the network shows
 Public origin. The full offline sale and sync was not finished: the POS then
 hung on its splash screen on both surfaces. #161 holds the rest.
 
+Done on 2026-09-26: the offline sale synced and the offline reload failed on both
+surfaces, both `PARITY`. See `../2026-09-26-issue-161/`.
+
 ## Must-run U items owned elsewhere
 
 `U-E2`/`U-E3`/`U-E4` outbound URLs → #145; `U-E6` ECPay callback → #146;
