@@ -1,11 +1,11 @@
 {
   "observed": 75,
   "counts": {
-    "PARITY": 51,
+    "PARITY": 53,
     "GAP": 9,
     "APPROVED-DIVERGENCE": 1,
     "STRUCTURAL": 5,
-    "NOT-RUN": 9
+    "NOT-RUN": 7
   },
   "missing": [],
   "unplanned": [],
@@ -14,12 +14,10 @@
   "gaps_without_issue": [],
   "structural_without_path": [],
   "not_run": [
-    "check:U-F5|point_of_sale|POS receipt print",
     "check:U-A9|shared|generic",
     "check:U-C22|shared|generic",
     "check:U-C24|mrp|MRP work center",
     "check:U-C24|hr_attendance|attendance kiosk mode",
-    "check:U-C25|point_of_sale|POS product scan",
     "check:U-C25|mrp|MRP work order scan",
     "check:U-D6|event|event registration",
     "check:U-D7|event|/event"
