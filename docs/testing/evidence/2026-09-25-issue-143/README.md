@@ -15,14 +15,21 @@ Released add-on `1b7b4ce7_odoo18ce` at **0.4.4**, database **`odoo_parity`**
 
 **Rerun on 2026-09-27** (same run marker, same fixtures, add-on still 0.4.4),
 after #161 unblocked POS and the add-on restart of #164 filled
-`website.domain`: P-Check, `U-F5`, `U-C25` and `U-D8`. The rerun's records
-are in `rerun-2026-09-27.jsonl`; each replaces the record with the same
-control identity in `checks.jsonl`, and `conservation.json` is recomputed.
+`website.domain`: P-Check, `U-F5`, `U-C25` and `U-D8`. A check reruns all
+its records, so the rerun also replaced `U-C18` and `U-C20` (recorded by the
+`U-F5` check; the xlsx export now has 6 rows, the database having grown) and
+`U-C25` on the generic, MRP, attendance and event screens, with the same
+verdicts as before. The ten records are in `rerun-2026-09-27.jsonl`, each
+marked "Rerun on 2026-09-27" in its notes; each replaces the record with the
+same control identity in `checks.jsonl`, and `conservation.json` is
+recomputed.
 The rerun opened a session on the Furniture Shop POS (the till's Opening
 Control; approved by the maintainer) and left it open with two paid orders,
 one per surface.
 
 ## P-Check
+
+Rerun on 2026-09-27: P-1 to P-6 all PASS (`pcheck`).
 
 | ID | Result |
 |---|---|
@@ -32,8 +39,8 @@ one per surface.
 | P-4 | PASS: `web.base.url.freeze` = `True` |
 | P-5 | PASS on 2026-09-27: `website.domain` = `<PUBLIC_BASE>`. On 2026-09-25 it **failed** (empty: the bootstrap wrote it only when `website` was installed at add-on start, and `website` came later in #144; filed as #164); an add-on restart filled it |
 | P-6 | PASS: the same login on both surfaces, both serving `odoo_parity` |
-| P-7 | Created: partner, service product, quotation (and one for the test user, marked sent for `/my/quotes`), survey, event, job, Discuss channel, work center, task, a Unicode attachment, a low-rights user for `U-B7`; the test user joined the live chat channel. Every record is named with the run marker; nothing was deleted |
-| P-8 | Writes on `odoo_parity` approved by the maintainer for this run (fixtures and what the checks create); no host, add-on or `odoo_test` change |
+| P-7 | Created (the 2026-09-27 rerun reused these fixtures): partner, service product, quotation (and one for the test user, marked sent for `/my/quotes`), survey, event, job, Discuss channel, work center, task, a Unicode attachment, a low-rights user for `U-B7`; the test user joined the live chat channel. Every record is named with the run marker; nothing was deleted |
+| P-8 | Writes on `odoo_parity` approved by the maintainer for this run (fixtures and what the checks create), and on 2026-09-27 for the POS session and two orders; no host, add-on or `odoo_test` change |
 
 ## Checks — `checks.jsonl`
 
@@ -54,9 +61,12 @@ Some records were rerun inside the same run after a harness fix, because
 their first attempt gave the same wrong result on both surfaces (`U-C6`,
 `U-C9`, `U-C17`, `U-F5` with `U-C18`/`U-C20`), and `U-B2` after review
 (its attribute block had been redacted by key name); each says so in its
-notes. After review, three module screens that offer no such control
-(`U-C24` MRP work center and attendance kiosk, `U-C25` MRP work order) were
-reclassified from `PARITY` to `NOT-RUN`: nothing was tested on them.
+notes, except the `U-F5`, `U-C18` and `U-C20` records, which the 2026-09-27
+rerun replaced. After review, three module screens that offer no such
+control (`U-C24` MRP work center and attendance kiosk, `U-C25` MRP work
+order) were reclassified from `PARITY` to `NOT-RUN`: nothing was tested on
+them. The driver now records such screens as `NOT-RUN` itself (the rerun's
+MRP work order record).
 
 ### GAP
 

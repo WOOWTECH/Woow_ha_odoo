@@ -437,7 +437,7 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 |---|---|---|
 | `sale_management` | 經 `sale` 選單，23 `PARITY` | `U-E3`／`U-E2`／`U-C20`／`U-D5` → #145 |
 | `website_sale` | 15 `PARITY` | `U-D1`–`U-D6`、`U-B2` → #143；`U-D7`、`U-E6` 為 `STRUCTURAL`（RC-10） |
-| `point_of_sale` | 19 `PARITY` | `U-C27` 離線銷售、斷網重整各 1 `PARITY`（#161，見 10.1）；`U-C24`／`U-C25`／`U-F5` → #143 |
+| `point_of_sale` | 19 `PARITY` | `U-C27` 離線銷售、斷網重整各 1 `PARITY`（#161，見 10.1）；`U-F5` 收據列印、`U-C25` 商品掃描各 1 `PARITY`（#143，見 10.6）；`U-C24` 未測 |
 | ECPay 4 模組 | `ecpay_invoice_tw`、`payment_ecpay` 各 1 `PARITY`；另兩個無自有選單 | `U-E6` 實際付款與回呼 → #146 |
 | `survey` | 4 `PARITY`、**2 `GAP`**（同一動作） | 範例圖片逃逸 → **#158**；`U-E3`／`U-C4` → #145 |
 | `im_livechat` | 8 `PARITY` | 外嵌 script 為 `STRUCTURAL`（RC-10）；`U-C26` → #143 |
@@ -459,12 +459,14 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 | Safari／非 Chromium | 第三方 cookie、SharedWorker、clipboard 限制不同 | 同上 |
 | 開發者模式差集 | 由 `docs/plans/2026-09-05-odoo-developer-mode-delta-tdd.md` 承接 | 交叉引用，不重複 |
 
-### 10.6 共用層實測結果（2026-09-25，#143）
+### 10.6 共用層實測結果（2026-09-25，2026-09-27 補跑，#143）
 
 F、A、B、C、D 群組在 `odoo_parity`（0.4.4）各跑一次，外加 10.1–10.3 指定的模組畫面；Ingress 端是 HA 前端
-面板裡的 iframe（plain-http LAN 入口），`U-C25` 走 https 入口。75 項 = 51 `PARITY` + 9 `GAP` + 1
-`APPROVED-DIVERGENCE` + 5 `STRUCTURAL` + 9 `NOT-RUN`；每個 `GAP` 都有 issue（#159、#164–#170）。
-`NOT-RUN`：POS 兩項（#161）、`U-A9`（無 60 秒以上的動作）、`U-C22`（只有一種語言）、`/event` 與活動報名
+面板裡的 iframe（plain-http LAN 入口），`U-C25` 走 https 入口。75 項 = 53 `PARITY` + 9 `GAP` + 1
+`APPROVED-DIVERGENCE` + 5 `STRUCTURAL` + 7 `NOT-RUN`；每個 `GAP` 都有 issue（#159、#165–#170、#172）。
+POS 兩項在 #161 之後於 2026-09-27 補跑，收據列印（`U-F5`）與相機掃描（`U-C25`）兩端皆 `PARITY`；同次補跑 P-Check
+全數通過，`U-D8` 仍為 `GAP`（`sitemap.xml` 跟著請求位址走，#172）。
+`NOT-RUN`：`U-A9`（無 60 秒以上的動作）、`U-C22`（只有一種語言）、`/event` 與活動報名
 （未裝 `website_event`）、CE 沒有該控制項的三個模組畫面（MRP 工作中心與工單、出勤 kiosk 全螢幕）。證據與方法見 `docs/testing/evidence/2026-09-25-issue-143/`。
 
 - **`U-F1` 上界**：Ingress iframe 與 HA **同源**，沒有 `allow`、沒有 `sandbox`，政策全部放行；唯一限制是
