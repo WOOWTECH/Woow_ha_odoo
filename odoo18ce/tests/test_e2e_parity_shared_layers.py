@@ -330,9 +330,10 @@ class NewTabTests(unittest.TestCase):
         self.assertEqual(new_tab_verdict(*self.pair(ingress_text="Internal Server Error"))[2],
                          ["the two tabs do not render the same page"])
 
-    def test_a_tab_with_nothing_in_it_is_not_the_same_page(self) -> None:
-        self.assertEqual(new_tab_verdict(*self.pair(public_text="", ingress_text=""))[2],
-                         ["public tab rendered no text", "ingress tab rendered no text"])
+    def test_a_tab_with_nothing_in_it_is_a_blank_screen_and_a_blocker(self) -> None:
+        verdict, severity, reasons, _ = new_tab_verdict(*self.pair(public_text="", ingress_text=""))
+        self.assertEqual((verdict, severity), ("GAP", "blocker"))
+        self.assertEqual(reasons, ["public tab rendered no text", "ingress tab rendered no text"])
 
     def test_the_ingress_prefix_in_the_public_tab_address_is_a_leak_and_a_blocker(self) -> None:
         # Section 1.3: an Ingress token in an outbound address is a Blocker, not an Important.
@@ -341,6 +342,24 @@ class NewTabTests(unittest.TestCase):
         self.assertEqual((verdict, severity), ("GAP", "blocker"))
         self.assertEqual(reasons, ["public tab address carries the Ingress prefix"])
         self.assertIsNone(public_path)
+
+    def test_a_token_the_mask_did_not_recognise_is_a_leak_too(self) -> None:
+        # A prefix that is not this session's own (#160) survives masking; it is still a token.
+        leaked = Outcome(available=True, result="new tab at <PUBLIC_BASE>/api/hassio_ingress/xyz/survey/<token>",
+                         details={"shape": "<PUBLIC_BASE>/api/hassio_ingress/xyz/survey/<token>",
+                                  "page_text": self.PAGE})
+        _, ingress = self.pair()
+        verdict, severity, reasons, _ = new_tab_verdict(leaked, ingress)
+        self.assertEqual((verdict, severity), ("GAP", "blocker"))
+        self.assertEqual(reasons, ["public tab address carries the Ingress prefix"])
+
+    def test_a_token_only_in_the_query_is_a_leak_the_probe_reports(self) -> None:
+        # The shape holds the path alone, so the probe flags a prefix anywhere in the address.
+        public, ingress = self.pair()
+        leaked = Outcome(available=True, result=public.result,
+                         details={**public.details, "ingress_token": True})
+        self.assertEqual(new_tab_verdict(leaked, ingress)[:3],
+                         ("GAP", "blocker", ["public tab address carries the Ingress prefix"]))
 
     def test_a_route_escape_under_ingress_is_a_blocker(self) -> None:
         public, ingress = self.pair()

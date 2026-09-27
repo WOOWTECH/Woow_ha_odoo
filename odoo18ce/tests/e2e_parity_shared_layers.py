@@ -413,6 +413,9 @@ INGRESS_PREFIX = "<INGRESS_PREFIX>"
 # RC-15: every top-level page under Ingress lives below the Supervisor path,
 # so a tab opened from there starts here and carries the session token.
 INGRESS_TAB_BASE = HA_BASE + INGRESS_PREFIX
+# The masked prefix is this session's own; a prefix the mask did not recognise
+# (a stale one, #160) still reads as what it is.
+INGRESS_PATH = "/api/hassio_ingress/"
 
 
 def new_tab_verdict(public: Outcome, ingress: Outcome) -> tuple[str, str, list[str], str | None]:
@@ -428,12 +431,14 @@ def new_tab_verdict(public: Outcome, ingress: Outcome) -> tuple[str, str, list[s
     differ by construction, so that difference alone is not a gap. Everything
     else is the `GAP` section 1.1 gives it: a tab that did not open, one off
     the Ingress prefix or off the Canonical URL, or a different page in it --
-    and the Ingress prefix inside the Public origin's address is a leaked
-    token, so a Blocker by section 1.3. A doubled prefix on the Ingress side
-    shows up as the two tabs being on different pages.
+    and a blank tab, or the Ingress prefix inside the Public origin's address
+    (a leaked token), is a Blocker by section 1.3. A doubled prefix on the
+    Ingress side shows up as the two tabs being on different pages.
 
     Each outcome carries the masked address shape of the tab it opened in
-    `details["shape"]` and that page's text in `details["page_text"]`.
+    `details["shape"]`, that page's text in `details["page_text"]`, and
+    `details["ingress_token"]` when the whole address -- query and fragment
+    included, which the shape leaves out -- holds an Ingress prefix.
     """
     verdict, severity, reasons = judge(public, ingress)
     # judge() compares the two results, which name the two addresses; those differ here by construction.
@@ -445,7 +450,8 @@ def new_tab_verdict(public: Outcome, ingress: Outcome) -> tuple[str, str, list[s
         routes[name] = shape[len(base):] if shape.startswith(base) else None
         if not outcome.available:
             continue
-        if name == "public" and INGRESS_PREFIX in shape:
+        if name == "public" and (INGRESS_PREFIX in shape or INGRESS_PATH in shape
+                                 or _details(outcome).get("ingress_token")):
             # Section 1.3: the Supervisor token in an address outside Ingress is a leaked credential.
             reasons.append("public tab address carries the Ingress prefix")
             blocker = True
@@ -453,7 +459,9 @@ def new_tab_verdict(public: Outcome, ingress: Outcome) -> tuple[str, str, list[s
         elif routes[name] is None:
             reasons.append("%s tab at %s, not under %s" % (name, shape or "nothing", base))
         if not str(_details(outcome).get("page_text", "")).strip():
+            # Section 1.3 again: a blank screen, whatever its address.
             reasons.append("%s tab rendered no text" % name)
+            blocker = True
     if all(route is not None for route in routes.values()):
         if routes["public"] != routes["ingress"]:
             reasons.append("the tabs opened different pages: public %s, ingress %s"
