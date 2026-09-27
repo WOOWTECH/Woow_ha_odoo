@@ -17,6 +17,7 @@ from e2e_parity_shared_layers import (
     check_record,
     conservation,
     judge,
+    new_tab_verdict,
     planned_checks,
     seo_head_verdict,
     session_cookie_problems,
@@ -275,6 +276,80 @@ class SeoOutputTests(unittest.TestCase):
         self.assertTrue(report["qualified"], report)
         self.assertEqual(report["counts"]["PARITY"], 1)
         self.assertEqual(report["counts"]["APPROVED-DIVERGENCE"], 1)
+
+
+class NewTabTests(unittest.TestCase):
+    """U-C23: a tab Odoo opens in the browser, and where its address lands.
+
+    The shapes are the ones the #143 run recorded (`check:U-C23|shared|generic`,
+    run `WOOW-PARITY-20260925T043539Z`): the survey's Test button.
+    """
+
+    PAGE = "This is a Test Survey Entry.\n\nGo to Survey"
+    PUBLIC_SHAPE = "<PUBLIC_BASE>/survey/<token>"
+    INGRESS_SHAPE = "<HA_BASE><INGRESS_PREFIX>/survey/<token>"
+
+    def tab(self, shape: str, page_text: str | None = None) -> Outcome:
+        text = self.PAGE if page_text is None else page_text
+        carries = "<INGRESS_PREFIX>" in shape
+        return Outcome(available=True, details={"shape": shape, "page_text": text},
+                       result="new tab at %s%s" % (shape, " (carries the Ingress token)" if carries else ""))
+
+    def pair(self, *, public: str | None = None, ingress: str | None = None,
+             public_text: str | None = None, ingress_text: str | None = None) -> tuple[Outcome, Outcome]:
+        return (self.tab(public or self.PUBLIC_SHAPE, public_text),
+                self.tab(ingress or self.INGRESS_SHAPE, ingress_text))
+
+    def test_the_same_page_under_the_ingress_prefix_is_structural(self) -> None:
+        self.assertEqual(new_tab_verdict(*self.pair()),
+                         ("STRUCTURAL", "none", [], "<PUBLIC_BASE>/survey/<token>"))
+
+    def test_a_tab_that_did_not_open_stays_a_gap(self) -> None:
+        public, _ = self.pair()
+        down = Outcome(available=False, result="error at survey Test button: Timeout 20000ms exceeded")
+        verdict, severity, reasons, public_path = new_tab_verdict(public, down)
+        self.assertEqual((verdict, severity), ("GAP", "blocker"))
+        self.assertEqual(reasons, ["ingress unavailable: error at survey Test button: Timeout 20000ms exceeded"])
+        self.assertIsNone(public_path)
+
+    def test_an_ingress_tab_off_the_prefix_is_a_gap(self) -> None:
+        verdict, severity, reasons, public_path = new_tab_verdict(*self.pair(ingress="<HA_BASE>/survey/<token>"))
+        self.assertEqual((verdict, severity), ("GAP", "important"))
+        self.assertEqual(reasons, ["ingress tab at <HA_BASE>/survey/<token>, "
+                                   "not under <HA_BASE><INGRESS_PREFIX>"])
+        self.assertIsNone(public_path)
+
+    def test_a_public_tab_off_the_canonical_url_is_a_gap(self) -> None:
+        self.assertEqual(new_tab_verdict(*self.pair(public="<HA_BASE>/survey/<token>"))[2],
+                         ["public tab at <HA_BASE>/survey/<token>, not under <PUBLIC_BASE>"])
+
+    def test_two_tabs_on_different_pages_are_a_gap(self) -> None:
+        verdict, _, reasons, _ = new_tab_verdict(*self.pair(ingress="<HA_BASE><INGRESS_PREFIX>/odoo/survey"))
+        self.assertEqual(verdict, "GAP")
+        self.assertEqual(reasons, ["the tabs opened different pages: public /survey/<token>, ingress /odoo/survey"])
+        self.assertEqual(new_tab_verdict(*self.pair(ingress_text="Internal Server Error"))[2],
+                         ["the two tabs do not render the same page"])
+
+    def test_a_tab_with_nothing_in_it_is_not_the_same_page(self) -> None:
+        self.assertEqual(new_tab_verdict(*self.pair(public_text="", ingress_text=""))[2],
+                         ["public tab rendered no text", "ingress tab rendered no text"])
+
+    def test_a_route_escape_under_ingress_is_a_blocker(self) -> None:
+        public, ingress = self.pair()
+        escaped = Outcome(True, ingress.result, signals={"route_escape": 1}, details=dict(ingress.details))
+        verdict, severity, reasons, _ = new_tab_verdict(public, escaped)
+        self.assertEqual((verdict, severity), ("GAP", "blocker"))
+        self.assertEqual(reasons, ["ingress route_escape=1"])
+
+    def test_the_structural_record_names_the_public_origin_path(self) -> None:
+        verdict, severity, _, public_path = new_tab_verdict(*self.pair())
+        record = check_record(RUN, "U-C23", module="shared", screen="generic", public=self.tab(self.PUBLIC_SHAPE),
+                             ingress=self.tab(self.INGRESS_SHAPE), verdict=verdict, severity=severity,
+                             public_path=public_path, model="survey.survey")
+        self.assertEqual(record["verdict"], "STRUCTURAL")
+        self.assertEqual(record["severity"], "none")
+        self.assertEqual(record["root_cause"], ["RC-15"])
+        self.assertEqual(record["public_path"], "<PUBLIC_BASE>/survey/<token>")
 
 
 class ConservationTests(unittest.TestCase):

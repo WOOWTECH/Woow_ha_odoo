@@ -351,6 +351,7 @@ Public origin is where it works. Set `public_url` if you need any of them.
 | Camera and barcode scanning, and copying through Odoo's own clipboard call | The browser offers them only on a secure page; Home Assistant over plain http is not one | Ingress over HTTPS, or the Public origin. Copy buttons still work over plain http through the add-on's fallback. |
 | A link Odoo builds in the page from the address bar and that is not listed under "Links the browser builds" | Through Ingress that address is Home Assistant's | Produce the link from the Public origin |
 | A sidebar address sent to someone else, or a link to one screen | An Ingress address carries your session token and opens only for you; and the browser's address bar shows only the add-on panel, not the Odoo screen inside it, so a copied address opens the panel's start screen | Send the Public origin address of that screen |
+| A tab Odoo opens in the browser for you: a survey's Test button, a link that opens a new tab, "open in new tab" | The tab is a top-level page, and through Ingress every one of those lives under the add-on's own address, so the tab carries your session token and opens only for you | Open the same screen on the Public origin and send that address |
 
 Point of Sale is not on this list. It works through Ingress and keeps selling
 through a network outage there too: a till that is already open validates

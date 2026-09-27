@@ -406,6 +406,56 @@ def sitemap_divergence(public: Outcome, ingress: Outcome) -> tuple[str, str, lis
     return "APPROVED-DIVERGENCE", "none", []
 
 
+# --- U-C23 ------------------------------------------------------------------
+
+HA_BASE = "<HA_BASE>"
+INGRESS_PREFIX = "<INGRESS_PREFIX>"
+# RC-15: every top-level page under Ingress lives below the Supervisor path,
+# so a tab opened from there starts here and carries the session token.
+INGRESS_TAB_BASE = HA_BASE + INGRESS_PREFIX
+
+
+def new_tab_verdict(public: Outcome, ingress: Outcome) -> tuple[str, str, list[str], str | None]:
+    """U-C23: where a tab Odoo opens in the browser lands on each surface.
+
+    A tab opened from Ingress carries the Ingress token in its address by
+    construction, which section 1.4 makes a `STRUCTURAL` gap (RC-15) rather
+    than a defect: the confirmed shape is the same page in both tabs, the
+    Ingress one under `<HA_BASE><INGRESS_PREFIX>/` and the Public one under
+    `<PUBLIC_BASE>/`, and the Public origin's address is then the path that
+    carries the capability -- the one to share, since the Ingress address
+    opens only for the person whose session it holds. The two addresses
+    differ by construction, so that difference alone is not a gap. Everything
+    else is the `GAP` section 1.1 gives it: a tab that did not open, one off
+    the Ingress prefix or off the Canonical URL, or a different page in it.
+
+    Each outcome carries the masked address shape of the tab it opened in
+    `details["shape"]` and that page's text in `details["page_text"]`.
+    """
+    verdict, severity, reasons = judge(public, ingress)
+    # judge() compares the two results, which name the two addresses; those differ here by construction.
+    reasons = [reason for reason in reasons if not reason.startswith("result: ")]
+    routes: dict[str, str | None] = {}
+    for name, outcome, base in (("public", public, PUBLIC_BASE), ("ingress", ingress, INGRESS_TAB_BASE)):
+        shape = str(_details(outcome).get("shape", ""))
+        routes[name] = shape[len(base):] if shape.startswith(base) else None
+        if not outcome.available:
+            continue
+        if routes[name] is None:
+            reasons.append("%s tab at %s, not under %s" % (name, shape or "nothing", base))
+        if not str(_details(outcome).get("page_text", "")).strip():
+            reasons.append("%s tab rendered no text" % name)
+    if all(route is not None for route in routes.values()):
+        if routes["public"] != routes["ingress"]:
+            reasons.append("the tabs opened different pages: public %s, ingress %s"
+                           % (routes["public"], routes["ingress"]))
+        elif _details(public).get("page_text") != _details(ingress).get("page_text"):
+            reasons.append("the two tabs do not render the same page")
+    if reasons:
+        return "GAP", ("blocker" if severity == "blocker" else "important"), reasons, None
+    return "STRUCTURAL", "none", [], PUBLIC_BASE + str(routes["public"])
+
+
 # --- Section 12 -------------------------------------------------------------
 
 
