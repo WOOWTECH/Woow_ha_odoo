@@ -11,6 +11,8 @@ from e2e_ecpay_stage_live import (
     callback_urls_outcome,
     ecpay_records,
     einvoice_outcome,
+    log_entries,
+    rendering_urls,
 )
 from e2e_menu_action_adapter import RunInfo
 from e2e_parity_outbound import Bases
@@ -73,49 +75,93 @@ class CallbackUrlTests(unittest.TestCase):
                          ["ClientBackURL", "OrderResultURL", "PaymentInfoURL", "ReturnURL"])
 
 
-ACCESS_OK = ('172.30.33.0 - - [27/Sep/2026:10:15:02 +0800] "POST /payment/ecpay/result_notify HTTP/1.1" '
-             '200 4 "-" "Mozilla/5.0" xfo="-" up')
+ACCESS_OK = ('172.30.33.0 - - [27/Sep/2026:10:12:51 +0800] "POST /payment/ecpay/result_notify HTTP/1.1" '
+             '200 4 "-" "Mozilla/4.0" xfo="-" up')
 ACCESS_OTHER = ('172.30.33.0 - - [27/Sep/2026:10:15:03 +0800] "POST /web/dataset/call_kw HTTP/1.1" '
                 '200 43 "-" "Mozilla/5.0" xfo="-" up')
-RECEIVED = ("2026-09-27 02:15:02,120 57 INFO odoo_parity odoo.addons.payment_ecpay.controllers.main: "
-            "ECPay payment notification received: {'CustomField1': 'S00042', 'CheckMacValue': 'ABCDEF'}")
-MAC_FAILED = ("2026-09-27 02:15:02,121 57 WARNING odoo_parity odoo.addons.payment_ecpay.controllers.main: "
-              "ECPay CheckMacValue verification failed")
-RETURN = ("2026-09-27 02:15:05,000 57 INFO odoo_parity odoo.addons.payment_ecpay.controllers.main: "
-          "ECPay customer return, post data: {'RtnCode': '1'}")
+# The add-on log as Odoo writes it: a dict payload runs over several lines.
+RENDERING = """2026-09-27 02:04:00,558 506 INFO example_db odoo.addons.payment.models.payment_transaction: provider-specific rendering values for transaction with reference S00022:
+{'api_url': 'https://payment-stage.ecpay.com.tw/Cashier/AioCheckOut/V5',
+ 'parameters': {'CheckMacValue': 'ABCDEF',
+                'ClientBackURL': 'https://odoo.example.com/payment/ecpay/website_return',
+                'CustomField1': 'S00022',
+                'OrderResultURL': 'https://odoo.example.com/payment/ecpay/website_return',
+                'PaymentInfoURL': 'https://odoo.example.com/payment/ecpay/info_notify',
+                'ReturnURL': 'https://odoo.example.com/payment/ecpay/result_notify',
+                'TotalAmount': 100}}
+2026-09-27 02:04:00,568 506 INFO example_db werkzeug: 172.30.33.0 - - "POST /shop/payment/transaction/22 HTTP/1.1" 200 -
+""".splitlines()
+RECEIVED = """2026-09-27 02:12:51,451 506 INFO example_db odoo.addons.payment_ecpay.controllers.main: ECPay payment notification received: {'CheckMacValue': 'ABCDEF',
+ 'CustomField1': 'S00022',
+ 'PaymentType': 'Credit_CreditCard',
+ 'RtnCode': '1',
+ 'RtnMsg': 'OK',
+ 'SimulatePaid': '0',
+ 'TradeAmt': '100'}
+""".splitlines()
+OTHER_ORDER = [line.replace("S00022", "S00021").replace("'RtnCode': '1'", "'RtnCode': '10100284'")
+               for line in RECEIVED]
+MAC_FAILED = ["2026-09-27 02:12:51,500 57 WARNING example_db odoo.addons.payment_ecpay.controllers.main: "
+              "ECPay CheckMacValue verification failed"]
+RETURN = ["2026-09-27 02:12:52,325 504 INFO example_db odoo.addons.payment_ecpay.controllers.main: "
+          "ECPay customer return, post data: {'CustomField1': 'S00022',", " 'RtnCode': '1'}"]
+
+
+class LogEntryTests(unittest.TestCase):
+    def test_continuation_lines_belong_to_the_entry_above(self) -> None:
+        entries = log_entries(RENDERING)
+        self.assertEqual(len(entries), 2)
+        self.assertIn("'ReturnURL'", entries[0])
+
+    def test_the_rendered_redirect_form_is_found_by_its_reference(self) -> None:
+        urls = rendering_urls(RENDERING, "S00022")
+        self.assertEqual(urls["ReturnURL"], "https://odoo.example.com/payment/ecpay/result_notify")
+        self.assertEqual(sorted(urls), ["ClientBackURL", "OrderResultURL", "PaymentInfoURL", "ReturnURL"])
+
+    def test_another_reference_has_no_rendered_form(self) -> None:
+        self.assertEqual(rendering_urls(RENDERING, "S00099"), {})
 
 
 class CallbackLogTests(unittest.TestCase):
-    def test_the_callback_post_and_the_add_on_log_line_are_counted(self) -> None:
-        hits = callback_hits([ACCESS_OTHER, ACCESS_OK, RECEIVED, RETURN])
-        self.assertEqual(hits, {"result_notify_posts": [200], "notifications_received": 1,
-                                "simulated": 0, "mac_failures": 0, "customer_returns": 1})
+    def test_the_callback_post_and_this_orders_notification_are_counted(self) -> None:
+        hits = callback_hits(RECEIVED + RETURN, [ACCESS_OTHER, ACCESS_OK], "S00022")
+        self.assertEqual(hits, {"result_notify_posts": [200], "mac_failures": 0, "customer_returns": 1,
+                                "notifications": [{"rtn_code": "1", "payment_type": "Credit_CreditCard",
+                                                   "simulated": False}]})
 
-    def test_a_notification_from_the_cashiers_simulate_button_is_counted_as_simulated(self) -> None:
-        simulated = RECEIVED.replace("{'CustomField1'", "{'SimulatePaid': '1', 'CustomField1'")
-        hits = callback_hits([ACCESS_OK, simulated])
-        self.assertEqual((hits["notifications_received"], hits["simulated"]), (1, 1))
+    def test_nothing_secret_of_the_payload_is_kept(self) -> None:
+        self.assertNotIn("ABCDEF", str(callback_hits(RECEIVED, [ACCESS_OK], "S00022")))
 
-    def test_nothing_of_the_payload_is_kept(self) -> None:
-        hits = callback_hits([RECEIVED])
-        self.assertNotIn("CheckMacValue", str(hits))
+    def test_another_orders_notification_does_not_count(self) -> None:
+        hits = callback_hits(OTHER_ORDER, [ACCESS_OK], "S00022")
+        self.assertEqual(hits["notifications"], [])
+
+    def test_a_notification_from_a_simulated_payment_says_so(self) -> None:
+        simulated = [line.replace("'SimulatePaid': '0'", "'SimulatePaid': '1'") for line in RECEIVED]
+        hits = callback_hits(simulated, [ACCESS_OK], "S00022")
+        self.assertTrue(hits["notifications"][0]["simulated"])
 
     def test_a_callback_with_a_good_mac_and_a_done_transaction_passes(self) -> None:
-        outcome = callback_outcome(callback_hits([ACCESS_OK, RECEIVED]), {"state": "done", "reference": "S00042"})
+        outcome = callback_outcome(callback_hits(RECEIVED, [ACCESS_OK], "S00022"), {"state": "done"})
         self.assertTrue(outcome.available)
         self.assertEqual(outcome.result, "callback reached the Public origin; transaction done")
 
     def test_no_callback_in_the_log_is_its_own_result(self) -> None:
-        outcome = callback_outcome(callback_hits([ACCESS_OTHER]), {"state": "pending"})
+        outcome = callback_outcome(callback_hits([], [ACCESS_OTHER], "S00022"), {"state": "pending"})
         self.assertEqual(outcome.result, "no callback in the add-on log; transaction pending")
 
     def test_a_callback_whose_mac_failed_does_not_pass(self) -> None:
-        outcome = callback_outcome(callback_hits([ACCESS_OK, RECEIVED, MAC_FAILED]), {"state": "pending"})
+        outcome = callback_outcome(callback_hits(RECEIVED + MAC_FAILED, [ACCESS_OK], "S00022"), {"state": "pending"})
         self.assertEqual(outcome.result, "callback arrived but its CheckMacValue failed; transaction pending")
 
     def test_a_callback_that_arrived_but_left_the_transaction_open_does_not_pass(self) -> None:
-        outcome = callback_outcome(callback_hits([ACCESS_OK, RECEIVED]), {"state": "error"})
+        outcome = callback_outcome(callback_hits(RECEIVED, [ACCESS_OK], "S00022"), {"state": "error"})
         self.assertEqual(outcome.result, "callback arrived; transaction error")
+
+    def test_a_simulated_payment_is_not_the_card_payment_the_run_asks_for(self) -> None:
+        simulated = [line.replace("'SimulatePaid': '0'", "'SimulatePaid': '1'") for line in RECEIVED]
+        outcome = callback_outcome(callback_hits(simulated, [ACCESS_OK], "S00022"), {"state": "done"})
+        self.assertEqual(outcome.result, "callback reached the Public origin; simulated payment")
 
 
 def move(**overrides):
@@ -149,7 +195,7 @@ class EinvoiceTests(unittest.TestCase):
 class RecordTests(unittest.TestCase):
     def setUp(self) -> None:
         self.urls = callback_urls_outcome(form(), BASES)
-        self.callback = callback_outcome(callback_hits([ACCESS_OK, RECEIVED]), {"state": "done"})
+        self.callback = callback_outcome(callback_hits(RECEIVED, [ACCESS_OK], "S00022"), {"state": "done"})
         self.invoice = einvoice_outcome(move())
         same = Outcome(True, "form opens; ECPay fields shown")
         self.records = ecpay_records(RUN, self.urls, self.callback, self.invoice,
@@ -167,7 +213,7 @@ class RecordTests(unittest.TestCase):
             self.assertIsNone(record["ingress"])
 
     def test_a_structural_record_whose_public_side_failed_is_a_gap(self) -> None:
-        failed = callback_outcome(callback_hits([]), {"state": "pending"})
+        failed = callback_outcome(callback_hits([], [], "S00022"), {"state": "pending"})
         records = ecpay_records(RUN, self.urls, failed, self.invoice, [])
         record = next(r for r in records if r["screen"]["name"] == "ECPay stage payment callback")
         self.assertEqual(record["verdict"], "GAP")
