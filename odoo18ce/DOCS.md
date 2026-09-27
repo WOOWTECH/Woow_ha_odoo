@@ -417,6 +417,30 @@ three checks in a row. The first 10 minutes after a start are exempt so
 that database creation and post-upgrade module updates can finish; for a
 very large module update, switch Watchdog off for the duration.
 
+### When an update fails on a slow connection
+
+**How to recognize it.** The **Update** fails, and the Supervisor log
+contains `Could not pull image` and/or `unexpected EOF`. The log is under
+Settings → System → Logs, with **Supervisor** chosen in the selector at the
+top right.
+
+**What happened.** The download of the new image did not finish. The image is
+pulled before the add-on is stopped, so the add-on keeps running the old
+version and your data is not touched.
+
+**Before you retry.** Each attempt made with "backup before update" switched
+on creates another full backup, which stops the add-on for the duration and
+uses disk space. If you already have a recent backup, switch that option off
+before you press **Update** again, and delete the extra backups the failed
+attempts left behind.
+
+**Next steps.** Try the **Update** again on a faster or more stable
+connection. If it keeps failing, contact WOOWTECH and we can install the
+update for you:
+
+- GitHub Issues on `WOOWTECH/Woow_ha_odoo`
+- email `woowtech@designsmart.com.tw`
+
 ## Backup
 
 The add-on uses `cold` backup strategy. Home Assistant will stop the add-on

@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Added
+- Documentation only: what to do when an update fails on a slow link, for
+  both audiences. DOCS.md "Updates and images" gains "When an update fails
+  on a slow connection": how to recognize it in the Supervisor log
+  (`Could not pull image`, `unexpected EOF`, under Settings → System →
+  Logs), that the add-on keeps running the old version and the data is
+  untouched, that "backup before update" should be switched off before a
+  retry because every failed attempt leaves another full backup behind, and
+  the two ways to reach WOOWTECH — GitHub Issues on `WOOWTECH/Woow_ha_odoo`
+  and `woowtech@designsmart.com.tw`. For staff, `docs/runbooks/` gains
+  `SLOW_LINK_DEPLOY.md` and `slow-link-pull.sh`: the script downloads the
+  Release image's blobs from ghcr with `curl -C -`, so a dropped connection
+  resumes from the last byte instead of restarting the 693 MiB layer that
+  makes the Supervisor's own pull never converge on a slow link. It takes a
+  fresh anonymous token on every attempt, never reuses the expiring signed
+  storage URL, requires a 206 for a resume, verifies the size and sha256 of
+  the manifest, the config and every blob, streams a docker-archive into
+  `docker load`, and only prints the `ha apps update` command once the
+  loaded image ID equals the manifest's config digest — it never runs the
+  update itself. The runbook is zh-TW and covers the prerequisites, the
+  backup that is the only way back, the disk space, running the script from
+  a pinned Release tag, verifying, updating, rolling back, and the versions
+  it was validated on (Docker 28.3.3, overlay2, Supervisor 2026.09.2).
+  DOCS.md does not link the runbook. CI's shellcheck step now covers the
+  script. No version bump. Issue #157, parent #153.
+
 ### Changed
 - Documentation only: a tab Odoo opens in the browser from Ingress — a
   survey's Test button, a link that opens a new tab, "open in new tab" — is
