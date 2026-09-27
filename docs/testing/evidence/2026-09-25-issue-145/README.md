@@ -46,6 +46,7 @@ for internal users), and links that are not pages (the live chat widget's script
 missing, duplicated or unclassified, and every `GAP` has an issue. The run does **not qualify** as
 complete, because one check is `NOT-RUN` (`conservation.json`).
 `python odoo18ce/tests/e2e_parity_outbound_live.py report checks.jsonl` recomputes it.
+Since this run, `U-D8` has become two checks — the head links with `robots.txt`, and the sitemap as `AD-8` (#172) — so the outbound plan holds 26 and a recompute lists `check:U-D8|website|sitemap.xml` as missing: it did not exist when this run ran. The counts above are what it recorded.
 
 ### GAP
 

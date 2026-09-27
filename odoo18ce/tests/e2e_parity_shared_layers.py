@@ -149,6 +149,8 @@ MODULE_SCREENS: tuple[tuple[str, str, str], ...] = (
     ("U-D7", "event", "/event"),
     ("U-B2", "website_sale", "/shop/cart"),
     ("U-F5", "point_of_sale", "POS receipt print"),
+    # U-D8 minus the sitemap is one record; the sitemap is AD-8 and judged on its own (#172).
+    ("U-D8", "website", "sitemap.xml"),
 )
 
 
@@ -312,6 +314,72 @@ def session_cookie_problems(
         for key, value in expected.items()
         if cookie.get(key) != value
     ]
+
+
+# --- U-D8 -------------------------------------------------------------------
+
+PUBLIC_BASE = "<PUBLIC_BASE>"
+# AD-8: what `robots.txt` must still say under Ingress for the sitemap's own
+# address to be harmless -- Odoo steers crawlers to the Canonical URL's copy.
+AD8_ROBOTS_LINES = ("Disallow: /", "Sitemap: %s/sitemap.xml" % PUBLIC_BASE)
+
+
+def _details(outcome: Outcome) -> Mapping[str, Any]:
+    return outcome.details or {}
+
+
+def seo_head_verdict(public: Outcome, ingress: Outcome) -> tuple[str, str, list[str]]:
+    """U-D8 without the sitemap: the home page's head links and `robots.txt`.
+
+    A comparison of the surfaces, plus the plan's absolute rule for the item:
+    every URL base is the Canonical URL, so two surfaces wrong in the same way
+    are a GAP as well. Each outcome's `details["wrong"]` names the bases that
+    are not `<PUBLIC_BASE>` (and relative URLs, which have lost their base).
+    """
+    verdict, severity, reasons = judge(public, ingress)
+    for name, outcome in (("public", public), ("ingress", ingress)):
+        wrong = list(_details(outcome).get("wrong", []))
+        if wrong:
+            reasons.append("%s SEO URLs on %s" % (name, ", ".join(wrong)))
+            verdict = "GAP"
+            severity = "important" if severity == "none" else severity
+    return verdict, severity, reasons
+
+
+def sitemap_divergence(public: Outcome, ingress: Outcome) -> tuple[str, str, list[str]]:
+    """AD-8 verified in reverse: `sitemap.xml` on each surface, and Ingress's `robots.txt`.
+
+    Odoo builds the sitemap from the request's URL root, so the Ingress copy
+    lists the Home Assistant address; that is accepted only while every
+    statement of AD-8 still holds -- the Public origin's sitemap is on the
+    Canonical URL, the Ingress copy is not, and Ingress's `robots.txt` carries
+    `Disallow: /` and the Canonical URL's `Sitemap:`. A divergence that
+    disappeared is a failure of the reverse verification, and a `robots.txt`
+    that no longer steers crawlers (an empty `website.domain`, P-5) leaves the
+    Ingress copy unguarded: both are a GAP.
+
+    `public`/`ingress` carry the masked sitemap bases in `details["bases"]`,
+    and Ingress its `robots.txt` lines in `details["robots"]`.
+    """
+    reasons: list[str] = []
+    for name, outcome in (("public", public), ("ingress", ingress)):
+        if not outcome.available:
+            reasons.append("%s unavailable: %s" % (name, outcome.result))
+    public_bases = list(_details(public).get("bases", []))
+    ingress_bases = list(_details(ingress).get("bases", []))
+    if public_bases != [PUBLIC_BASE]:
+        reasons.append("public sitemap on %s" % (", ".join(public_bases) or "nothing"))
+    if not ingress_bases:
+        reasons.append("ingress sitemap has no URL")
+    elif PUBLIC_BASE in ingress_bases:
+        reasons.append("ingress sitemap on %s: AD-8 no longer holds" % PUBLIC_BASE)
+    lines = {" ".join(line.split()).lower() for line in _details(ingress).get("robots", [])}
+    for required in AD8_ROBOTS_LINES:
+        if required.lower() not in lines:
+            reasons.append("ingress robots.txt has no %r" % required)
+    if reasons:
+        return "GAP", "important", reasons
+    return "APPROVED-DIVERGENCE", "none", []
 
 
 # --- Section 12 -------------------------------------------------------------

@@ -65,6 +65,7 @@ OUTBOUND_SCREENS: tuple[tuple[str, str, str], ...] = (
     ("U-E7", "calendar", "meeting export xlsx"),
     ("U-E7", "calendar", "meeting export csv"),
     ("U-D8", "shared", "generic"),
+    ("U-D8", "website", "sitemap.xml"),
 )
 
 

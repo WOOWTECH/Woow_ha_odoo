@@ -18,7 +18,9 @@ from e2e_parity_shared_layers import (
     conservation,
     judge,
     planned_checks,
+    seo_head_verdict,
     session_cookie_problems,
+    sitemap_divergence,
 )
 
 RUN = RunInfo(run_id="WOOW-PARITY-20260925T000000Z", target="local", database="example_db")
@@ -52,6 +54,9 @@ class CatalogTests(unittest.TestCase):
         self.assertIn(("U-C4", "shared", "generic"), plan)
         self.assertIn(("U-C4", "survey", "survey share dialog"), plan)
         self.assertIn(("U-F5", "point_of_sale", "POS receipt print"), plan)
+        # U-D8 is two records: the head links plus robots.txt, and the sitemap (AD-8).
+        self.assertIn(("U-D8", "shared", "generic"), plan)
+        self.assertIn(("U-D8", "website", "sitemap.xml"), plan)
 
 
 class JudgeTests(unittest.TestCase):
@@ -169,6 +174,89 @@ class CookieTests(unittest.TestCase):
     def test_a_missing_cookie_is_one_problem(self) -> None:
         self.assertEqual(session_cookie_problems(None, surface=Surface.PUBLIC, ingress_prefix=None, https=True),
                          ["no session_id cookie"])
+
+
+class SeoOutputTests(unittest.TestCase):
+    """U-D8 as two decisions: the head links with `robots.txt`, and the sitemap (AD-8)."""
+
+    def head(self, *wrong: str) -> Outcome:
+        bases = ["<PUBLIC_BASE>", *(base for base in wrong if base.startswith("<"))]
+        return Outcome(available=True, details={"bases": sorted(set(bases)), "wrong": list(wrong)},
+                       result="all SEO URLs on <PUBLIC_BASE>" if not wrong else "SEO URLs on %s" % ", ".join(wrong))
+
+    def test_head_links_on_the_canonical_url_on_both_surfaces_are_parity(self) -> None:
+        self.assertEqual(seo_head_verdict(self.head(), self.head()), ("PARITY", "none", []))
+
+    def test_a_base_that_is_not_the_canonical_url_is_a_gap(self) -> None:
+        verdict, severity, reasons = seo_head_verdict(self.head(), self.head("<HA_BASE>"))
+        self.assertEqual((verdict, severity), ("GAP", "important"))
+        self.assertEqual(reasons, ["result: public=all SEO URLs on <PUBLIC_BASE> ingress=SEO URLs on <HA_BASE>",
+                                   "ingress SEO URLs on <HA_BASE>"])
+
+    def test_both_surfaces_wrong_in_the_same_way_is_still_a_gap(self) -> None:
+        # judge() sees two equal results; U-D8's PASS rule is absolute, as in group E.
+        verdict, severity, reasons = seo_head_verdict(self.head("relative URLs"), self.head("relative URLs"))
+        self.assertEqual((verdict, severity), ("GAP", "important"))
+        self.assertEqual(reasons, ["public SEO URLs on relative URLs", "ingress SEO URLs on relative URLs"])
+
+    def test_an_unavailable_surface_stays_a_blocker(self) -> None:
+        down = Outcome(available=False, result="error: blank page")
+        self.assertEqual(seo_head_verdict(self.head(), down)[:2], ("GAP", "blocker"))
+
+    ROBOTS = ("User-agent: *", "Disallow: /", "Sitemap: <PUBLIC_BASE>/sitemap.xml")
+
+    def sitemap(self, *, public=("<PUBLIC_BASE>",), ingress=("<HA_BASE>",), robots=ROBOTS,
+                available=True) -> tuple[Outcome, Outcome]:
+        def side(bases, **details) -> Outcome:
+            return Outcome(available=available, result="sitemap URLs on %s" % (", ".join(bases) or "nothing"),
+                           details={"bases": list(bases), **details})
+        return side(public), side(ingress, robots=list(robots))
+
+    def test_the_ingress_sitemap_following_the_request_address_is_ad_8(self) -> None:
+        self.assertEqual(sitemap_divergence(*self.sitemap()), ("APPROVED-DIVERGENCE", "none", []))
+
+    def test_a_robots_txt_that_no_longer_steers_crawlers_is_a_gap(self) -> None:
+        verdict, severity, reasons = sitemap_divergence(*self.sitemap(robots=("User-agent: *",)))
+        self.assertEqual((verdict, severity), ("GAP", "important"))
+        self.assertEqual(reasons, ["ingress robots.txt has no 'Disallow: /'",
+                                   "ingress robots.txt has no 'Sitemap: <PUBLIC_BASE>/sitemap.xml'"])
+        # An empty website.domain (P-5) is exactly this: no Disallow, and the sitemap line follows the request.
+        self.assertEqual(sitemap_divergence(*self.sitemap(
+            robots=("User-agent: *", "Sitemap: <HA_BASE>/sitemap.xml")))[2],
+            ["ingress robots.txt has no 'Disallow: /'",
+             "ingress robots.txt has no 'Sitemap: <PUBLIC_BASE>/sitemap.xml'"])
+
+    def test_the_divergence_disappearing_is_a_gap_too(self) -> None:
+        verdict, _, reasons = sitemap_divergence(*self.sitemap(ingress=("<PUBLIC_BASE>",)))
+        self.assertEqual(verdict, "GAP")
+        self.assertEqual(reasons, ["ingress sitemap on <PUBLIC_BASE>: AD-8 no longer holds"])
+
+    def test_the_public_origin_sitemap_must_stay_on_the_canonical_url(self) -> None:
+        self.assertEqual(sitemap_divergence(*self.sitemap(public=("<HA_BASE>",)))[2],
+                         ["public sitemap on <HA_BASE>"])
+        self.assertEqual(sitemap_divergence(*self.sitemap(public=()))[2], ["public sitemap on nothing"])
+
+    def test_a_sitemap_with_no_url_at_all_is_a_gap(self) -> None:
+        self.assertEqual(sitemap_divergence(*self.sitemap(ingress=()))[2], ["ingress sitemap has no URL"])
+
+    def test_an_unavailable_surface_is_not_an_approved_divergence(self) -> None:
+        verdict, severity, reasons = sitemap_divergence(*self.sitemap(available=False))
+        self.assertEqual((verdict, severity), ("GAP", "important"))
+        self.assertEqual(reasons[:2], ["public unavailable: sitemap URLs on <PUBLIC_BASE>",
+                                       "ingress unavailable: sitemap URLs on <HA_BASE>"])
+
+    def test_both_u_d8_records_reconcile_with_no_remainder(self) -> None:
+        plan = [("U-D8", "shared", "generic"), ("U-D8", "website", "sitemap.xml")]
+        public, ingress = self.sitemap()
+        records = [
+            check_record(RUN, "U-D8", module="shared", screen="generic", public=self.head(), ingress=self.head()),
+            check_record(RUN, "U-D8", module="website", screen="sitemap.xml", public=public, ingress=ingress,
+                         verdict="APPROVED-DIVERGENCE", severity="none", notes="AD-8"),
+        ]
+        report = conservation(records, plan)
+        self.assertTrue(report["qualified"], report)
+        self.assertEqual(report["counts"]["PARITY"], 1)
+        self.assertEqual(report["counts"]["APPROVED-DIVERGENCE"], 1)
 
 
 class ConservationTests(unittest.TestCase):

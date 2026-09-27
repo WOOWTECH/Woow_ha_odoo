@@ -126,6 +126,7 @@ Public 是**基準組**，Ingress 是**待測組**。所有比對方向都是「
 | `AD-5` | `X-Frame-Options` | 移除 | 保留 | 比對回應標頭 |
 | `AD-6` | 匿名可達性 | 需 HA session | 完全匿名可達 | 無 HA cookie 打 ingress，須被擋 |
 | `AD-7` | LAN 主機埠 | 8069／8072 發佈到 HA 主機，只有 `lan_networks` 內的來源拿到 **LAN tier**（含資料庫管理）；add-on 網段 `172.30.32.0/23`（含 HA 主機本身與 Cloudflare tunnel）一律不算 LAN | 同左 | 從 `lan_networks` 外的來源打 8069／8072 的 `/web/database/manager`，不得回 200（未設 `public_url` 回 503；已設時 Host 不符回 444、Host 相符回 404）；add-on 啟動自我檢查另外驗 tunnel 那一側（`DOCS.md`「Start-time self-check」） |
+| `AD-8` | SEO 產出物的位址 | `robots.txt` 回 `Disallow: /`，`Sitemap:` 仍指向 `<PUBLIC_BASE>/sitemap.xml`；`sitemap.xml` 的 `<loc>` 跟著**請求位址**（HA 位址，且不帶 ingress 前綴） | `robots.txt` 沒有 `Disallow`，`sitemap.xml` 的 `<loc>` 全在 `<PUBLIC_BASE>` | 兩邊各取一次 `robots.txt` 與 `sitemap.xml`，四句話都要成立：ingress 的 `robots.txt` 同時有 `Disallow: /` 與 `Sitemap: <PUBLIC_BASE>/sitemap.xml`、ingress 的 `sitemap.xml` **不在** `<PUBLIC_BASE>`、public 的 `sitemap.xml` 全在 `<PUBLIC_BASE>`。任一句不成立即 `GAP`——分歧消失也算（要回頭改本列），`website.domain` 空白（`P-5` 未過）使 `Disallow: /` 消失更算：那時沒有任何東西把爬蟲導開。理由：Odoo 以請求的 URL root 組 sitemap、並按 (website, url_root) 快取，不讀 `website.domain`；而爬蟲根本到不了 ingress（需要 HA session，`AD-6`／`U-D7`），Odoo 自己也用 `Disallow: /` 把爬蟲導向 Canonical URL 的 sitemap。要「修」只能讓 nginx 改寫 XML 或讓守門模組覆寫 controller，ADR 0006 已否決這條路。嚴重度 Minor。見 #172 |
 
 ---
 
@@ -253,7 +254,7 @@ L0  通道               ← nginx 監聽、header、壓縮、快取、緩衝、
 | `U-D5` | Portal 存取權杖連結 | **RC-9/10** | 產生 portal 分享連結，以**未登入的另一瀏覽器**開啟 | 必須能開；ingress 產生的連結若打不開即 `GAP`（`G-02` 同源） |
 | `U-D6` | 前台表單提交 | RC-1/10 | Contact Us 等表單：驗證、送出、確認頁 | 兩邊皆成功 |
 | `U-D7` | 匿名前台可達性 | **RC-10** | 以完全未登入身分存取前台頁 | ingress 原理上不可能 → 標 `STRUCTURAL`，指定由 public 承接 |
-| `U-D8` | SEO 產出物 | RC-9 | `sitemap.xml`、`robots.txt`、OG meta、canonical、favicon | 其中的 URL 必為 public 基底 |
+| `U-D8` | SEO 產出物 | RC-9 | `sitemap.xml`、`robots.txt`、OG meta、canonical、favicon | head 連結與 `robots.txt` 的 URL 必為 public 基底（兩邊一樣錯也算落差）；`sitemap.xml` **不計入本判定**，另記一筆由 `AD-8` 反向驗證（#172） |
 
 ### E 群組 — 對外產出物 URL（L5，最大盲區）
 
@@ -466,6 +467,7 @@ F、A、B、C、D 群組在 `odoo_parity`（0.4.4）各跑一次，外加 10.1�
 `APPROVED-DIVERGENCE` + 5 `STRUCTURAL` + 7 `NOT-RUN`；每個 `GAP` 都有 issue（#159、#165–#170、#172）。
 POS 兩項在 #161 之後於 2026-09-27 補跑，收據列印（`U-F5`）與相機掃描（`U-C25`）兩端皆 `PARITY`；同次補跑 P-Check
 全數通過，`U-D8` 仍為 `GAP`（`sitemap.xml` 跟著請求位址走，#172）。
+`U-D8` 於 2026-09-27 再補跑一次（#172）：拆成兩筆後，head 連結與 `robots.txt` 是 `PARITY`，`sitemap.xml` 是 `APPROVED-DIVERGENCE`（`AD-8`）；證據見 `docs/testing/evidence/2026-09-27-issue-172/`。
 `NOT-RUN`：`U-A9`（無 60 秒以上的動作）、`U-C22`（只有一種語言）、`/event` 與活動報名
 （未裝 `website_event`）、CE 沒有該控制項的三個模組畫面（MRP 工作中心與工單、出勤 kiosk 全螢幕）。證據與方法見 `docs/testing/evidence/2026-09-25-issue-143/`。
 
@@ -498,7 +500,7 @@ E 群組的判定**不只比較兩邊**：產出物裡只要有 HA 位址、相�
 - **沒有測到的部分**：密碼重設送出的是「邀請信」（測試使用者沒有登入過），連結格式相同。`U-E5` 只測了郵件附件連結。
 - **`GAP`**：
   - 發票「Download > PDF」在 Ingress 下請求 HA 根目錄，404，檔案沒有下載（#174）。「PDF without Payment」兩邊都正常。
-  - Ingress 下的 `sitemap.xml` 仍以 HA 為基底（#172）。首頁 head 與 `robots.txt` 已是 Canonical URL，也就是 #164 修好了。
+  - Ingress 下的 `sitemap.xml` 仍以 HA 為基底（#172）。首頁 head 與 `robots.txt` 已是 Canonical URL，也就是 #164 修好了。這一項自 2026-09-27 起由 `AD-8` 收錄為核准分歧，`U-D8` 也拆成兩筆（#172）。
 
 ---
 
@@ -515,7 +517,7 @@ E 群組的判定**不只比較兩邊**：產出物裡只要有 HA 位址、相�
 | `G-03` | nginx Literal rewrite 的前綴清單只有 8 個前綴，計劃安裝的 12 個 app 至少引入 15 個新前綴 | **Important**（安裝時觸發） | RC-11 | `odoo18ce/rootfs/etc/nginx/nginx.conf.template` `location ^~ /web/assets/` | **處置中（#58）**：ADR 0004 決定不擴清單也不泛化（0.3.10、0.3.34 兩次翻車）；`U-A4` 已實作為 `odoo18ce/tests/e2e_literal_rewrite_gate.py` ，曾納入發版守門與每晚 workflow（每晚排程已依 ADR 0005 取消，只留手動觸發）。首次對 .6 test（4 apps）執行：0 個未登記 `FAIL`，`/scoped_app` 以例外命中，清單外前綴全部為 `WARN`／`INFO`。**機制已改造並出貨（ADR 0005，#74）**：add-on 內建 Rewrite scan 在執行期把 `FAIL` 等級前綴寫成 Generated rewrite，不再靠擴充模板清單；第 9／10 節 app 分批安裝後仍可用 `--include-file` 手動跑一次守門驗收（#81） |
 | `G-04` | `@web/core/utils/urls` 的 `url()`／`getOrigin()` 在 Odoo 18 一律退回瀏覽器的 protocol + host（session info 無 `origin` 欄位），而同一個函式同時組出 `/web/image`、`/web/content` 等**站內**位址 | **Important** | RC-9 | `.6` 服務的 `web.assets_backend`：`getOrigin()` 取 `browser.location` 的 `protocol`／`host`，`url()` 以 `getOrigin(options.origin ?? session.origin)` 取基底 | **`STRUCTURAL`**（ADR 0006）。改寫這個共用函式會把站內位址一起變成絕對公開網址並離開 Ingress，正是 ADR 0006 否決「改寫 `session.origin`」的理由。承接路徑：凡經 `url()` 組出、要給外人開的網址，一律從 **Public origin** 產生。2026-09-22 盤點 `.6` 實際服務的 15 個 bundle，目前沒有任何對外分享連結走這條路；日後若出現，逐一評估能否以精確表達式補丁，否則留在本列。追蹤 #70 |
 | `G-05` | ~~Ingress-only 且 Supervisor 取不到 LAN 位址（Canonical URL 為空）時，Website 分享 snippet 仍把 `location.href` 交給社群網站，其中含 Supervisor 的 ingress token~~ **已修正（2026-09-23）** | ~~**Important**~~ | RC-9 | `nginx.conf.template` 的 `const currentUrl=` 補丁現在**無論有沒有 Canonical URL 都剝掉 ingress 前綴** | ADR 0006 已補一段修正，把這條列為「空值即今日行為」的唯一例外：今日行為是把憑證交給第三方，那不值得保留。無 Canonical URL 時連結仍指向 HA 主機、仍然打不開，但不再帶 token。另兩條補丁不受影響。促成重審的是 #108——空值的形態比原先估計的容易達到 |
-| `G-06` | ~~add-on 啟動**之後**才安裝 `website`（例如從 Apps 畫面裝），預設網站的 `domain` 一直是空的，直到下一次重啟；Ingress 下首頁的 `canonical`／`og:url`／`og:image`／`twitter:image` 與 `sitemap.xml` 因此以 HA 位址為基底~~ **已修正並在測試主機驗證（2026-09-25，`docs/testing/evidence/2026-09-25-issue-164/`）** | ~~**Important**~~ | RC-9 | `odoo-maintenance.py` 只在 add-on 啟動當下 `website` 已在 registry 時才寫 `website.domain`（「website module not installed」）；#143 跑 `odoo_parity` 時 `P-5` FAIL、`U-D8` GAP | Rewrite scan service 每輪多一步 **Canonical URL catch-up**（`odoo-canonical-catchup`）：以 `psql` 讀每個資料庫的預設網站 `domain`，空值或與 Canonical URL 不同時，才用同一支 maintenance library 經 `odoo shell` 補寫；穩態每輪不載入 registry。add-on log 出現 `maintenance db=<name>: … website.domain=<Canonical URL>`。追蹤 #164；Ingress 下 `sitemap.xml` 仍跟著請求位址走，另列 #172 |
+| `G-06` | ~~add-on 啟動**之後**才安裝 `website`（例如從 Apps 畫面裝），預設網站的 `domain` 一直是空的，直到下一次重啟；Ingress 下首頁的 `canonical`／`og:url`／`og:image`／`twitter:image` 與 `sitemap.xml` 因此以 HA 位址為基底~~ **已修正並在測試主機驗證（2026-09-25，`docs/testing/evidence/2026-09-25-issue-164/`）** | ~~**Important**~~ | RC-9 | `odoo-maintenance.py` 只在 add-on 啟動當下 `website` 已在 registry 時才寫 `website.domain`（「website module not installed」）；#143 跑 `odoo_parity` 時 `P-5` FAIL、`U-D8` GAP | Rewrite scan service 每輪多一步 **Canonical URL catch-up**（`odoo-canonical-catchup`）：以 `psql` 讀每個資料庫的預設網站 `domain`，空值或與 Canonical URL 不同時，才用同一支 maintenance library 經 `odoo shell` 補寫；穩態每輪不載入 registry。add-on log 出現 `maintenance db=<name>: … website.domain=<Canonical URL>`。追蹤 #164；Ingress 下 `sitemap.xml` 仍跟著請求位址走，已由 `AD-8` 收錄為核准分歧（#172） |
 
 ---
 
