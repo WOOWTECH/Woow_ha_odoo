@@ -427,7 +427,10 @@ def new_tab_verdict(public: Outcome, ingress: Outcome) -> tuple[str, str, list[s
     opens only for the person whose session it holds. The two addresses
     differ by construction, so that difference alone is not a gap. Everything
     else is the `GAP` section 1.1 gives it: a tab that did not open, one off
-    the Ingress prefix or off the Canonical URL, or a different page in it.
+    the Ingress prefix or off the Canonical URL, or a different page in it --
+    and the Ingress prefix inside the Public origin's address is a leaked
+    token, so a Blocker by section 1.3. A doubled prefix on the Ingress side
+    shows up as the two tabs being on different pages.
 
     Each outcome carries the masked address shape of the tab it opened in
     `details["shape"]` and that page's text in `details["page_text"]`.
@@ -435,13 +438,19 @@ def new_tab_verdict(public: Outcome, ingress: Outcome) -> tuple[str, str, list[s
     verdict, severity, reasons = judge(public, ingress)
     # judge() compares the two results, which name the two addresses; those differ here by construction.
     reasons = [reason for reason in reasons if not reason.startswith("result: ")]
+    blocker = severity == "blocker"
     routes: dict[str, str | None] = {}
     for name, outcome, base in (("public", public, PUBLIC_BASE), ("ingress", ingress, INGRESS_TAB_BASE)):
         shape = str(_details(outcome).get("shape", ""))
         routes[name] = shape[len(base):] if shape.startswith(base) else None
         if not outcome.available:
             continue
-        if routes[name] is None:
+        if name == "public" and INGRESS_PREFIX in shape:
+            # Section 1.3: the Supervisor token in an address outside Ingress is a leaked credential.
+            reasons.append("public tab address carries the Ingress prefix")
+            blocker = True
+            routes[name] = None
+        elif routes[name] is None:
             reasons.append("%s tab at %s, not under %s" % (name, shape or "nothing", base))
         if not str(_details(outcome).get("page_text", "")).strip():
             reasons.append("%s tab rendered no text" % name)
@@ -452,7 +461,7 @@ def new_tab_verdict(public: Outcome, ingress: Outcome) -> tuple[str, str, list[s
         elif _details(public).get("page_text") != _details(ingress).get("page_text"):
             reasons.append("the two tabs do not render the same page")
     if reasons:
-        return "GAP", ("blocker" if severity == "blocker" else "important"), reasons, None
+        return "GAP", ("blocker" if blocker else "important"), reasons, None
     return "STRUCTURAL", "none", [], PUBLIC_BASE + str(routes["public"])
 
 

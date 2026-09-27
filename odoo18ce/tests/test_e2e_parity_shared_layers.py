@@ -334,6 +334,14 @@ class NewTabTests(unittest.TestCase):
         self.assertEqual(new_tab_verdict(*self.pair(public_text="", ingress_text=""))[2],
                          ["public tab rendered no text", "ingress tab rendered no text"])
 
+    def test_the_ingress_prefix_in_the_public_tab_address_is_a_leak_and_a_blocker(self) -> None:
+        # Section 1.3: an Ingress token in an outbound address is a Blocker, not an Important.
+        verdict, severity, reasons, public_path = new_tab_verdict(
+            *self.pair(public="<PUBLIC_BASE><INGRESS_PREFIX>/survey/<token>"))
+        self.assertEqual((verdict, severity), ("GAP", "blocker"))
+        self.assertEqual(reasons, ["public tab address carries the Ingress prefix"])
+        self.assertIsNone(public_path)
+
     def test_a_route_escape_under_ingress_is_a_blocker(self) -> None:
         public, ingress = self.pair()
         escaped = Outcome(True, ingress.result, signals={"route_escape": 1}, details=dict(ingress.details))
