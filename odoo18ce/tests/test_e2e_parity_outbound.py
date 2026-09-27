@@ -55,6 +55,7 @@ class PlanTests(unittest.TestCase):
             self.assertIn(screen, [s for item, _, s in plan if item == "U-E2"])
         self.assertIn(("U-E4", "event", "event ticket PDF"), plan)
         self.assertIn(("U-D8", "shared", "generic"), plan)
+        self.assertIn(("U-D8", "website", "sitemap.xml"), plan)
         for item, module, screen in OUTBOUND_SCREENS:
             self.assertIn(item, CATALOG)
             self.assertTrue(module and screen)

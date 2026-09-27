@@ -81,6 +81,8 @@ MRP work order record).
 | `U-D6` generic, job application | After Contact Us or a job application is sent, the success page (`data-success-page`) opens at the HA root: 404 instead of the thank-you page | #167 |
 | `U-D8` generic | Under Ingress, sitemap, canonical, `og:` and icon URLs are on `<HA_BASE>`. Still a GAP with P-5 passing (rerun): `sitemap.xml` through Ingress follows the request address | #172 (first #164) |
 
+The `U-D8` row above is what this run recorded. Since then the head links and `robots.txt` were fixed — by the restart workaround this run's rerun used, and by #164's Canonical URL catch-up — and the sitemap was accepted as a divergence, `AD-8` (#172). `U-D8` is therefore two checks now: `check:U-D8|shared|generic` (head links and `robots.txt`) and `check:U-D8|website|sitemap.xml`. Rerun on 2026-09-27 in `docs/testing/evidence/2026-09-27-issue-172/`: `PARITY` and `APPROVED-DIVERGENCE`. This run's records and counts are left as it recorded them, so recomputing `report` over its `checks.jsonl` now lists `check:U-D8|website|sitemap.xml` as missing: the check did not exist when it ran.
+
 ### STRUCTURAL (the Public origin path that carries it)
 
 | Check | Carried by |

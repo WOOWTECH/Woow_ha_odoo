@@ -30,7 +30,7 @@ import os
 import re
 import sys
 import time
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 from urllib.parse import urlsplit
 
 from e2e_menu_action_adapter import (
@@ -50,6 +50,8 @@ from e2e_parity_shared_layers import (
     check_record,
     conservation,
     planned_checks,
+    seo_head_verdict,
+    sitemap_divergence,
 )
 
 TIMEOUT = 60_000
@@ -2713,11 +2715,18 @@ def check_d7(run: Run) -> None:
 
 @check("U-D8")
 def check_d8(run: Run) -> None:
-    def probe(side: Side) -> Outcome:
-        found: dict[str, list[str]] = {}
-        for path in ("/sitemap.xml", "/robots.txt"):
-            body = side.context.request.get(side.base + path).text()
-            found[path] = sorted(set(re.findall(r"https?://[^\s<\"']+", body)))
+    """Two records: the head links with `robots.txt`, and the sitemap (AD-8, #172)."""
+
+    def bases_of(urls: Iterable[str]) -> list[str]:
+        return sorted({run.env.mask("%s://%s" % (urlsplit(url).scheme, urlsplit(url).netloc))
+                       for url in urls if urlsplit(url).netloc and urlsplit(url).hostname not in NAMESPACE_HOSTS})
+
+    def fetch(side: Side, path: str) -> tuple[int, list[str]]:
+        response = side.context.request.get(side.base + path)
+        return response.status, sorted(set(re.findall(r"https?://[^\s<\"']+", response.text())))
+
+    def head_and_robots(side: Side) -> Outcome:
+        found = {"/robots.txt": fetch(side, "/robots.txt")[1]}
         side.goto("/")
         side.settle()
         head = side.root.evaluate("""() => [...document.querySelectorAll(
@@ -2729,20 +2738,43 @@ def check_d8(run: Run) -> None:
         # any other root-relative value (canonical, og:url) is an outbound URL that has lost its base.
         found["head"] = [url for icon, url in head if not (icon and not urlsplit(url).netloc)]
         relative = [url for url in found["head"] if not urlsplit(url).netloc]
-        by_source = {source: sorted({run.env.mask("%s://%s" % (urlsplit(url).scheme, urlsplit(url).netloc))
-                                     for url in urls if urlsplit(url).netloc
-                                     and urlsplit(url).hostname not in NAMESPACE_HOSTS})
-                     for source, urls in found.items()}
+        by_source = {source: bases_of(urls) for source, urls in found.items()}
         masked = sorted({base for bases in by_source.values() for base in bases})
         wrong = [base for base in masked if base != "<PUBLIC_BASE>"] + (["relative URLs"] if relative else [])
         return Outcome(True, "all SEO URLs on <PUBLIC_BASE>" if not wrong else "SEO URLs on %s" % ", ".join(wrong),
-                       details={"bases": masked, "by_source": by_source})
+                       details={"bases": masked, "by_source": by_source, "wrong": wrong})
 
-    public, ingress = run.both(probe)
-    run.record("U-D8", "shared", "generic", public, ingress,
-               notes="sitemap.xml, robots.txt, and the home page's canonical, alternate, og:url, og:image, "
-                     "twitter:image and icon links (root-relative icons are the page's own resources). The "
-                     "head's URLs are built from website.domain (P-5).")
+    public, ingress = run.both(head_and_robots)
+    verdict, severity, reasons = seo_head_verdict(public, ingress)
+    run.record("U-D8", "shared", "generic", public, ingress, verdict=verdict, severity=severity,
+               notes="; ".join(filter(None, [
+                   "robots.txt and the home page's canonical, alternate, og:url, og:image, twitter:image and icon "
+                   "links (root-relative icons are the page's own resources); built from website.domain (P-5). "
+                   "sitemap.xml is AD-8 and recorded on its own.", *reasons])))
+
+    def sitemap(side: Side) -> Outcome:
+        # robots.txt again, for the other half of AD-8: what steers a crawler away from this copy.
+        robots = run.env.mask(side.context.request.get(side.base + "/robots.txt").text())
+        status, urls = fetch(side, "/sitemap.xml")
+        bases = bases_of(urls)
+        # A prefixed URL is a leaked Supervisor token, so only how many of them there are is recorded.
+        prefixed = [url for url in urls if "/api/hassio_ingress/" in url]
+        return Outcome(True, "HTTP %d, %d sitemap URL(s) on %s" % (status, len(urls),
+                                                                   ", ".join(bases) or "nothing"),
+                       details={"status": status, "bases": bases, "urls": len(urls),
+                                "ingress_prefix": len(prefixed),
+                                "robots": [line.strip() for line in robots.splitlines() if line.strip()]})
+
+    public, ingress = run.both(sitemap)
+    verdict, severity, reasons = sitemap_divergence(public, ingress)
+    run.record("U-D8", "website", "sitemap.xml", public, ingress, verdict=verdict, severity=severity,
+               route="/sitemap.xml",
+               notes="; ".join(filter(None, [
+                   "AD-8, verified in reverse: Odoo builds sitemap.xml from the request's URL root, so the Ingress "
+                   "copy lists the Home Assistant address; it is accepted only while both surfaces serve a sitemap, "
+                   "the Public origin's is on <PUBLIC_BASE> with a robots.txt that lets crawlers in, the Ingress "
+                   "copy is not on <PUBLIC_BASE> and carries no Ingress prefix, and Ingress's robots.txt still says "
+                   "Disallow: / and points crawlers at <PUBLIC_BASE>/sitemap.xml.", *reasons])))
 
 
 # --- P-Check ------------------------------------------------------------------
