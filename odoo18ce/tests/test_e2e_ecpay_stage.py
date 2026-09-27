@@ -150,6 +150,17 @@ class CallbackLogTests(unittest.TestCase):
         outcome = callback_outcome(callback_hits([], [ACCESS_OTHER], "S00022"), {"state": "pending"})
         self.assertEqual(outcome.result, "no callback in the add-on log; transaction pending")
 
+    def test_log_entries_from_before_the_transaction_was_rendered_do_not_count(self) -> None:
+        earlier_failure = [line.replace("02:12:51,500", "01:00:00,000") for line in MAC_FAILED]
+        earlier_post = ACCESS_OK.replace("10:12:51", "09:00:00")
+        hits = callback_hits(earlier_failure + RENDERING + RECEIVED, [earlier_post, ACCESS_OK], "S00022")
+        self.assertEqual((hits["mac_failures"], hits["result_notify_posts"]), (0, [200]))
+
+    def test_a_post_before_the_rendering_is_not_this_transactions_callback(self) -> None:
+        earlier_post = ACCESS_OK.replace("10:12:51", "09:00:00")
+        hits = callback_hits(RENDERING + RECEIVED, [earlier_post], "S00022")
+        self.assertEqual(hits["result_notify_posts"], [])
+
     def test_a_callback_whose_mac_failed_does_not_pass(self) -> None:
         outcome = callback_outcome(callback_hits(RECEIVED + MAC_FAILED, [ACCESS_OK], "S00022"), {"state": "pending"})
         self.assertEqual(outcome.result, "callback arrived but its CheckMacValue failed; transaction pending")
@@ -186,6 +197,10 @@ class EinvoiceTests(unittest.TestCase):
         outcome = einvoice_outcome(move(ecpay_invoice_id=[3, "pending"]))
         self.assertEqual(outcome.result, "e-invoice number is not a uniform invoice number")
 
+    def test_the_form_must_show_the_issued_number(self) -> None:
+        self.assertEqual(einvoice_outcome(move(), shown="GS20004636").result, "e-invoice issued")
+        self.assertEqual(einvoice_outcome(move(), shown="").result, "e-invoice number not shown on the invoice form")
+
     def test_no_invoice_at_all(self) -> None:
         outcome = einvoice_outcome(None)
         self.assertFalse(outcome.available)
@@ -196,33 +211,37 @@ class RecordTests(unittest.TestCase):
     def setUp(self) -> None:
         self.urls = callback_urls_outcome(form(), BASES)
         self.callback = callback_outcome(callback_hits(RECEIVED, [ACCESS_OK], "S00022"), {"state": "done"})
-        self.invoice = einvoice_outcome(move())
-        same = Outcome(True, "form opens; ECPay fields shown")
-        self.records = ecpay_records(RUN, self.urls, self.callback, self.invoice,
-                                     [("ECPay provider form", same, same)])
+        issued = einvoice_outcome(move(), shown="GS20004636")
+        same = Outcome(True, "form opens; MerchantID shown")
+        self.records = ecpay_records(RUN, self.urls, self.callback, [
+            ("ECPay provider form", same, same),
+            ("ECPay e-invoice on the invoice form", issued, issued)])
 
-    def test_the_external_parts_are_structural_and_name_their_public_path(self) -> None:
-        by_screen = {record["screen"]["name"]: record for record in self.records}
-        for screen, path in (("ECPay callback and return URLs", "/payment/ecpay/result_notify"),
-                             ("ECPay stage payment callback", "/payment/ecpay/result_notify"),
-                             ("ECPay e-invoice for the paid order", "/shop/payment")):
-            record = by_screen[screen]
+    def by_screen(self, records=None):
+        return {record["screen"]["name"]: record for record in records or self.records}
+
+    def test_the_inbound_parts_are_structural_and_name_their_public_path(self) -> None:
+        for screen in ("ECPay callback and return URLs", "ECPay stage payment callback"):
+            record = self.by_screen()[screen]
             self.assertEqual(record["verdict"], "STRUCTURAL", screen)
-            self.assertEqual(record["public_path"], path)
+            self.assertEqual(record["public_path"], "/payment/ecpay/result_notify")
             self.assertEqual(record["item"], "U-E6")
             self.assertIsNone(record["ingress"])
 
     def test_a_structural_record_whose_public_side_failed_is_a_gap(self) -> None:
         failed = callback_outcome(callback_hits([], [], "S00022"), {"state": "pending"})
-        records = ecpay_records(RUN, self.urls, failed, self.invoice, [])
-        record = next(r for r in records if r["screen"]["name"] == "ECPay stage payment callback")
+        record = self.by_screen(ecpay_records(RUN, self.urls, failed, []))["ECPay stage payment callback"]
         self.assertEqual(record["verdict"], "GAP")
         self.assertEqual(record["severity"], "blocker")
 
-    def test_back_office_screens_are_judged_on_both_surfaces(self) -> None:
-        record = next(r for r in self.records if r["screen"]["name"] == "ECPay provider form")
+    def test_the_e_invoice_is_back_office_and_judged_on_both_surfaces(self) -> None:
+        record = self.by_screen()["ECPay e-invoice on the invoice form"]
         self.assertEqual(record["verdict"], "PARITY")
-        self.assertEqual(record["ingress"]["result"], "form opens; ECPay fields shown")
+        self.assertEqual(record["ingress"]["result"], "e-invoice issued")
+
+    def test_back_office_screens_are_judged_on_both_surfaces(self) -> None:
+        record = self.by_screen()["ECPay provider form"]
+        self.assertEqual(record["verdict"], "PARITY")
 
 
 if __name__ == "__main__":

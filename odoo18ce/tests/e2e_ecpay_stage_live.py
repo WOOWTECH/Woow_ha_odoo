@@ -6,7 +6,7 @@
     (a person pays on the stage cashier)
     python odoo18ce/tests/e2e_ecpay_stage_live.py verify --env-file .env \
         --env-file <scratchpad>/ecpay-log.env --db odoo_parity --run-id WOOW-PARITY-... \
-        --order S00022 --out checks.jsonl
+        --reference S00022 --out checks.jsonl
 
 Follows WOOWTECH/ecpay_odoo18 `docs/testing_quick_start.md`. `checkout` makes
 the price-included 5% tax, a published product with it and the ECPay
@@ -20,10 +20,10 @@ rendered from the add-on logs, and does Create Invoice, post and Issue
 E-Invoice (manual mode).
 
 The callback is real inbound traffic from ECPay: it can only reach the
-Public origin, so the redirect form, the callback and the e-invoice are
-`STRUCTURAL` records with the Public origin path that carries them. Under
-Ingress only the back office is checked -- the provider, the transaction,
-the order and the invoice forms -- on both surfaces.
+Public origin: the redirect form's URLs and the callback are a Structural
+gap, recorded `STRUCTURAL` with the Public origin path that carries them.
+The back office is checked on both surfaces: the provider, transaction and
+order forms, and the issued e-invoice on the invoice form.
 
 The merchant credentials are the stage values the ECPay modules seed on
 install; the run never types them, and it types no card. The add-on logs are
@@ -35,20 +35,21 @@ The pure parts are tested in the static tier by test_e2e_ecpay_stage.py.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import os
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Mapping, Sequence
 from urllib.parse import urlsplit
 
-from e2e_menu_action_adapter import RunInfo, new_run_id, parse_env_file
+from e2e_menu_action_adapter import RunInfo, new_run_id, parse_env_file, sanitize_diagnostic
 from e2e_parity_outbound import Bases, classify_url, url_shape
 from e2e_parity_shared_layers import Outcome, check_record
 from e2e_parity_shared_layers_live import Env, PublicSide, Run, open_sides
 
 CALLBACK_PATH = "/payment/ecpay/result_notify"
-CHECKOUT_PATH = "/shop/payment"
 # The redirect form's fields that ECPay calls back or sends the buyer to.
 URL_FIELDS = ("ReturnURL", "OrderResultURL", "ClientBackURL", "PaymentInfoURL")
 URLS_OK = "callback and return URLs on the Canonical URL over https"
@@ -79,8 +80,8 @@ def callback_urls_outcome(fields: Mapping[str, str], bases: Bases) -> Outcome:
                    details={"urls": urls})
 
 
-_ACCESS = re.compile(r'"POST %s[^"]*" (\d{3}) ' % re.escape(CALLBACK_PATH))
-_ENTRY_START = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} ")
+_ACCESS = re.compile(r'\[([^\]]+)\] "POST %s[^"]*" (\d{3}) ' % re.escape(CALLBACK_PATH))
+_ENTRY_START = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d{3} ")
 _FIELD = re.compile(r"'(\w+)': '([^']*)'")
 
 
@@ -99,25 +100,42 @@ def _fields(entry: str) -> dict[str, str]:
     return dict(_FIELD.findall(entry))
 
 
+def _entry_time(entry: str) -> datetime | None:
+    """Odoo logs in UTC."""
+    match = _ENTRY_START.match(entry)
+    return datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc) if match else None
+
+
+def _rendering(entries: Sequence[str], reference: str) -> str | None:
+    marker = "rendering values for transaction with reference %s:" % reference
+    return next((entry for entry in entries if marker in entry), None)
+
+
 def rendering_urls(odoo_lines: Iterable[str], reference: str) -> dict[str, str]:
     """The URLs in the redirect form Odoo rendered for this transaction (Odoo's payment module logs it)."""
-    marker = "rendering values for transaction with reference %s:" % reference
-    for entry in log_entries(odoo_lines):
-        if marker in entry:
-            fields = _fields(entry)
-            return {name: fields[name] for name in URL_FIELDS if name in fields}
-    return {}
+    entry = _rendering(log_entries(odoo_lines), reference)
+    fields = _fields(entry) if entry else {}
+    return {name: fields[name] for name in URL_FIELDS if name in fields}
 
 
 def callback_hits(odoo_lines: Iterable[str], access_lines: Iterable[str], reference: str) -> dict[str, Any]:
-    """What the add-on logs say about ECPay's callbacks for one transaction: no payload is kept."""
+    """What the add-on logs say about ECPay's callbacks for one transaction: no payload is kept.
+
+    The access log and a CheckMacValue failure do not name the transaction, so
+    only what was logged after Odoo rendered its redirect form counts."""
+    entries = log_entries(odoo_lines)
+    rendering = _rendering(entries, reference)
+    start = _entry_time(rendering) if rendering else None
     hits: dict[str, Any] = {"result_notify_posts": [], "notifications": [], "mac_failures": 0,
                             "customer_returns": 0}
     for line in access_lines:
         access = _ACCESS.search(line)
-        if access:
-            hits["result_notify_posts"].append(int(access.group(1)))
-    for entry in log_entries(odoo_lines):
+        if access and (start is None or datetime.strptime(access.group(1), "%d/%b/%Y:%H:%M:%S %z") >= start):
+            hits["result_notify_posts"].append(int(access.group(2)))
+    for entry in entries:
+        when = _entry_time(entry)
+        if start is not None and when is not None and when < start:
+            continue
         fields = _fields(entry)
         if "ECPay payment notification received" in entry and fields.get("CustomField1") == reference:
             hits["notifications"].append({"rtn_code": fields.get("RtnCode"), "payment_type": fields.get("PaymentType"),
@@ -149,7 +167,8 @@ def callback_outcome(hits: Mapping[str, Any], tx: Mapping[str, Any]) -> Outcome:
 _UNIFORM_NUMBER = re.compile(r"^[A-Z]{2}\d{8}$")
 
 
-def einvoice_outcome(move: Mapping[str, Any] | None) -> Outcome:
+def einvoice_outcome(move: Mapping[str, Any] | None, *, shown: str | None = None) -> Outcome:
+    """The e-invoice issued for the order; with `shown`, the number one surface's invoice form shows."""
     if not move:
         return Outcome(False, "no posted invoice for the order")
     number = (move.get("ecpay_invoice_id") or [None, None])[1]
@@ -159,6 +178,8 @@ def einvoice_outcome(move: Mapping[str, Any] | None) -> Outcome:
         return Outcome(True, "e-invoice not issued (%s)" % move.get("uniform_state"), details=details)
     if not _UNIFORM_NUMBER.match(number):
         return Outcome(True, "e-invoice number is not a uniform invoice number", details=details)
+    if shown is not None and shown != number:
+        return Outcome(True, "e-invoice number not shown on the invoice form", details=details)
     return Outcome(True, EINVOICE_OK, details=details)
 
 
@@ -172,21 +193,20 @@ def _structural(run: RunInfo, screen: str, public: Outcome, ok: str, path: str, 
                         notes=notes if worked else "; ".join([notes, "public: %s" % public.result]))
 
 
-def ecpay_records(run: RunInfo, urls: Outcome, callback: Outcome, invoice: Outcome,
+def ecpay_records(run: RunInfo, urls: Outcome, callback: Outcome,
                   back_office: Sequence[tuple[str, Outcome, Outcome]]) -> list[dict[str, Any]]:
+    """The inbound traffic is a Structural gap; the back office, the e-invoice included, is judged on both."""
     records = [
         _structural(run, "ECPay callback and return URLs", urls, URLS_OK, CALLBACK_PATH,
                     "The URLs in the redirect form the checkout posts to ECPay's stage cashier."),
         _structural(run, "ECPay stage payment callback", callback, CALLBACK_OK, CALLBACK_PATH,
                     "ECPay's server-to-server callback after a stage card payment; it has no Home "
                     "Assistant session, so only the Public origin can take it (RC-10)."),
-        _structural(run, "ECPay e-invoice for the paid order", invoice, EINVOICE_OK, CHECKOUT_PATH,
-                    "Create Invoice, post, Issue E-Invoice (manual mode) against ECPay's e-invoice stage."),
     ]
     for screen, public, ingress in back_office:
         records.append(check_record(run, "U-E6", module="payment_ecpay", screen=screen, public=public,
-                                    ingress=ingress, notes="Back office only; the external traffic is "
-                                                           "Public origin only."))
+                                    ingress=ingress, notes="Back office; the inbound traffic is Public origin "
+                                                           "only."))
     return records
 
 
@@ -196,14 +216,14 @@ TIMEOUT = 60_000
 STAGE_CASHIER = "payment-stage.ecpay.com.tw"
 PRICE = 100.0
 ODOO_LOG = "/data/odoo/logs/odoo-server.log"
-# Back-office forms, the ECPay field each must show on both surfaces, and the
-# notebook page it sits on when that is not the first one.
+# Back-office forms and the ECPay field each must show on both surfaces. The
+# invoice form's e-invoice check is its own (einvoice_check).
 BACK_OFFICE = (
-    ("ECPay provider form", "payment.provider", "MerchantID", None),
-    ("ECPay transaction form", "payment.transaction", "provider_reference", None),
-    ("ECPay sale order form", "sale.order", "ecpay_info_ids", None),
-    ("ECPay invoice form", "account.move", "uniform_state", "uniform_invoice"),
+    ("ECPay provider form", "payment.provider", "MerchantID"),
+    ("ECPay transaction form", "payment.transaction", "provider_reference"),
+    ("ECPay sale order form", "sale.order", "ecpay_info_ids"),
 )
+EINVOICE_PAGE = "uniform_invoice"  # the invoice form's 綠界電子發票 notebook page
 
 
 def setup(admin, marker: str) -> dict[str, int]:
@@ -217,7 +237,9 @@ def setup(admin, marker: str) -> dict[str, int]:
     else:
         country = admin.rpc("res.company", "read", [[1]], {"fields": ["account_fiscal_country_id"]})[0]
         country_id = country["account_fiscal_country_id"][0]
-        group = admin.rpc("account.tax.group", "create", [{"name": "稅 5%", "country_id": country_id}])
+        groups = admin.rpc("account.tax.group", "search", [[["name", "=", "稅 5%"], ["country_id", "=", country_id]]])
+        group = groups[0] if groups else admin.rpc("account.tax.group", "create",
+                                                    [{"name": "稅 5%", "country_id": country_id}])
         ids["tax"] = admin.rpc("account.tax", "create", [{
             "name": tax_name, "amount": 5.0, "amount_type": "percent", "type_tax_use": "sale",
             "price_include_override": "tax_included", "tax_group_id": group, "country_id": country_id}])
@@ -228,7 +250,8 @@ def setup(admin, marker: str) -> dict[str, int]:
     provider = admin.rpc("payment.provider", "search_read", [[["code", "=", "ECPay"]]], {"fields": ["id"]})[0]
     method = admin.rpc("payment.method", "search_read",
                        [[["code", "=", "ecpay"], ["active", "in", [True, False]]]], {"fields": ["id"]})[0]
-    # The provider first: Odoo refuses a method no enabled provider supports.
+    # The provider first: Odoo refuses a method no enabled provider supports. The quick
+    # start sets 網域名稱 (`ecpay_domain`); the module builds its URLs from the website domain.
     admin.rpc("payment.provider", "write", [[provider["id"]], {
         "state": "test", "is_published": True, "ecpay_credit": True, "ecpay_domain": admin.env.public + "/"}])
     admin.rpc("payment.method", "write", [[method["id"]], {"active": True}])
@@ -280,10 +303,14 @@ def read_logs(since: str) -> tuple[list[str], list[str]]:
     def remote(command: str) -> list[str]:
         result = subprocess.run(["ssh", "-o", "BatchMode=yes", host, command], capture_output=True,
                                 text=True, encoding="utf-8", errors="replace", timeout=120)
-        return (result.stdout + result.stderr).splitlines()
+        if result.returncode:
+            raise RuntimeError("reading the add-on log failed: %s"
+                               % (result.stderr.strip().splitlines() or ["?"])[-1])
+        return result.stdout.splitlines()
 
     odoo = remote("docker exec %s cat %s" % (container, ODOO_LOG))
-    access = remote("docker logs --since %s %s 2>&1 | grep 'POST /payment/ecpay/'" % (since, container))
+    # grep exits 1 on no match; `|| true` keeps "no callback" apart from a failed read.
+    access = remote("docker logs --since %s %s 2>&1 | grep 'POST /payment/ecpay/' || true" % (since, container))
     return odoo, access
 
 
@@ -308,15 +335,25 @@ def issue_einvoice(admin, order_id: int) -> dict[str, Any] | None:
     return admin.rpc("account.move", "read", [[move_id]], {"fields": fields})[0]
 
 
-def form_check(model: str, record_id: int, field: str, page: str | None) -> Callable:
+def form_check(model: str, record_id: int, field: str) -> Callable:
     def check(side) -> Outcome:
         side.goto("/odoo/%s/%d" % (model, record_id))
         side.wait_webclient()
-        if page:
-            side.root.locator(".o_notebook_headers a[name='%s']" % page).first.click()
-            side.settle()
         shown = side.root.locator(".o_form_view [name='%s']" % field).count() > 0
         return Outcome(True, "form opens; %s %s" % (field, "shown" if shown else "missing"))
+    return check
+
+
+def einvoice_check(move: Mapping[str, Any]) -> Callable:
+    """The invoice form's 綠界電子發票 page must show the number ECPay issued."""
+    def check(side) -> Outcome:
+        side.goto("/odoo/account.move/%d" % move["id"])
+        side.wait_webclient()
+        side.root.locator(".o_notebook_headers a[name='%s']" % EINVOICE_PAGE).first.click()
+        side.settle()
+        field = side.root.locator(".o_form_view [name='ecpay_invoice_id']")
+        shown = field.first.inner_text().strip() if field.count() else ""
+        return einvoice_outcome(move, shown=shown)
     return check
 
 
@@ -343,8 +380,10 @@ def command_checkout(args) -> int:
             product = admin.rpc("product.template", "read", [[ids["product"]]], {"fields": ["website_url"]})[0]
             buyer = browser.new_context()
             guest_checkout(buyer.new_page(), env.public, product["website_url"], run_id)
-            tx = admin.rpc("payment.transaction", "search_read", [[["provider_code", "=", "ECPay"]]],
-                           {"fields": ["reference"], "order": "id desc", "limit": 1})[0]
+            tx = admin.rpc("payment.transaction", "search_read", [[
+                ["provider_code", "=", "ECPay"],
+                ["sale_order_ids.order_line.product_id.product_tmpl_id", "=", ids["product"]]]],
+                {"fields": ["reference"], "order": "id desc", "limit": 1})[0]
             print("%s: %s is on the stage cashier" % (run_id, tx["reference"]), file=sys.stderr)
             if args.headed:
                 input("Pay it in the browser, then press Enter... ")
@@ -367,23 +406,29 @@ def command_verify(args) -> int:
         try:
             public, ingress = open_sides(env, browser)
             bases = Bases(public=env.public, ha=[base for base in (env.ha, env.ha_https) if base], prefix=env.prefix)
-            tx = public.rpc("payment.transaction", "search_read", [[["reference", "=", args.order]]],
-                            {"fields": ["state", "sale_order_ids", "provider_id"]})[0]
+            found = public.rpc("payment.transaction", "search_read", [[["reference", "=", args.reference]]],
+                               {"fields": ["state", "sale_order_ids", "provider_id"]})
+            if not found:
+                raise RuntimeError("no transaction %s" % args.reference)
+            tx = found[0]
             order_id = tx["sale_order_ids"][0]
-            urls = callback_urls_outcome(rendering_urls(odoo_log, args.order), bases)
-            callback = callback_outcome(callback_hits(odoo_log, access_log, args.order), tx)
+            urls = callback_urls_outcome(rendering_urls(odoo_log, args.reference), bases)
+            callback = callback_outcome(callback_hits(odoo_log, access_log, args.reference), tx)
             order = public.rpc("sale.order", "read", [[order_id]], {"fields": ["state"]})[0]
-            callback = Outcome(callback.available, callback.result,
-                               details={**callback.details, "order_state": order["state"]})
+            callback = dataclasses.replace(callback, details={**callback.details, "order_state": order["state"]})
             move = issue_einvoice(public, order_id)
-            invoice = einvoice_outcome(move)
             targets = {"payment.provider": tx["provider_id"][0], "payment.transaction": tx["id"],
-                       "sale.order": order_id, "account.move": move and move["id"]}
+                       "sale.order": order_id}
             with open(args.out, "a", encoding="utf-8") as out:
                 run = Run(env, info, public, ingress, out, browser)
-                back_office = [(screen, *run.both(form_check(model, targets[model], field, page)))
-                               for screen, model, field, page in BACK_OFFICE if targets[model]]
-                for record in ecpay_records(info, urls, callback, invoice, back_office):
+                back_office = [(screen, *run.both(form_check(model, targets[model], field)))
+                               for screen, model, field in BACK_OFFICE]
+                screen = "ECPay e-invoice on the invoice form"
+                if move:
+                    back_office.append((screen, *run.both(einvoice_check(move))))
+                else:
+                    back_office.append((screen, einvoice_outcome(None), einvoice_outcome(None)))
+                for record in ecpay_records(info, urls, callback, back_office):
                     run.write(record)
             return 0
         finally:
@@ -403,7 +448,7 @@ def main(argv=None) -> int:
         sub.add_argument("--run-id", help="the run marker; keep one across checkout and verify")
         sub.add_argument("--headed", action="store_true")
     verify = commands.choices["verify"]
-    verify.add_argument("--order", required=True, help="the paid transaction's reference, e.g. S00022")
+    verify.add_argument("--reference", required=True, help="the paid transaction's reference, e.g. S00022")
     verify.add_argument("--since", default="6h", help="how far back the access log is read (docker logs --since)")
     verify.add_argument("--out", required=True, help="JSONL file; records are appended")
     args = parser.parse_args(argv)
@@ -411,4 +456,13 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as error:  # noqa: BLE001 -- never print an unmasked secret
+        message = sanitize_diagnostic(str(error))
+        try:
+            message = Env(os.environ.get("ODOO_DB", "")).mask(message)
+        except Exception:  # noqa: BLE001
+            pass
+        print("ECPay stage run failed: %s" % message, file=sys.stderr)
+        sys.exit(2)

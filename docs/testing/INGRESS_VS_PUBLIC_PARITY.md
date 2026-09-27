@@ -438,7 +438,7 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 | `sale_management` | 經 `sale` 選單，23 `PARITY` | `U-E3`／`U-E2`／`U-C20`／`U-D5` → #145 |
 | `website_sale` | 15 `PARITY` | `U-D1`–`U-D6`、`U-B2` → #143；`U-D7`、`U-E6` 為 `STRUCTURAL`（RC-10） |
 | `point_of_sale` | 19 `PARITY` | `U-C27` 離線銷售、斷網重整各 1 `PARITY`（#161，見 10.1）；`U-F5` 收據列印、`U-C25` 商品掃描各 1 `PARITY`（#143，見 10.6）；`U-C24` 未測 |
-| ECPay 4 模組 | `ecpay_invoice_tw`、`payment_ecpay` 各 1 `PARITY`；另兩個無自有選單 | `U-E6`（#146，2026-09-27）：Public origin 上一筆 stage 信用卡付款（`S00022`），綠界的回呼經 Cloudflare tunnel 抵達 `/payment/ecpay/result_notify`，交易 `done`，電子發票 `LO22046163` 已開立；回呼網址、付款回呼、電子發票 3 項 `STRUCTURAL`，後台 4 張表單（金流服務商、交易、訂單、發票）兩端 `PARITY`。見 `docs/testing/evidence/2026-09-27-issue-146/` |
+| ECPay 4 模組 | `ecpay_invoice_tw`、`payment_ecpay` 各 1 `PARITY`；另兩個無自有選單 | `U-E6`（#146，2026-09-27）：Public origin 上一筆 stage 信用卡付款（`S00022`），綠界的回呼經 Cloudflare tunnel 抵達 `/payment/ecpay/result_notify`，交易 `done`，電子發票 `LO22046163` 已開立；回呼網址、付款回呼 2 項 `STRUCTURAL`（Structural gap），後台 4 項（金流服務商、交易、訂單表單，與發票表單上的電子發票號碼）兩端 `PARITY`；`account`／`sale` 選單爬蟲 51 `PARITY`。見 `docs/testing/evidence/2026-09-27-issue-146/` |
 | `survey` | 4 `PARITY`、**2 `GAP`**（同一動作） | 範例圖片逃逸 → **#158**；`U-E3`／`U-C4` → #145 |
 | `im_livechat` | 8 `PARITY` | 外嵌 script 為 `STRUCTURAL`（RC-10）；`U-C26` → #143 |
 | `event` | 7 `PARITY`、**1 `GAP`** | 報到台條碼音效逃逸 → **#159**；`U-E3`／`U-E4` → #145 |
@@ -482,6 +482,7 @@ POS 兩項在 #161 之後於 2026-09-27 補跑，收據列印（`U-F5`）與相�
 E 群組（`U-E2`、`U-E3`、`U-E4`、`U-E5`、`U-E7`）與 `U-D8` 在 `odoo_parity`（0.4.4）上，每種產出物
 都從兩個 surface 的 UI 各產生一次。25 項 = 22 `PARITY` + 2 `GAP` + 1 `NOT-RUN`，每個 `GAP` 都有 issue。
 `NOT-RUN` 是發票的 QR：台灣公司在 CE 沒有 QR 付款方式，ECPay 電子發票要先開立（#146）。本輪因此不算完整。
+（2026-09-27：#146 已在 `odoo_parity` 開出電子發票 `LO22046163`，發票 `INV/2026/00002`；這一項可以重跑，尚未重跑。）
 E 群組的判定**不只比較兩邊**：產出物裡只要有 HA 位址、相對 URL 或 Ingress token 就是 `GAP`，
 兩邊一樣錯也一樣。證據與方法見 `docs/testing/evidence/2026-09-25-issue-145/`。
 

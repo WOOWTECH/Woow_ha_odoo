@@ -7,9 +7,10 @@ WOOWTECH/ecpay_odoo18 `56cb04c` (#144). It follows that repository's
 for its pure parts in `test_e2e_ecpay_stage.py`.
 
 This is the only real inbound external traffic in the round (`U-E6`, `RC-10`): ECPay's server
-calls the Public origin back. It has no Home Assistant session, so the payment, the callback and
-the e-invoice run on the Public origin only and are `STRUCTURAL`. Under Ingress the run checks
-the back office: the provider, the transaction, the order and the invoice.
+calls the Public origin back. It has no Home Assistant session, so the callback is a Structural
+gap under Ingress: the redirect form's URLs and the callback are recorded `STRUCTURAL`, with the
+Public origin path that carries them. The back office is checked on both surfaces: the provider,
+the transaction, the order, and the issued e-invoice on the invoice form.
 
 No credential was typed or written down. The ECPay modules seed the stage merchant and
 e-invoice credentials on install. The card was the stage test card from ECPay's developer page
@@ -55,13 +56,21 @@ authorisation"). That callback reached the Public origin too.
 |---|---|---|---|
 | ECPay callback and return URLs | `ReturnURL`, `OrderResultURL`, `ClientBackURL`, `PaymentInfoURL` all on the Canonical URL over https, with no Ingress token | cannot take them | `STRUCTURAL` (`/payment/ecpay/result_notify`) |
 | ECPay stage payment callback | `POST /payment/ecpay/result_notify` 200 at 02:12:51 UTC. The notification for `S00022`: RtnCode `1`, `Credit_CreditCard`, not simulated. CheckMacValue passed. Transaction `done`, order `sale` | cannot take it | `STRUCTURAL` (`/payment/ecpay/result_notify`) |
-| ECPay e-invoice for the paid order | `INV/2026/00002` posted; Issue E-Invoice gave uniform invoice **`LO22046163`**, `uniform_state` `invoiced` | not run | `STRUCTURAL` (`/shop/payment`) |
 | ECPay provider form | opens, `MerchantID` shown | the same | `PARITY` |
 | ECPay transaction form | opens, `provider_reference` shown | the same | `PARITY` |
 | ECPay sale order form | opens, the ECPay payment rows (`ecpay_info_ids`) shown | the same | `PARITY` |
-| ECPay invoice form | opens; on the 綠界電子發票 page `uniform_state` is shown | the same | `PARITY` |
+| ECPay e-invoice on the invoice form | `INV/2026/00002` posted; Issue E-Invoice gave uniform invoice **`LO22046163`** (`uniform_state` `invoiced`); the form's 綠界電子發票 page shows that number | the same number shown | `PARITY` |
 
 No signals on either surface.
+
+Issuing the e-invoice is a call from Odoo out to ECPay's e-invoice stage, so Ingress could run it
+too. It is back office, not a Structural gap. The run issued it once, over RPC as the test user
+(Create Invoice, Confirm, 開立電子發票), and judged the result on both surfaces.
+
+The access log and a CheckMacValue failure do not name the transaction. `verify` therefore
+counts only what was logged after Odoo rendered `S00022`'s redirect form (02:04:00 UTC). The
+access log was read over 12 hours, which includes `S00021`'s callback at 20:00 UTC. That
+callback is not counted.
 
 `verify` takes the redirect form's URLs from the add-on's Odoo log, where Odoo's payment module
 logs the rendering values of each transaction, not from the browser. So they are the URLs Odoo
@@ -104,4 +113,6 @@ was deleted.
 - [x] Callback and return URLs are the Public origin, with no Ingress token.
 - [x] One paid order (`S00022`) and one issued e-invoice (`LO22046163`), with the callback in the
   add-on log.
-- [x] The Ingress back-office screens pass the crawler diff.
+- [x] The Ingress back-office screens pass the crawler diff. The crawler covers the provider and
+  invoice screens. It cannot cover transactions, because Odoo 18 has no transactions menu outside
+  debug mode. The transaction form is checked on both surfaces in `checks.jsonl` instead.
