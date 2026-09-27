@@ -49,6 +49,7 @@ from e2e_parity_shared_layers import (
     attach_issues,
     check_record,
     conservation,
+    new_tab_verdict,
     planned_checks,
     seo_head_verdict,
     sitemap_divergence,
@@ -2154,19 +2155,28 @@ def check_c23(run: Run) -> None:
         popup.close()
         parts = urlsplit(url)
         path = parts.path
-        token = "/api/hassio_ingress/" in path
+        # The shape is the path alone; a prefix in the query or the fragment is a token too.
+        token = "/api/hassio_ingress/" in url
         if token and side.env.prefix:
             path = path.replace(side.env.prefix, "<INGRESS_PREFIX>")
         base = "<PUBLIC_BASE>" if url.startswith(side.env.public) else (
             "<HA_BASE>" if url.startswith(side.env.ha) else "other")
         shape = "%s%s" % (base, re.sub(r"/[0-9a-f-]{16,}", "/<token>", path))
         return Outcome(True, "new tab at %s%s" % (shape, " (carries the Ingress token)" if token else ""),
-                       details={"page_text": run.env.mask(rendered)})
+                       details={"shape": shape, "ingress_token": token, "page_text": run.env.mask(rendered)})
 
     public, ingress = run.both(probe)
+    verdict, severity, reasons, public_path = new_tab_verdict(public, ingress)
     run.record("U-C23", "shared", "generic", public, ingress, model="survey.survey",
-               notes="The survey's Test button, which opens a new tab. U-C23 records the address shape; a tab "
-                     "address carrying the Ingress token leaks it and cannot be shared (RC-15).")
+               verdict=verdict, severity=severity, public_path=public_path,
+               notes="; ".join(filter(None, [
+                   "The survey's Test button, which opens a new tab. U-C23 records the address shape: a tab "
+                   "opened from Ingress is a top-level page under the Supervisor path, so its address carries "
+                   "the session token by construction (RC-15, a Structural gap) and opens only for the person "
+                   "who pressed the button -- which is why such a link is shared from the Public origin "
+                   "instead. The signals are those of the page that opened the tab: the tab is a page of its "
+                   "own, and its console, requests and HTTP statuses are not measured (the same as U-B3's "
+                   "second tab).", *reasons])))
 
 
 def kiosk_path(side: Side) -> str:

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Changed
+- Documentation only: a tab Odoo opens in the browser from Ingress — a
+  survey's Test button, a link that opens a new tab, "open in new tab" — is
+  now recorded as a Structural gap instead of a defect. The tab is a
+  top-level page, and through Ingress every top-level page lives under the
+  add-on's own address, so the tab's address carries the session token and
+  opens only for the person who pressed the button. DOCS.md "What only the
+  Public origin can do" gains a row saying to open the same screen on the
+  Public origin and share that address; the parity plan's `U-C23` rule and
+  its new `G-07` row say the same, and the Live check now records
+  `STRUCTURAL` with the Public origin's path. Nothing about the tab itself
+  changes: it keeps its Ingress address and keeps working for the person who
+  opened it. Issue #168.
+
 ### Fixed
 - A `website` module installed after the add-on started now gets the
   Canonical URL as the default website's domain within five minutes,
