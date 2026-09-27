@@ -321,11 +321,18 @@ def session_cookie_problems(
 PUBLIC_BASE = "<PUBLIC_BASE>"
 # AD-8: what `robots.txt` must still say under Ingress for the sitemap's own
 # address to be harmless -- Odoo steers crawlers to the Canonical URL's copy.
-AD8_ROBOTS_LINES = ("Disallow: /", "Sitemap: %s/sitemap.xml" % PUBLIC_BASE)
+AD8_DISALLOW = "Disallow: /"
+AD8_SITEMAP = "Sitemap: %s/sitemap.xml" % PUBLIC_BASE
+AD8_ROBOTS_LINES = (AD8_DISALLOW, AD8_SITEMAP)
 
 
 def _details(outcome: Outcome) -> Mapping[str, Any]:
     return outcome.details or {}
+
+
+def _robots(outcome: Outcome) -> set[str]:
+    """One surface's `robots.txt` lines, whitespace and case normalised."""
+    return {" ".join(line.split()).lower() for line in _details(outcome).get("robots", [])}
 
 
 def seo_head_verdict(public: Outcome, ingress: Outcome) -> tuple[str, str, list[str]]:
@@ -347,24 +354,38 @@ def seo_head_verdict(public: Outcome, ingress: Outcome) -> tuple[str, str, list[
 
 
 def sitemap_divergence(public: Outcome, ingress: Outcome) -> tuple[str, str, list[str]]:
-    """AD-8 verified in reverse: `sitemap.xml` on each surface, and Ingress's `robots.txt`.
+    """AD-8 verified in reverse: `sitemap.xml` on each surface, and each `robots.txt`.
 
     Odoo builds the sitemap from the request's URL root, so the Ingress copy
     lists the Home Assistant address; that is accepted only while every
-    statement of AD-8 still holds -- the Public origin's sitemap is on the
-    Canonical URL, the Ingress copy is not, and Ingress's `robots.txt` carries
-    `Disallow: /` and the Canonical URL's `Sitemap:`. A divergence that
-    disappeared is a failure of the reverse verification, and a `robots.txt`
-    that no longer steers crawlers (an empty `website.domain`, P-5) leaves the
-    Ingress copy unguarded: both are a GAP.
+    statement of AD-8 still holds -- both surfaces serve a sitemap, the Public
+    origin's is on the Canonical URL and its `robots.txt` lets crawlers in,
+    the Ingress copy is not on the Canonical URL and carries no Ingress prefix,
+    and Ingress's `robots.txt` says `Disallow: /` and points at the Canonical
+    URL's sitemap. A divergence that disappeared is a failure of the reverse
+    verification, and a `robots.txt` that no longer steers crawlers (an empty
+    `website.domain`, P-5) leaves the Ingress copy unguarded: both are a GAP.
+    An Ingress prefix inside a sitemap is a leaked credential, so it is a
+    Blocker, as is a surface that could not be read at all (section 1.3).
 
-    `public`/`ingress` carry the masked sitemap bases in `details["bases"]`,
-    and Ingress its `robots.txt` lines in `details["robots"]`.
+    Each outcome carries the fetch's `details["status"]`, the masked sitemap
+    bases in `details["bases"]`, how many of its URLs hold an Ingress prefix
+    (`details["ingress_prefix"]`, a count: the URL itself must not be written)
+    and its `robots.txt` lines in `details["robots"]`.
     """
     reasons: list[str] = []
+    severity = "important"
     for name, outcome in (("public", public), ("ingress", ingress)):
+        details = _details(outcome)
         if not outcome.available:
             reasons.append("%s unavailable: %s" % (name, outcome.result))
+            severity = "blocker"
+        elif details.get("status") != 200:
+            reasons.append("%s sitemap.xml HTTP %s" % (name, details.get("status")))
+        prefixed = int(details.get("ingress_prefix", 0))
+        if prefixed:
+            reasons.append("%s sitemap carries the Ingress prefix in %d URL(s)" % (name, prefixed))
+            severity = "blocker"
     public_bases = list(_details(public).get("bases", []))
     ingress_bases = list(_details(ingress).get("bases", []))
     if public_bases != [PUBLIC_BASE]:
@@ -373,12 +394,15 @@ def sitemap_divergence(public: Outcome, ingress: Outcome) -> tuple[str, str, lis
         reasons.append("ingress sitemap has no URL")
     elif PUBLIC_BASE in ingress_bases:
         reasons.append("ingress sitemap on %s: AD-8 no longer holds" % PUBLIC_BASE)
-    lines = {" ".join(line.split()).lower() for line in _details(ingress).get("robots", [])}
-    for required in AD8_ROBOTS_LINES:
-        if required.lower() not in lines:
-            reasons.append("ingress robots.txt has no %r" % required)
+    ingress_robots = _robots(ingress)
+    for line in AD8_ROBOTS_LINES:
+        if line.lower() not in ingress_robots:
+            reasons.append("ingress robots.txt has no %r" % line)
+    # The Public origin must stay crawlable: that half of AD-8 disappearing hides the site.
+    if AD8_DISALLOW.lower() in _robots(public):
+        reasons.append("public robots.txt says %r" % AD8_DISALLOW)
     if reasons:
-        return "GAP", "important", reasons
+        return "GAP", severity, reasons
     return "APPROVED-DIVERGENCE", "none", []
 
 

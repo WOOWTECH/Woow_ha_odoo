@@ -126,7 +126,7 @@ Public 是**基準組**，Ingress 是**待測組**。所有比對方向都是「
 | `AD-5` | `X-Frame-Options` | 移除 | 保留 | 比對回應標頭 |
 | `AD-6` | 匿名可達性 | 需 HA session | 完全匿名可達 | 無 HA cookie 打 ingress，須被擋 |
 | `AD-7` | LAN 主機埠 | 8069／8072 發佈到 HA 主機，只有 `lan_networks` 內的來源拿到 **LAN tier**（含資料庫管理）；add-on 網段 `172.30.32.0/23`（含 HA 主機本身與 Cloudflare tunnel）一律不算 LAN | 同左 | 從 `lan_networks` 外的來源打 8069／8072 的 `/web/database/manager`，不得回 200（未設 `public_url` 回 503；已設時 Host 不符回 444、Host 相符回 404）；add-on 啟動自我檢查另外驗 tunnel 那一側（`DOCS.md`「Start-time self-check」） |
-| `AD-8` | SEO 產出物的位址 | `robots.txt` 回 `Disallow: /`，`Sitemap:` 仍指向 `<PUBLIC_BASE>/sitemap.xml`；`sitemap.xml` 的 `<loc>` 跟著**請求位址**（HA 位址，且不帶 ingress 前綴） | `robots.txt` 沒有 `Disallow`，`sitemap.xml` 的 `<loc>` 全在 `<PUBLIC_BASE>` | 兩邊各取一次 `robots.txt` 與 `sitemap.xml`，四句話都要成立：ingress 的 `robots.txt` 同時有 `Disallow: /` 與 `Sitemap: <PUBLIC_BASE>/sitemap.xml`、ingress 的 `sitemap.xml` **不在** `<PUBLIC_BASE>`、public 的 `sitemap.xml` 全在 `<PUBLIC_BASE>`。任一句不成立即 `GAP`——分歧消失也算（要回頭改本列），`website.domain` 空白（`P-5` 未過）使 `Disallow: /` 消失更算：那時沒有任何東西把爬蟲導開。理由：Odoo 以請求的 URL root 組 sitemap、並按 (website, url_root) 快取，不讀 `website.domain`；而爬蟲根本到不了 ingress（需要 HA session，`AD-6`／`U-D7`），Odoo 自己也用 `Disallow: /` 把爬蟲導向 Canonical URL 的 sitemap。要「修」只能讓 nginx 改寫 XML 或讓守門模組覆寫 controller，ADR 0006 已否決這條路。嚴重度 Minor。見 #172 |
+| `AD-8` | SEO 產出物的位址 | `robots.txt` 回 `Disallow: /`，`Sitemap:` 仍指向 `<PUBLIC_BASE>/sitemap.xml`；`sitemap.xml` 的 `<loc>` 跟著**請求位址**（HA 位址，且不帶 ingress 前綴） | `robots.txt` 沒有 `Disallow: /`（爬蟲進得來），`sitemap.xml` 的 `<loc>` 全在 `<PUBLIC_BASE>` | 兩邊各取一次 `robots.txt` 與 `sitemap.xml`，每一句都要成立：兩邊的 `sitemap.xml` 都回 200；ingress 的 `robots.txt` 同時有 `Disallow: /` 與 `Sitemap: <PUBLIC_BASE>/sitemap.xml`；ingress 的 `sitemap.xml` **不在** `<PUBLIC_BASE>`、且**不含 ingress 前綴**；public 的 `sitemap.xml` 全在 `<PUBLIC_BASE>`、`robots.txt` 沒有 `Disallow: /`。任一句不成立即 `GAP`——分歧消失也算（要回頭改本列），`website.domain` 空白（`P-5` 未過）使 `Disallow: /` 消失更算：那時沒有任何東西把爬蟲導開；sitemap 裡出現 ingress 前綴是憑證外洩，屬 **Blocker**。理由：Odoo 以請求的 URL root 組 sitemap、並按 (website, url_root) 快取，不讀 `website.domain`；而爬蟲根本到不了 ingress（需要 HA session，`AD-6`／`U-D7`），Odoo 自己也用 `Disallow: /` 把爬蟲導向 Canonical URL 的 sitemap。要「修」只能讓 nginx 改寫 XML 或讓守門模組覆寫 controller，ADR 0006 已否決這條路。分歧本身的嚴重度是 Minor；核准後記錄下來的 `severity` 是 `none`（`AD-6`／`U-B8` 的慣例），反向驗證失敗才是 `GAP`。見 #172 |
 
 ---
 
@@ -463,11 +463,13 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 ### 10.6 共用層實測結果（2026-09-25，2026-09-27 補跑，#143）
 
 F、A、B、C、D 群組在 `odoo_parity`（0.4.4）各跑一次，外加 10.1–10.3 指定的模組畫面；Ingress 端是 HA 前端
-面板裡的 iframe（plain-http LAN 入口），`U-C25` 走 https 入口。75 項 = 53 `PARITY` + 9 `GAP` + 1
-`APPROVED-DIVERGENCE` + 5 `STRUCTURAL` + 7 `NOT-RUN`；每個 `GAP` 都有 issue（#159、#165–#170、#172）。
+面板裡的 iframe（plain-http LAN 入口），`U-C25` 走 https 入口。`U-D8` 拆成兩筆後共 76 項 = 54 `PARITY` + 8 `GAP`
++ 2 `APPROVED-DIVERGENCE` + 5 `STRUCTURAL` + 7 `NOT-RUN`；每個 `GAP` 都有 issue（#159、#165–#170）。
 POS 兩項在 #161 之後於 2026-09-27 補跑，收據列印（`U-F5`）與相機掃描（`U-C25`）兩端皆 `PARITY`；同次補跑 P-Check
-全數通過，`U-D8` 仍為 `GAP`（`sitemap.xml` 跟著請求位址走，#172）。
-`U-D8` 於 2026-09-27 再補跑一次（#172）：拆成兩筆後，head 連結與 `robots.txt` 是 `PARITY`，`sitemap.xml` 是 `APPROVED-DIVERGENCE`（`AD-8`）；證據見 `docs/testing/evidence/2026-09-27-issue-172/`。
+全數通過，`U-D8` 當時仍為 `GAP`（`sitemap.xml` 跟著請求位址走，#172）。
+`U-D8` 於 2026-09-27 再補跑一次並拆成兩筆（#172）：head 連結與 `robots.txt` 是 `PARITY`，`sitemap.xml` 是
+`APPROVED-DIVERGENCE`（`AD-8`），上面的數字已含這兩筆。#143 那一輪自己的證據檔保留它當時記錄的數字；這兩筆記錄與
+重算後的守恆報告見 `docs/testing/evidence/2026-09-27-issue-172/`。
 `NOT-RUN`：`U-A9`（無 60 秒以上的動作）、`U-C22`（只有一種語言）、`/event` 與活動報名
 （未裝 `website_event`）、CE 沒有該控制項的三個模組畫面（MRP 工作中心與工單、出勤 kiosk 全螢幕）。證據與方法見 `docs/testing/evidence/2026-09-25-issue-143/`。
 
@@ -476,7 +478,7 @@ POS 兩項在 #161 之後於 2026-09-27 補跑，收據列印（`U-F5`）與相�
   複製鈕靠 #60 的 fallback，相機要 https 入口（實測可用）。
 - 390×844 行動版模擬爬蟲：299 個選單 = 281 `PARITY` + 4 `GAP` + 14 跳過，4 個 `GAP` 就是桌機已登記的
   #158、#159、#160，行動版沒有新增。
-- P-5 未過：`website` 在 add-on 啟動後才安裝，`website.domain` 空白到下次重啟（#164），`U-D8` 因此是 `GAP`。
+- 2026-09-25 當時 P-5 未過：`website` 在 add-on 啟動後才安裝，`website.domain` 空白到下次重啟（#164），`U-D8` 因此是 `GAP`；2026-09-27 兩次補跑 P-5 都已 PASS。
 
 
 ### 10.7 對外產出物實測結果（2026-09-25／26，#145）

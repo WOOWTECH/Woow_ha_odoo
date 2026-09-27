@@ -204,13 +204,19 @@ class SeoOutputTests(unittest.TestCase):
         self.assertEqual(seo_head_verdict(self.head(), down)[:2], ("GAP", "blocker"))
 
     ROBOTS = ("User-agent: *", "Disallow: /", "Sitemap: <PUBLIC_BASE>/sitemap.xml")
+    PUBLIC_ROBOTS = ("User-agent: *", "Sitemap: <PUBLIC_BASE>/sitemap.xml")
 
     def sitemap(self, *, public=("<PUBLIC_BASE>",), ingress=("<HA_BASE>",), robots=ROBOTS,
-                available=True) -> tuple[Outcome, Outcome]:
-        def side(bases, **details) -> Outcome:
-            return Outcome(available=available, result="sitemap URLs on %s" % (", ".join(bases) or "nothing"),
-                           details={"bases": list(bases), **details})
-        return side(public), side(ingress, robots=list(robots))
+                public_robots=PUBLIC_ROBOTS, status=200, prefixed=0, available=True) -> tuple[Outcome, Outcome]:
+        def side(bases, robots_lines) -> Outcome:
+            return Outcome(available=available, result="%d sitemap URL(s) on %s" % (len(bases),
+                                                                                   ", ".join(bases) or "nothing"),
+                           details={"bases": list(bases), "status": status, "robots": list(robots_lines)})
+        public_side, ingress_side = side(public, public_robots), side(ingress, robots)
+        if prefixed:
+            ingress_side = Outcome(available, ingress_side.result,
+                                   details={**ingress_side.details, "ingress_prefix": prefixed})
+        return public_side, ingress_side
 
     def test_the_ingress_sitemap_following_the_request_address_is_ad_8(self) -> None:
         self.assertEqual(sitemap_divergence(*self.sitemap()), ("APPROVED-DIVERGENCE", "none", []))
@@ -231,19 +237,31 @@ class SeoOutputTests(unittest.TestCase):
         self.assertEqual(verdict, "GAP")
         self.assertEqual(reasons, ["ingress sitemap on <PUBLIC_BASE>: AD-8 no longer holds"])
 
-    def test_the_public_origin_sitemap_must_stay_on_the_canonical_url(self) -> None:
+    def test_the_public_origin_sitemap_must_stay_on_the_canonical_url_and_crawlable(self) -> None:
         self.assertEqual(sitemap_divergence(*self.sitemap(public=("<HA_BASE>",)))[2],
                          ["public sitemap on <HA_BASE>"])
         self.assertEqual(sitemap_divergence(*self.sitemap(public=()))[2], ["public sitemap on nothing"])
+        self.assertEqual(sitemap_divergence(*self.sitemap(public_robots=("Disallow: /",)))[2],
+                         ["public robots.txt says 'Disallow: /'"])
 
     def test_a_sitemap_with_no_url_at_all_is_a_gap(self) -> None:
         self.assertEqual(sitemap_divergence(*self.sitemap(ingress=()))[2], ["ingress sitemap has no URL"])
 
-    def test_an_unavailable_surface_is_not_an_approved_divergence(self) -> None:
-        verdict, severity, reasons = sitemap_divergence(*self.sitemap(available=False))
+    def test_a_sitemap_that_was_not_served_is_a_gap(self) -> None:
+        verdict, severity, reasons = sitemap_divergence(*self.sitemap(status=404))
         self.assertEqual((verdict, severity), ("GAP", "important"))
-        self.assertEqual(reasons[:2], ["public unavailable: sitemap URLs on <PUBLIC_BASE>",
-                                       "ingress unavailable: sitemap URLs on <HA_BASE>"])
+        self.assertEqual(reasons[:2], ["public sitemap.xml HTTP 404", "ingress sitemap.xml HTTP 404"])
+
+    def test_an_ingress_prefix_inside_the_sitemap_is_a_blocker(self) -> None:
+        verdict, severity, reasons = sitemap_divergence(*self.sitemap(prefixed=3))
+        self.assertEqual((verdict, severity), ("GAP", "blocker"))
+        self.assertEqual(reasons, ["ingress sitemap carries the Ingress prefix in 3 URL(s)"])
+
+    def test_an_unavailable_surface_is_a_blocker_not_an_approved_divergence(self) -> None:
+        verdict, severity, reasons = sitemap_divergence(*self.sitemap(available=False))
+        self.assertEqual((verdict, severity), ("GAP", "blocker"))
+        self.assertEqual(reasons[:2], ["public unavailable: 1 sitemap URL(s) on <PUBLIC_BASE>",
+                                       "ingress unavailable: 1 sitemap URL(s) on <HA_BASE>"])
 
     def test_both_u_d8_records_reconcile_with_no_remainder(self) -> None:
         plan = [("U-D8", "shared", "generic"), ("U-D8", "website", "sitemap.xml")]

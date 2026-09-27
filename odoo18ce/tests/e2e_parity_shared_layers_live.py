@@ -2721,12 +2721,12 @@ def check_d8(run: Run) -> None:
         return sorted({run.env.mask("%s://%s" % (urlsplit(url).scheme, urlsplit(url).netloc))
                        for url in urls if urlsplit(url).netloc and urlsplit(url).hostname not in NAMESPACE_HOSTS})
 
-    def urls_at(side: Side, path: str) -> list[str]:
-        body = side.context.request.get(side.base + path).text()
-        return sorted(set(re.findall(r"https?://[^\s<\"']+", body)))
+    def fetch(side: Side, path: str) -> tuple[int, list[str]]:
+        response = side.context.request.get(side.base + path)
+        return response.status, sorted(set(re.findall(r"https?://[^\s<\"']+", response.text())))
 
     def head_and_robots(side: Side) -> Outcome:
-        found = {"/robots.txt": urls_at(side, "/robots.txt")}
+        found = {"/robots.txt": fetch(side, "/robots.txt")[1]}
         side.goto("/")
         side.settle()
         head = side.root.evaluate("""() => [...document.querySelectorAll(
@@ -2755,10 +2755,14 @@ def check_d8(run: Run) -> None:
     def sitemap(side: Side) -> Outcome:
         # robots.txt again, for the other half of AD-8: what steers a crawler away from this copy.
         robots = run.env.mask(side.context.request.get(side.base + "/robots.txt").text())
-        urls = urls_at(side, "/sitemap.xml")
+        status, urls = fetch(side, "/sitemap.xml")
         bases = bases_of(urls)
-        return Outcome(True, "sitemap URLs on %s" % (", ".join(bases) or "nothing"),
-                       details={"bases": bases, "urls": len(urls),
+        # A prefixed URL is a leaked Supervisor token, so only how many of them there are is recorded.
+        prefixed = [url for url in urls if "/api/hassio_ingress/" in url]
+        return Outcome(True, "HTTP %d, %d sitemap URL(s) on %s" % (status, len(urls),
+                                                                   ", ".join(bases) or "nothing"),
+                       details={"status": status, "bases": bases, "urls": len(urls),
+                                "ingress_prefix": len(prefixed),
                                 "robots": [line.strip() for line in robots.splitlines() if line.strip()]})
 
     public, ingress = run.both(sitemap)
@@ -2767,9 +2771,10 @@ def check_d8(run: Run) -> None:
                route="/sitemap.xml",
                notes="; ".join(filter(None, [
                    "AD-8, verified in reverse: Odoo builds sitemap.xml from the request's URL root, so the Ingress "
-                   "copy lists the Home Assistant address; it is accepted only while the Public origin's sitemap is "
-                   "on <PUBLIC_BASE> and Ingress's robots.txt still says Disallow: / and points crawlers at "
-                   "<PUBLIC_BASE>/sitemap.xml.", *reasons])))
+                   "copy lists the Home Assistant address; it is accepted only while both surfaces serve a sitemap, "
+                   "the Public origin's is on <PUBLIC_BASE> with a robots.txt that lets crawlers in, the Ingress "
+                   "copy is not on <PUBLIC_BASE> and carries no Ingress prefix, and Ingress's robots.txt still says "
+                   "Disallow: / and points crawlers at <PUBLIC_BASE>/sitemap.xml.", *reasons])))
 
 
 # --- P-Check ------------------------------------------------------------------
