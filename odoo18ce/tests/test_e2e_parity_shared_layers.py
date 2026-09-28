@@ -348,6 +348,16 @@ class NewTabTests(unittest.TestCase):
         self.assertEqual(reasons, ["public tab address carries the Ingress prefix"])
         self.assertIsNone(public_path)
 
+    def test_the_shape_alone_shows_the_leak_when_the_flag_says_nothing(self) -> None:
+        # A record with no flag at all -- one written before #187, re-judged from the file --
+        # still has its address in `shape`, and that is enough to see the prefix.
+        public, ingress = self.pair(public="<PUBLIC_BASE><INGRESS_PREFIX>/survey/<token>")
+        flagless = Outcome(available=True, result=public.result,
+                           details={key: value for key, value in public.details.items()
+                                    if key != INGRESS_PREFIX_DETAIL})
+        self.assertEqual(new_tab_verdict(flagless, ingress)[:3],
+                         ("GAP", "blocker", ["public tab address carries the Ingress prefix"]))
+
     def test_a_token_the_mask_did_not_recognise_is_a_leak_too(self) -> None:
         # A prefix that is not this session's own (#160) survives masking; it is still a token.
         leaked = Outcome(available=True, result="new tab at <PUBLIC_BASE>/api/hassio_ingress/xyz/survey/<token>",

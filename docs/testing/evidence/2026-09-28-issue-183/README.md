@@ -66,12 +66,15 @@ Filed as #187 and **fixed**: the probe now writes the flag as
 `details.ingress_prefix_in_url`, a name the sanitiser has no reason to
 redact, so a run after the fix says in the file which tab carried the prefix.
 The sanitiser is unchanged and still redacts secret-bearing strings, and
-`new_tab_verdict()` now reads a flag that is not a `bool` — such as the
-`<redacted>` in the records here — as saying nothing, rather than as a leaked
-Supervisor token. `NewTabTests` in
-`odoo18ce/tests/test_e2e_parity_shared_layers.py` covers both. The records
-in this directory were written before the fix and are left as the run wrote
-them.
+`new_tab_verdict()` now takes only a `bool` as evidence of a prefix: a flag
+that is missing — which is what the records here look like to it, since they
+carry the old `ingress_token` key it no longer reads — or one masked into the
+truthy string `<redacted>` says nothing, rather than reading as a leaked
+Supervisor token. Their `shape` still shows the prefix if one is there, so
+re-judging a record from before the fix sees what it should and invents
+nothing. `NewTabTests` in `odoo18ce/tests/test_e2e_parity_shared_layers.py`
+covers all of it. The records in this directory were written before the fix
+and are left as the run wrote them.
 
 ## Conservation (parity plan section 12) — `reconciled.jsonl`
 
