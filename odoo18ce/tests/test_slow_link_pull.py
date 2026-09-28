@@ -15,6 +15,7 @@ stops at the token request (exit 5) having already logged the image it
 resolved; that log line is what the assertions read.
 """
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -27,6 +28,7 @@ SCRIPT = ROOT.parent / "docs/runbooks/slow-link-pull.sh"
 
 SLUG = "1b7b4ce7_odoo18ce"
 IMAGE = "ghcr.io/woowtech/woow-ha-odoo-amd64"
+EXIT_USAGE = 2
 EXIT_SUPERVISOR = 4
 EXIT_TOKEN = 5
 
@@ -42,17 +44,28 @@ def app_json(image: str | None) -> str:
     return '{"result":"ok","data":{' + fields + "}}"
 
 
-def write_stubs(tmp_path: Path, *, app: str, containers: dict[str, str]) -> Path:
-    """A PATH directory holding `ha`, `docker` and a `curl` that refuses."""
+def write_stubs(
+    tmp_path: Path,
+    *,
+    app: str | None,
+    containers: dict[str, str],
+    with_docker: bool = True,
+) -> Path:
+    """A PATH directory holding `ha`, `docker` and a `curl` that refuses.
+
+    `app=None` is a host where the add-on was never installed: `ha apps info`
+    fails there, which is the state `--image` has to survive.
+    """
     bind = tmp_path / "bin"
     bind.mkdir()
 
+    app_arm = f"  \"apps info\") printf '%s' {app!r} ;;\n" if app is not None else ""
     ha = bind / "ha"
     ha.write_text(
         "#!/usr/bin/env bash\n"
         'case "$1 $2" in\n'
         f'  "info --raw-json") printf \'%s\' {HA_INFO!r} ;;\n'
-        f'  "apps info") printf \'%s\' {app!r} ;;\n'
+        f"{app_arm}"
         "  *) exit 1 ;;\n"
         "esac\n",
         encoding="utf-8",
@@ -76,16 +89,39 @@ def write_stubs(tmp_path: Path, *, app: str, containers: dict[str, str]) -> Path
     curl = bind / "curl"
     curl.write_text("#!/usr/bin/env bash\nexit 7\n", encoding="utf-8")
 
-    for f in (ha, docker, curl):
+    written = [ha, curl]
+    if with_docker:
+        written.append(docker)
+    else:
+        docker.unlink()
+        # A PATH with no docker at all still needs what the script checks for
+        # before it looks for one, so those come along as symlinks.
+        for tool in ("env", "bash", "jq", "sha256sum", "tar", "date", "sed", "mkdir"):
+            found = shutil.which(tool)
+            if found:
+                (bind / tool).symlink_to(found)
+    for f in written:
         f.chmod(0o755)
     return bind
 
 
-def run(tmp_path: Path, *args: str, app: str, containers: dict[str, str]):
+def run(
+    tmp_path: Path,
+    *args: str,
+    app: str | None,
+    containers: dict[str, str],
+    with_docker: bool = True,
+):
     bash = require_bash()
-    bind = write_stubs(tmp_path, app=app, containers=containers)
+    bind = write_stubs(
+        tmp_path, app=app, containers=containers, with_docker=with_docker
+    )
     env = dict(os.environ)
-    env["PATH"] = f"{bind}{os.pathsep}{env['PATH']}"
+    if with_docker:
+        env["PATH"] = f"{bind}{os.pathsep}{env['PATH']}"
+    else:
+        # Isolated: the point of the case is that `command -v docker` fails.
+        env["PATH"] = str(bind)
     env["SLOW_LINK_WORK_ROOT"] = str(tmp_path / "work")
     return subprocess.run(
         [bash, str(SCRIPT), *args],
@@ -224,3 +260,93 @@ def test_a_registry_with_a_port_is_not_this_registry(tmp_path):
     )
     assert proc.returncode == EXIT_SUPERVISOR
     assert "ghcr.io:443/woowtech/img is not on ghcr.io" in proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# The four findings of the 2026-09-28 review of this change, each as the case
+# that would have caught it.
+
+
+def test_the_image_option_survives_a_host_that_never_installed_the_addon(tmp_path):
+    """`ha apps info` fails there, and asking for it anyway would exit 4.
+
+    With both `--image` and a version on the command line the add-on's record
+    answers nothing, so it is not asked for at all.
+    """
+    proc = run(
+        tmp_path,
+        "--image",
+        IMAGE,
+        SLUG,
+        "0.4.4",
+        app=None,
+        containers={},
+    )
+    assert f"image  {IMAGE}:0.4.4" in proc.stdout
+    assert proc.returncode == EXIT_TOKEN
+
+
+def test_the_image_option_without_a_version_still_asks_the_supervisor(tmp_path):
+    """The version has to come from somewhere, and that is the honest error."""
+    proc = run(tmp_path, "--image", IMAGE, SLUG, app=None, containers={})
+    assert proc.returncode == EXIT_SUPERVISOR
+    assert "ha apps info" in proc.stderr
+
+
+def test_a_host_without_docker_is_told_that_and_not_something_else(tmp_path):
+    """The dry run needs no docker, but reading the container does.
+
+    The official SSH add-on has no docker, and the message has to name that
+    rather than claim the container is missing.
+    """
+    proc = run(
+        tmp_path,
+        "--dry-run",
+        SLUG,
+        app=app_json(None),
+        containers={},
+        with_docker=False,
+    )
+    assert proc.returncode == EXIT_SUPERVISOR
+    assert "docker is not on PATH" in proc.stderr
+    assert "--image" in proc.stderr
+
+
+def test_a_container_made_from_an_image_id_is_not_mangled(tmp_path):
+    """`docker inspect` answers with an ID when there is no name to answer.
+
+    Stripping a tag off `sha256:<hex>` would leave the string `sha256` and an
+    error about a foreign registry.
+    """
+    proc = run(
+        tmp_path,
+        SLUG,
+        app=app_json(None),
+        containers={f"app_{SLUG}": "sha256:" + "a" * 64},
+    )
+    assert proc.returncode == EXIT_SUPERVISOR
+    assert "image ID" in proc.stderr
+    assert "--image" in proc.stderr
+    assert "sha256 is not on" not in proc.stderr
+
+
+@pytest.mark.parametrize("args", [("--image", ""), ("--image=",)])
+def test_an_empty_image_value_is_refused(tmp_path, args):
+    """Silently falling back would spend hours downloading the wrong thing."""
+    proc = run(tmp_path, *args, SLUG, app=app_json(None), containers={})
+    assert proc.returncode == EXIT_USAGE
+    assert "empty value" in proc.stderr
+
+
+def test_the_image_option_does_not_swallow_the_next_option(tmp_path):
+    """`--image --dry-run <slug>` means the dry run silently did not happen."""
+    proc = run(
+        tmp_path,
+        "--image",
+        "--dry-run",
+        SLUG,
+        app=app_json(None),
+        containers={},
+    )
+    assert proc.returncode == EXIT_USAGE
+    assert "--dry-run" in proc.stderr

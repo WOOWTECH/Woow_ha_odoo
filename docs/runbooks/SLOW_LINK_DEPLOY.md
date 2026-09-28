@@ -135,7 +135,17 @@ dry run: 7 layers, 795536311 bytes, not downloaded.
 dry run: /share/slow-link-pull/1b7b4ce7_odoo18ce/0.4.4 is kept; run again without --dry-run to finish.
 ```
 
-以上是 2026-09-27 對 live ghcr 跑出來的實際輸出。
+以上是 2026-09-28 在測試機上對 live ghcr 跑出來的實際輸出。
+
+> **在沒有 docker 的 SSH add-on 上做 dry run**，要自己給 `--image`。dry run
+> 本身不需要 docker，但在 Supervisor 2026.09 之後，映像名稱要從裝好的容器讀
+> （見下一節），那一步需要 docker。官方 SSH add-on 沒有 docker，所以這裡改成：
+>
+> ```bash
+> /share/slow-link-pull.sh --dry-run --image ghcr.io/woowtech/woow-ha-odoo-amd64
+> ```
+>
+> 少了 `--image` 會以 exit 4 停住，訊息會明說是 docker 不在 PATH 上，而不是容器不存在。
 
 ## 7. 下載並載入
 
@@ -152,12 +162,16 @@ dry run: /share/slow-link-pull/1b7b4ce7_odoo18ce/0.4.4 is kept; run again withou
 > 這支腳本存在的情境是「更新失敗」，add-on 一定已經裝著舊版本，容器上的映像名稱
 > 與要抓的新版本是同一個 repository。
 >
-> 只有在 add-on 還沒裝過、或容器被移除的機器上，三個來源才會全空，這時腳本會
-> 以 exit 4 停住並把三條路都列出來；自己補上即可：
+> 容器被移除、或機器上沒有 docker 時，前兩個來源都空，腳本會以 exit 4 停住，
+> 訊息會說清楚是哪一種；自己補上 `--image` 即可：
 >
 > ```bash
 > /share/slow-link-pull.sh --image ghcr.io/woowtech/woow-ha-odoo-amd64 1b7b4ce7_odoo18ce 0.4.4
 > ```
+>
+> **add-on 從來沒裝過的機器**要多給一樣東西：版本。版本本來取自 `ha apps info`，
+> 而那個指令在沒裝過的機器上直接失敗，所以 `--image` 要和明確的版本號一起給
+> （像上面那行一樣），腳本才完全不需要問 Supervisor 要 add-on 的資料。
 
 **會跑很久。** 在慢速線路上以小時計。工作目錄在 `/share/slow-link-pull/<slug>/<version>/`，
 所以 SSH 斷線不會損失進度：**重跑同一行指令就從斷掉的 byte 繼續**。

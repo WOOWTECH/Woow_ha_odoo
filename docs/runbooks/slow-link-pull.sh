@@ -110,10 +110,21 @@ POSITIONAL=()
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --dry-run) DRY_RUN=1; shift ;;
+        # An empty or option-shaped value is a usage error, not a silent
+        # fallback to the automatic answer: this script downloads for hours,
+        # and an operator who pinned an image and got a different one would
+        # find out at the end.
         --image)
             [ "$#" -ge 2 ] || { usage >&2; die "${EXIT_USAGE}" "--image needs a value"; }
+            case "$2" in
+                "") usage >&2; die "${EXIT_USAGE}" "--image was given an empty value" ;;
+                -*) usage >&2; die "${EXIT_USAGE}" "--image was given the option \`$2\` instead of an image" ;;
+            esac
             IMAGE_OVERRIDE="$2"; shift 2 ;;
-        --image=*) IMAGE_OVERRIDE="${1#--image=}"; shift ;;
+        --image=*)
+            IMAGE_OVERRIDE="${1#--image=}"
+            [ -n "${IMAGE_OVERRIDE}" ] || { usage >&2; die "${EXIT_USAGE}" "--image was given an empty value"; }
+            shift ;;
         -h|--help) usage; exit 0 ;;
         --) shift; while [ "$#" -gt 0 ]; do POSITIONAL+=("$1"); shift; done ;;
         -*) usage >&2; die "${EXIT_USAGE}" "unknown option: $1" ;;
@@ -159,12 +170,27 @@ json_field() {
 INFO_JSON="$(ha_json info)"
 ARCH="$(json_field "${INFO_JSON}" '.data.arch')"
 
-APP_JSON="$(ha_json apps info "${SLUG}")"
+# The add-on's own record answers two questions: which image, and which
+# version. With both given on the command line it answers neither, and asking
+# for it anyway would make `--image` unreachable exactly where it is the only
+# way in -- `ha apps info <slug>` fails on a host where the add-on was never
+# installed, and `ha_json` turns that into exit 4.
+APP_JSON=""
+if [ -z "${IMAGE_OVERRIDE}" ] || [ -z "${VERSION_OVERRIDE}" ]; then
+    APP_JSON="$(ha_json apps info "${SLUG}")"
+fi
 
 # An image reference without its tag or digest. Only the last path segment can
-# carry a tag, so `ghcr.io:443/woowtech/woow-ha-odoo-amd64` keeps its port.
+# carry a tag, so `ghcr.io:443/woowtech/woow-ha-odoo-amd64` keeps its port. A
+# reference with no `/` is not a repository at all -- `sha256:<hex>` is what
+# docker answers for a container created from an image ID -- and is handed
+# back whole for the caller to refuse, rather than chopped into `sha256`.
 strip_tag() {
     local ref="${1%%@*}"
+    case "${ref}" in
+        */*) ;;
+        *) printf '%s' "$1"; return 0 ;;
+    esac
     local last="${ref##*/}"
     case "${last}" in
         *:*) printf '%s' "${ref%:*}" ;;
@@ -182,29 +208,48 @@ strip_tag() {
 # runs -- the same repository, an older tag. `app_` is the current container
 # prefix and `addon_` the older one. `--image` is the third, for a host where
 # neither answers.
+#
+# It answers through two globals rather than stdout, so that the reason a
+# lookup failed survives: a command substitution is a subshell, and a reason
+# assigned in one is gone by the time the caller reads it. Saying which of
+# the three places was empty is the whole value of the message.
+RESOLVED_IMAGE=""
+RESOLVE_REASON=""
 resolve_image() {
     local image name
-    image="$(printf '%s' "${APP_JSON}" | jq -r '.data.image // empty' 2>/dev/null)" || image=""
-    if [ -n "${image}" ]; then
-        printf '%s' "${image}"
-        return 0
-    fi
-    command -v docker >/dev/null 2>&1 || return 1
-    for name in "app_${SLUG}" "addon_${SLUG}"; do
-        image="$(docker inspect --format '{{.Config.Image}}' "${name}" 2>/dev/null)" || image=""
+    if [ -n "${APP_JSON}" ]; then
+        image="$(printf '%s' "${APP_JSON}" | jq -r '.data.image // empty' 2>/dev/null)" || image=""
         if [ -n "${image}" ]; then
-            strip_tag "${image}"
+            RESOLVED_IMAGE="${image}"
             return 0
         fi
+    fi
+    if ! command -v docker >/dev/null 2>&1; then
+        RESOLVE_REASON="docker is not on PATH, so no container could be read (the official SSH add-on has no docker: use Advanced SSH & Web Terminal with protection mode off, or pass --image)"
+        return 1
+    fi
+    for name in "app_${SLUG}" "addon_${SLUG}"; do
+        image="$(docker inspect --format '{{.Config.Image}}' "${name}" 2>/dev/null)" || image=""
+        [ -n "${image}" ] || continue
+        case "${image}" in
+            */*)
+                RESOLVED_IMAGE="$(strip_tag "${image}")"
+                return 0 ;;
+        esac
+        RESOLVE_REASON="the container ${name} was created from an image ID (${image}) and does not name the repository it came from, so pass --image"
+        return 1
     done
+    RESOLVE_REASON="no container app_${SLUG} or addon_${SLUG} is installed to read one from"
     return 1
 }
 
 if [ -n "${IMAGE_OVERRIDE}" ]; then
     IMAGE="$(strip_tag "${IMAGE_OVERRIDE}")"
+elif resolve_image; then
+    IMAGE="${RESOLVED_IMAGE}"
 else
-    IMAGE="$(resolve_image)" || die "${EXIT_SUPERVISOR}" \
-        "could not work out which image ${SLUG} runs: the Supervisor's answer has no .data.image (Supervisor 2026.09 dropped the field), no container app_${SLUG} or addon_${SLUG} is installed to read it from, and --image was not given"
+    die "${EXIT_SUPERVISOR}" \
+        "could not work out which image ${SLUG} runs: the Supervisor's answer has no .data.image (Supervisor 2026.09 dropped the field), and ${RESOLVE_REASON}. Pass --image <ref> to name it."
 fi
 
 if [ -n "${VERSION_OVERRIDE}" ]; then
