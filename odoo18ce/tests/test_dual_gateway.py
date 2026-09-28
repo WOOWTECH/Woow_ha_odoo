@@ -283,29 +283,33 @@ def test_nginx_template_contract() -> None:
     # group, in the generic HTML location where page HTML is served, and on the
     # Ingress listener only.
     srcset_rule = "sub_filter 'srcset=\"/' 'srcset=\"$safe_ingress_path/';"
-    success_rule = (
-        "sub_filter 'data-success-page=\"/' "
-        "'data-success-page=\"$safe_ingress_path/';"
-    )
+    # Two spellings: the attribute Odoo 18 writes, and the one a form saved
+    # before Odoo 14 left in the arch, which the form script still falls back
+    # to when `data-success-mode` is absent.
+    success_rules = [
+        "sub_filter 'data-success-page=\"/' 'data-success-page=\"$safe_ingress_path/';",
+        "sub_filter 'data-success_page=\"/' 'data-success_page=\"$safe_ingress_path/';",
+    ]
     masked = mask_strings_and_comments(ingress)
     generic_start = ingress.index("\n        location / {")
     opener = masked.index("location / {", generic_start)
     generic_only = ingress[generic_start : block_end(masked, opener + len("location / {") - 1) + 1]
-    assert success_rule in generic_only, success_rule
     written = [
         line.strip()
         for line in generic_only.split("\n")
         if line.strip() and not line.strip().startswith("#")
     ]
-    # Beside the attribute group it belongs to, and written after it so the
+    # Beside the attribute group they belong to, and written after it so the
     # group keeps reading as one thing.
-    assert written[written.index(srcset_rule) + 1] == success_rule, written
-    assert success_rule not in assets, "page HTML only: no bundle carries the attribute"
-    assert success_rule not in listeners, "ingress listener only"
-    # The action-load copy of the generic location carries it too, because that
-    # location is the generic one plus its escaped-quote rules; the equality in
-    # test_ingress_action_help.py is what pins that.
-    assert ingress.count(success_rule) == 2, ingress.count(success_rule)
+    at = written.index(srcset_rule) + 1
+    assert written[at : at + len(success_rules)] == success_rules, written
+    for rule in success_rules:
+        assert rule not in assets, "page HTML only: no bundle carries the attribute"
+        assert rule not in listeners, "ingress listener only"
+        # The action-load copy of the generic location carries them too, because
+        # that location is the generic one plus its escaped-quote rules; the
+        # equality in test_ingress_action_help.py is what pins that.
+        assert ingress.count(rule) == 2, rule
 
 
 # --- cookie flags per location (issue #165) ---

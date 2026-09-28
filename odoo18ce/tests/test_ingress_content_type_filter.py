@@ -44,6 +44,9 @@ FORM_HTML = (
     '<form data-success-mode="redirect" data-success-page="/job-thank-you"></form>'
     '<form data-success-mode="redirect" data-success-page="#thanks"></form>'
     '<form data-success-mode="redirect" data-success-page="https://cdn.example/thanks"></form>'
+    # The spelling a form saved before Odoo 14 left in the arch, which the form
+    # script still falls back to when `data-success-mode` is absent.
+    '<form data-success_page="/legacy-thank-you"></form>'
     "</body></html>"
 )
 
@@ -118,12 +121,11 @@ def assert_template_contract(template: str) -> None:
     # A website form's success page -- one more rule beside the attribute rules
     # of the generic HTML location, and there only: no bundle carries the
     # attribute, and the Public origin serves it byte for byte (#167).
-    success_rule = (
-        "sub_filter 'data-success-page=\"/' 'data-success-page=\"$safe_ingress_path/';"
-    )
-    assert success_rule in generic, success_rule
-    assert success_rule not in assets, success_rule
-    assert success_rule not in public, success_rule
+    for attribute in ("data-success-page", "data-success_page"):
+        rule = f"sub_filter '{attribute}=\"/' '{attribute}=\"$safe_ingress_path/';"
+        assert rule in generic, rule
+        assert rule not in assets, rule
+        assert rule not in public, rule
 
 
 def preview_assets(payload: dict) -> tuple[str, str]:
@@ -177,6 +179,7 @@ http {{
     sub_filter 'url(&quot;/' 'url(&quot;$safe_ingress_path/';
     sub_filter 'url(&#x27;/' 'url(&#x27;$safe_ingress_path/';
     sub_filter 'data-success-page="/' 'data-success-page="$safe_ingress_path/';
+    sub_filter 'data-success_page="/' 'data-success_page="$safe_ingress_path/';
     location / {{ proxy_pass http://127.0.0.1:{upstream.server_port}; }}
   }}
   server {{
@@ -233,6 +236,7 @@ http {{
                 for path in ("/contactus-thank-you", "/job-thank-you"):
                     want = f'data-success-page="{PREFIX}{path}"'
                     assert want in formed, (want, formed)
+                assert f'data-success_page="{PREFIX}/legacy-thank-you"' in formed, formed
                 # A same-page anchor is resolved against the current URL by the
                 # form script, and an absolute URL is already addressed: the
                 # rule matches no byte of either.
