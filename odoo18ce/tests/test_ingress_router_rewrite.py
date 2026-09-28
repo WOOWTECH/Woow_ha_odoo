@@ -66,10 +66,33 @@ def assert_prefix_guard(template: str) -> None:
     )
 
 
+# A shim part nginx splices into another by variable reference, `$ingress_..._shim`.
+SPLICED = re.compile(r"\$(ingress_[a-z_]+_shim)\b")
+
+
 def map_block(template: str, header: str) -> str:
     """Return one top-level nginx `map` block, from its header line to its closing brace."""
     start = template.index(header)
     return template[start : template.index("\n    }", start)]
+
+
+def map_value(template: str, variable: str) -> str:
+    """The `default` value of the top-level map that declares `$variable`."""
+    block = map_block(template, "map $upstream_http_content_type $%s {" % variable)
+    match = re.search(r"default '(.*?)';", block, re.S)
+    assert match, f"map ${variable} has no single-quoted default value"
+    return match.group(1)
+
+
+def resolve_splices(template: str, script: str) -> str:
+    """Put back the shim parts nginx splices in by variable reference.
+
+    The prefix script is a few hundred bytes short of nginx's 4096-byte
+    parameter buffer, so parts of it live in maps of their own -- the
+    injection-way hooks of #169 do -- and nginx concatenates them into the
+    page. A contract that reads the script has to read what the page gets.
+    """
+    return SPLICED.sub(lambda match: map_value(template, match.group(1)), script)
 
 
 def runtime_shim(template: str) -> str:
@@ -78,7 +101,7 @@ def runtime_shim(template: str) -> str:
     assert '"~*^text/html(?:;|$)"' in html_map
     match = re.search(r"<script>(.*?)</script>';", html_map, re.S)
     assert match, "HTML runtime shim not found"
-    return match.group(1)
+    return resolve_splices(template, match.group(1))
 
 
 def assert_shim_fragments(template: str, node: str) -> None:

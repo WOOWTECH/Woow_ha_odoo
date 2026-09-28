@@ -44,12 +44,19 @@ from e2e_menu_action_adapter import (
 )
 from e2e_parity_outbound import NAMESPACE_HOSTS  # XML namespace URIs are names, not links
 from e2e_parity_shared_layers import (
+    ACCEPTED,
+    COVERED,
     INGRESS_PREFIX_DETAIL,
+    INJECTION_KINDS,
+    META_REFRESH_NOTE,
     NOT_RUN,
     Outcome,
     attach_issues,
     check_record,
     conservation,
+    injection_group,
+    injection_verdict,
+    injection_ways,
     new_tab_verdict,
     planned_checks,
     seo_head_verdict,
@@ -892,11 +899,32 @@ def check_a5(run: Run) -> None:
 
 
 # Each probe asks for a path under /web/static/parity-probe/ in its own way;
-# a request for it at the HA root is an escape through that way (RC-12).
+# a request for it at the HA root is an escape through that way (RC-12). The
+# covered ways go through the API the Runtime shim wraps, never through
+# markup: what is under test is the shim's hook, and markup would only
+# re-measure the ways the decision already accepts (#169).
 _INJECTION_JS = """async () => {
   const probe = (kind) => '/web/static/parity-probe/' + kind + '.png';
+  const SVG = 'http://www.w3.org/2000/svg', XLINK = 'http://www.w3.org/1999/xlink';
   const box = document.createElement('div'); box.style.display = 'none'; document.body.appendChild(box);
-  box.innerHTML = '<img src="' + probe('innerHTML-img') + '">';
+  // Covered: the shim must prefix each of these.
+  try { navigator.sendBeacon(probe('sendBeacon'), 'x'); } catch (e) {}
+  try { const source = new EventSource(probe('EventSource')); setTimeout(() => source.close(), 1500); } catch (e) {}
+  const use = (kind, set) => {
+    const svg = document.createElementNS(SVG, 'svg'), node = document.createElementNS(SVG, 'use');
+    set(node, probe(kind) + '#a'); svg.appendChild(node); box.appendChild(svg);
+  };
+  use('svg-use', (node, url) => node.setAttribute('xlink:href', url));
+  use('svg-use-href', (node, url) => node.setAttribute('href', url));
+  use('svg-use-ns', (node, url) => node.setAttributeNS(XLINK, 'xlink:href', url));
+  // Accepted: markup and style, which the shim leaves alone by decision.
+  const markup = document.createElement('div'); markup.style.display = 'none'; document.body.appendChild(markup);
+  markup.innerHTML = '<img src="' + probe('innerHTML-img') + '">';
+  markup.insertAdjacentHTML('beforeend',
+    '<svg><use href="' + probe('insertAdjacentHTML-use') + '#a"></use></svg>');
+  const inline = document.createElement('div');
+  inline.setAttribute('style', 'background:url(' + probe('style-attr') + ')');
+  document.body.appendChild(inline);
   const style = document.createElement('style');
   style.textContent = '.parity-probe-style{background:url(' + probe('style-url') + ')}';
   document.head.appendChild(style);
@@ -904,14 +932,9 @@ _INJECTION_JS = """async () => {
   const imported = document.createElement('style');
   imported.textContent = '@import url(' + probe('css-import').replace('.png', '.css') + ');';
   document.head.appendChild(imported);
-  try { navigator.sendBeacon(probe('sendBeacon'), 'x'); } catch (e) {}
-  try { const source = new EventSource(probe('EventSource')); setTimeout(() => source.close(), 1500); } catch (e) {}
-  box.insertAdjacentHTML('beforeend', '<svg><use xlink:href="' + probe('svg-use') + '#a"></use></svg>');
-  box.insertAdjacentHTML('beforeend', '<svg><use href="' + probe('svg-use-href') + '#a"></use></svg>');
   await new Promise(resolve => setTimeout(resolve, 2500));
   return true;
 }"""
-INJECTION_KINDS = ["innerHTML-img", "style-url", "css-import", "sendBeacon", "EventSource", "svg-use", "svg-use-href"]
 
 
 @check("U-A6")
@@ -931,16 +954,29 @@ def check_a6(run: Run) -> None:
             if not match:
                 continue
             requested.add(match.group(1))
-            if prefix and not path.startswith(prefix + "/"):
+            if prefix:
+                if not path.startswith(prefix + "/"):
+                    escaped.add(match.group(1))
+            elif not url.startswith(side.env.public + "/"):
+                # On the Public origin there is no prefix to lose; a probe that
+                # left the origin it was asked from has escaped all the same.
                 escaped.add(match.group(1))
         result = "no escape" if not escaped else "escaped: " + ", ".join(sorted(escaped))
         return Outcome(True, result, details={"requested": sorted(requested), "escaped": sorted(escaped),
-                                              "not_requested": sorted(set(INJECTION_KINDS) - requested)})
+                                              "not_requested": sorted(set(INJECTION_KINDS) - requested),
+                                              "groups": {kind: injection_group(kind) for kind in INJECTION_KINDS}})
 
     public, ingress = run.both(probe)
-    run.record("U-A6", "shared", "generic", public, ingress,
-               notes="Ways tried: %s. The meta refresh way was not tried: it would navigate the page away from "
-                     "the screen under test." % ", ".join(INJECTION_KINDS))
+    verdict, severity, reasons = injection_verdict(public, ingress)
+    run.record("U-A6", "shared", "generic", public, ingress, verdict=verdict, severity=severity,
+               notes="; ".join(filter(None, [
+                   "Each way asks for /web/static/parity-probe/<way>.png its own way. Covered, the Runtime shim "
+                   "must prefix them (ADR 0004): %s -- each through the API the shim hooks, not through markup. "
+                   "Accepted, uncovered by decision (#169: the HTML and website editors save record content "
+                   "through these paths, so a hook would write the Ingress prefix and its token into the "
+                   "database; a screen that hits one gets a route-scoped Literal rewrite of its own): %s. %s."
+                   % (", ".join(injection_ways(COVERED)), ", ".join(injection_ways(ACCEPTED)), META_REFRESH_NOTE),
+                   *reasons])))
 
 
 @check("U-A7")

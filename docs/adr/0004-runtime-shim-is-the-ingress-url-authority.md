@@ -62,3 +62,39 @@ navigation-only rewrites, warnings never fail, exceptions reviewed like
 code) and changes only who adds a rule: the add-on's Rewrite scan now
 derives Generated rewrites at run time instead of a person editing the
 template after a nightly gate failure.
+
+## Postscript (2026-09-28)
+
+The `U-A6` audit of the #143 parity run tried seven ways a root-relative URL
+can reach the browser without going through an API the shim wraps, and every
+one of them escaped to the Home Assistant root (#169). The rule above --
+the shim is the authority for anything it can intercept -- decides them in
+two groups, and the shim now has the first group:
+
+- **Covered.** `navigator.sendBeacon`, the `EventSource` constructor, and the
+  SVG `<use>` reference, set through `setAttribute("xlink:href", ...)`,
+  `setAttribute("href", ...)` or `setAttributeNS(...)`. Each is one wrapper
+  in the shim's existing pattern, using the same `path()` helper, so each is
+  added now rather than when a screen is found to need it.
+- **Uncovered by decision.** HTML inserted as markup (`innerHTML`,
+  `insertAdjacentHTML`, `outerHTML`), the `style` attribute, and the text of
+  a dynamic `<style>` element (CSS `@import` included). The HTML editor and
+  the website editor load and save record content through exactly these
+  paths, so a shim hook would write the Ingress prefix -- which carries the
+  Ingress token -- into the database: the Public origin would then serve
+  URLs under someone's expired Supervisor token, and the token would be in
+  the record. That is worse than the escape it would fix, and it is the same
+  reason #158 recorded.
+
+A screen that hits an uncovered way is therefore not a shim change. It gets a
+route-scoped **Literal rewrite** of its own, filed as its own issue with its
+own severity: #158 for the action help, #170 for the website editor's snippet
+thumbnails. `<meta http-equiv=refresh>` stays untested -- Odoo 18 redirects
+server-side -- and media sources (`new Audio`, `HTMLMediaElement.src`) are
+#159.
+
+`U-A6` carries the two groups, so it fails only on a covered way escaping
+under Ingress, or on any way escaping on the Public origin. An escape in the
+uncovered group is recorded as what it is: the decision, with the screens
+filed against it. Adding a hook for one of those ways means reopening this
+postscript first; a Static-tier test asserts the shim has none of them.

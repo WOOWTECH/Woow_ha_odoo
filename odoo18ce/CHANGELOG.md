@@ -43,6 +43,34 @@
   opened it. Issue #168.
 
 ### Fixed
+- Ingress: a root-relative URL sent through `navigator.sendBeacon`, opened
+  as an `EventSource`, or used as an SVG `<use>` reference set through
+  `setAttribute("xlink:href", ...)`, `setAttribute("href", ...)` or
+  `setAttributeNS(...)` now keeps the Ingress prefix instead of reaching the
+  Home Assistant root. The Runtime shim wraps each of them the way it
+  already wraps `fetch`, `XMLHttpRequest.open`, `Worker` and `WebSocket`,
+  through the same `path()` helper: an already prefixed, cross-origin,
+  `blob:`, `data:` or fragment-only value is untouched, an absent
+  `sendBeacon` or `EventSource` is left absent, and `EventSource` keeps its
+  prototype and its `CONNECTING`/`OPEN`/`CLOSED` constants. The hooks live
+  in an nginx map of their own, spliced into the prefix script's closure,
+  because that script is a few hundred bytes short of nginx's 4096-byte
+  parameter buffer.
+  The shim deliberately still touches nothing that inserts HTML as markup
+  (`innerHTML`, `insertAdjacentHTML`, `outerHTML`), the `style` attribute or
+  the text of a dynamic `<style>` element: the HTML editor and the website
+  editor save record content through those paths, so a prefix written there
+  would reach the database and carry the Ingress token. A screen that hits
+  one of them gets a route-scoped Literal rewrite of its own instead (#158,
+  #170). ADR 0004 has a 2026-09-28 postscript with both groups, and a
+  Static-tier test asserts the shim has no hook for the second one.
+  The Live-tier `U-A6` audit now declares each way with its group, probes
+  the covered ways through the API the shim hooks rather than through
+  markup, adds a `style` attribute probe, and reports `GAP` only for a
+  covered way escaping under Ingress or any way escaping on the Public
+  origin; an accepted escape is recorded as `PARITY` with the ways and
+  their screen issues in the notes. No version bump. Issue #169, parent
+  #148.
 - A `website` module installed after the add-on started now gets the
   Canonical URL as the default website's domain within five minutes,
   without a restart. The maintenance bootstrap mirrors the value once, at
