@@ -283,9 +283,12 @@ def test_nginx_template_contract() -> None:
 ORIGIN_COOKIE_FLAGS = "proxy_cookie_flags session_id $woow_origin_cookie_secure httponly samesite=lax;"
 INGRESS_COOKIE_FLAGS = "proxy_cookie_flags session_id $ingress_cookie_secure httponly samesite=lax;"
 INGRESS_COOKIE_PATH = "proxy_cookie_path / $safe_ingress_path/;"
-# Every upstream that is Odoo. `$woow_jsonrpc_upstream` maps to the Odoo HTTP
-# worker or to the RPC policy filter in front of it, which proxies to Odoo.
-ODOO_UPSTREAMS = ("odoo_http", "odoo_websocket", "$woow_jsonrpc_upstream")
+# Every `proxy_pass` in this template goes to Odoo -- `odoo_http`,
+# `odoo_websocket`, or `$woow_jsonrpc_upstream`, which maps to the Odoo HTTP
+# worker or to the RPC policy filter in front of it. So the rule reads every
+# proxying location rather than an allow-list of upstream names: a location
+# added with a target this file has not seen has to be decided on, not
+# silently skipped.
 
 
 def mask_strings_and_comments(text: str) -> str:
@@ -334,8 +337,8 @@ def block_end(masked: str, brace: int) -> int:
     raise AssertionError("unbalanced braces in the template")
 
 
-def odoo_proxy_locations(template: str) -> list:
-    """(listen port, location header, body) per location that proxies to Odoo."""
+def proxying_locations(template: str) -> list:
+    """(listen port, location header, body) per location that proxies upstream."""
     masked = mask_strings_and_comments(template)
     found = []
     for server in re.finditer(r"\bserver\s*\{", masked):
@@ -346,8 +349,7 @@ def odoo_proxy_locations(template: str) -> list:
         for loc in re.finditer(r"\blocation\s+([^{]+?)\s*\{", masked[start:end]):
             loc_start = start + loc.end() - 1
             body = template[loc_start : block_end(masked, loc_start) + 1]
-            target = re.search(r"\bproxy_pass\s+https?://([^;/\s]+)", body)
-            if target and target.group(1) in ODOO_UPSTREAMS:
+            if re.search(r"\bproxy_pass\s", body):
                 found.append((port, f"location {loc.group(1)}", body))
     return found
 
@@ -355,7 +357,7 @@ def odoo_proxy_locations(template: str) -> list:
 def cookie_flag_violations(template: str) -> list:
     """Locations whose cookie rewriting does not match their surface's."""
     violations = []
-    for port, header, body in odoo_proxy_locations(template):
+    for port, header, body in proxying_locations(template):
         required = [INGRESS_COOKIE_FLAGS, INGRESS_COOKIE_PATH] if port == "5691" else [ORIGIN_COOKIE_FLAGS]
         for directive in required:
             if directive not in body:
@@ -367,7 +369,7 @@ def test_every_odoo_location_rewrites_the_session_cookie() -> None:
     template = read(TEMPLATE)
     # Pin the inventory as well as the rule: a parser that found nothing would
     # satisfy the rule vacuously, and a new Odoo location has to be decided on.
-    assert sorted((port, header) for port, header, _ in odoo_proxy_locations(template)) == [
+    assert sorted((port, header) for port, header, _ in proxying_locations(template)) == [
         ("5691", "location /"),
         ("5691", "location = /websocket"),
         ("5691", "location ^~ /web/assets/"),
@@ -391,6 +393,16 @@ def test_a_location_that_drops_the_cookie_flags_is_caught() -> None:
     flagless = template[:websocket] + template[websocket:].replace(f"\n            {ORIGIN_COOKIE_FLAGS}", "", 1)
     assert flagless != template
     assert cookie_flag_violations(flagless) == [f"8069 location = /websocket: missing {ORIGIN_COOKIE_FLAGS}"]
+
+    # A location added with a target this file has not seen -- an address
+    # rather than one of the named upstreams -- is read by the same rule.
+    added = template.replace(
+        "        location = /jsonrpc {",
+        "        location = /web/login {\n            proxy_pass http://127.0.0.1:8070;\n        }\n        location = /jsonrpc {",
+        1,
+    )
+    assert cookie_flag_violations(added) == [f"8069 location = /web/login: missing {ORIGIN_COOKIE_FLAGS}"]
+
 
 def test_maintenance_bootstrap_contract() -> None:
     # String presence only; the decision logic is covered by

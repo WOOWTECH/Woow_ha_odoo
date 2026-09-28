@@ -70,10 +70,13 @@
   attributes as expected. Odoo's own cookie behaviour is untouched. The
   Static-tier contract no longer asserts the directive as a bare substring of
   the template: it parses the template into `server` and `location` blocks,
-  pins the ten locations that proxy to Odoo across the 8069, 8072 and 5691
-  listeners, and fails when any of them lacks the rewriting of its surface --
-  with a second test that removes one directive from a copy and asserts the
-  rule reports exactly that location. `nginx -t` over both rendered
+  pins the ten locations that proxy upstream across the 8069, 8072 and 5691
+  listeners -- every `proxy_pass` in the file goes to Odoo -- and fails when
+  any of them lacks the rewriting of its surface. A second test checks the
+  rule against two mutated copies of the template: one with a directive
+  removed and one with a location added, each answered with exactly that
+  location, so neither a vacuous parse nor a route added with an unfamiliar
+  target passes silently. `nginx -t` over both rendered
   `public_url` shapes still passes. The maintainer reruns `U-B2` generic on
   the test host after deploy. No version bump. Issue #165, parent #148.
 - Ingress: a website page whose snippet stores its background in an inline
