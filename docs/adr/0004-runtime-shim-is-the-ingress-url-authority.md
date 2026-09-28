@@ -271,6 +271,17 @@ and that is the distinction, not the transport:
 > Otherwise rewrite it where it is *rendered*, and leave the delivered value
 > alone.
 
+**What this rule puts in question, said rather than left implicit.** The
+Ingress generic HTML `location /` rewrites page HTML on delivery -- the five
+URL attributes, `data-success-page`, and since #194 the seven `url(` shapes of
+an inline `style` background. The website editor loads a page through exactly
+that location and saves the edited HTML back through `ir.ui.view.save`, so by
+the rule above those rules are on the wrong side of the round trip: a snippet
+background that arrived prefixed can be saved prefixed. Nothing here changes
+them -- that is #194's and #166's ground, and it needs its own measurement of
+what the editor actually writes back, which this issue did not take. It is
+recorded so the next person reads a stated tension rather than an oversight.
+
 **The render site is the OWL template**, and Odoo 18 serves it. Templates are
 inlined into the `.min.js` bundle as `registerTemplate(...)` template literals,
 appended unminified after the JavaScript, so the tile's own markup goes through
@@ -296,6 +307,15 @@ inherited and belongs to #166. The catalogue response, `save_snippet` and the
 Public origin listener are untouched, and a Static-tier test asserts no
 directive in the template names `oe-thumbnail`, `render_public_asset` or
 `save_snippet`, so changing that means reopening this postscript.
+
+One escape on this screen is *not* closed, and `U-D2`'s row says so: the same
+template draws an undroppable snippet with a static
+`<img src="/web_editor/static/src/img/snippet_disabled.svg">`, and the template
+carries no `/web_editor/` rule (`"/web/` does not match `"/web_editor/`). The
+36 escapes measured in #143 did not include it -- that screen had no disabled
+snippet -- so it is unmeasured rather than fixed, and it belongs to its own
+issue if a Live rerun turns it up, like the root-relative `src` inside a
+snippet body this issue also left alone.
 
 `U-A6`'s probe list is not extended: its `style`-attribute probe still records
 the escape as the decision it is. What proves this fix is the Static-tier

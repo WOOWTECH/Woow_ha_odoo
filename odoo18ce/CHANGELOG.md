@@ -71,7 +71,10 @@
   bytes it was measured against are kept as a test fixture. The Public origin
   listener, the catalogue response and `save_snippet` are untouched. The
   protocol-relative limit every other prefix rule has is inherited and belongs
-  to #166. No version bump. Issue #170, parent #148.
+  to #166. One picture on the same panel is not covered and is recorded rather
+  than fixed: the static `snippet_disabled.svg` shown for an undroppable
+  snippet, which no rule prefixes and which the measured run did not reach.
+  No version bump. Issue #170, parent #148.
 - Under Ingress, sending a website form now ends on its thank-you page
   instead of a Home Assistant 404. Contact Us and a job application were sent
   -- the lead and the applicant were created -- and then the page went to
