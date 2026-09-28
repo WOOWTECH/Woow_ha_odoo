@@ -216,23 +216,36 @@ http {
         proxy_read_timeout 720s;
         proxy_send_timeout 720s;
 
+        # Cookie flags are a property of the surface, not of one location.
+        # Odoo saves the session on its websocket route and on the database
+        # manager as well as on ordinary pages, and answers with a
+        # `Set-Cookie: session_id` of its own that carries neither Secure nor
+        # SameSite; a location that does not rewrite it lets that bare cookie
+        # replace the one `location /` set, and the browser then stops sending
+        # the session over the public origin's https. So every location below
+        # that proxies to Odoo repeats the rewriting (issue #165).
+
         # Database lifecycle stays off the public tunnel. The LAN is trusted,
         # so it reaches the same database manager the ingress panel exposes.
         location ^~ /web/database/ {
             if ($woow_origin_gate != "lan") { return 404; }
             proxy_pass http://odoo_http;
+            proxy_cookie_flags session_id $woow_origin_cookie_secure httponly samesite=lax;
         }
         location = /xmlrpc/db {
             if ($woow_origin_gate != "lan") { return 404; }
             proxy_pass http://odoo_http;
+            proxy_cookie_flags session_id $woow_origin_cookie_secure httponly samesite=lax;
         }
         location = /xmlrpc/2/db {
             if ($woow_origin_gate != "lan") { return 404; }
             proxy_pass http://odoo_http;
+            proxy_cookie_flags session_id $woow_origin_cookie_secure httponly samesite=lax;
         }
 
         location = /jsonrpc {
             proxy_pass http://$woow_jsonrpc_upstream;
+            proxy_cookie_flags session_id $woow_origin_cookie_secure httponly samesite=lax;
         }
 
         location = /websocket {
@@ -245,6 +258,7 @@ http {
             proxy_set_header X-Forwarded-Proto $woow_origin_proto;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_read_timeout 3600s;
+            proxy_cookie_flags session_id $woow_origin_cookie_secure httponly samesite=lax;
         }
 
         location / {
@@ -274,6 +288,7 @@ http {
             proxy_set_header X-Forwarded-Proto $woow_origin_proto;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_read_timeout 3600s;
+            proxy_cookie_flags session_id $woow_origin_cookie_secure httponly samesite=lax;
         }
     }
 
@@ -285,6 +300,9 @@ http {
         deny all;
         client_max_body_size 512M;
 
+        # The Ingress surface rewrites the cookie's Path as well as its
+        # flags, in every location that proxies to Odoo, for the reason the
+        # origin listener states above (issue #165).
         location = /websocket {
             proxy_pass http://odoo_websocket;
             proxy_http_version 1.1;
@@ -296,6 +314,8 @@ http {
             proxy_set_header X-Forwarded-Proto $ingress_proto;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_read_timeout 3600s;
+            proxy_cookie_path / $safe_ingress_path/;
+            proxy_cookie_flags session_id $ingress_cookie_secure httponly samesite=lax;
         }
 
         # Rewrite route literals only in Odoo asset bundles. Applying these
@@ -310,6 +330,8 @@ http {
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header Accept-Encoding "";
             proxy_buffering off;
+            proxy_cookie_path / $safe_ingress_path/;
+            proxy_cookie_flags session_id $ingress_cookie_secure httponly samesite=lax;
             proxy_hide_header Cache-Control;
             proxy_hide_header Expires;
             proxy_hide_header ETag;
