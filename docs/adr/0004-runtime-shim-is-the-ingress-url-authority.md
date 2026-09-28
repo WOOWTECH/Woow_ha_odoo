@@ -193,7 +193,13 @@ What that means in the template, and what it deliberately is not:
 
 `U-A6`'s probe list is not extended. Its `accepted` group still records the
 `innerHTML` escape as the decision it is; what proves this fix is the Surveys
-screen's own crawler record for action 930 returning to `PARITY`, plus the
-Static-tier contract. The other screen filed against the uncovered group, the
+screen's own crawler record, plus the Static-tier contract. The Live half is in
+`docs/testing/evidence/2026-09-28-issue-158/`: two Ingress crawls a minute
+apart on the test host's local build of this branch, one with the new
+`location` blocks cut out of the rendered config and one with them in, taking
+the survey menus from `route_escape`/`http_4xx_5xx`/`console_error` = 8 each to
+zero, with the four pictures answered 200. The crawler's two-surface `PARITY`
+verdict is still owed: the local add-on has no `public_url`, so that one waits
+for a Release. The other screen filed against the uncovered group, the
 website editor's snippet thumbnails (#170), is still open and gets a rewrite of
 its own in the same shape.
