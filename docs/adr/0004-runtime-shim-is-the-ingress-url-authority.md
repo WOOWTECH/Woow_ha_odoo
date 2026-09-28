@@ -326,3 +326,79 @@ something node can render -- plus the Live `U-D2` rerun, which is the
 maintainer's after Deploy: the Blocks panel at 200 under Ingress, and a custom
 block saved under Ingress whose view arch shows a `t-thumbnail` with no prefix
 in it.
+
+## Postscript (2026-09-28, location writes)
+
+This decision has always had a hole in it that nothing had yet fallen through:
+**the shim cannot intercept a write to `location`.** `location` is an accessor
+on `window` that browsers refuse to redefine, so there is no wrapper to hang on
+it — the one navigation API the shim cannot own. The Literal rewrite was the
+answer for the other cases, but it only reaches URLs that are *in* the bundle,
+and a URL that arrives over RPC is not.
+
+The #145 parity run put a Blocker through that hole (`U-E4`, #174). **Action
+menu > Download > PDF** on a posted invoice is not an `ir.actions.server`: the
+account controllers load it through `account.move.get_extra_print_items`, which
+returns a plain dict with `type: ir.actions.act_url`, `target: download` and
+`url: /account/download_invoice_documents/<ids>/pdf`.
+`ActionMenus.onItemSelected` sees an item with a `url` and no `action` and runs
+`browser.location=item.url`. Under Ingress the frame left for
+`<HA_BASE>/account/download_invoice_documents/7/pdf`, Home Assistant answered
+404, the file never landed and the invoice form was gone with it — a **Prefix
+escape**, and one that costs the screen as well as the file. `window.open` was
+never called; the issue's first guess (`_executeActURLAction` then
+`browser.open`) was the wrong path, and the instrumented rerun said so.
+
+**The rule this adds**, and it is the narrow one:
+
+> A navigation the Runtime shim cannot intercept, whose URL arrives at run time
+> and so is nowhere in the bundle, gets an exact-expression Literal rewrite of
+> the *expression that navigates* — and that rewrite prefixes by calling the
+> shim's own helper, never by copying it.
+
+So the shim now **publishes `path()`** as `window.__WOOW_INGRESS_URL__`: the
+same function the `fetch`, XHR, `window.open`, `Worker`, attribute and media
+wrappers already call, read-only and non-configurable the way
+`__WOOW_CANONICAL_URL__` is, defined only when the Ingress prefix is non-empty
+because the prefix script returns before it otherwise. There is no second URL
+helper and no second set of rules about `blob:`, `data:`, `#`, cross-origin,
+non-string values or a double prefix: a rewritten expression inherits all of
+them by construction, and a Static-tier test executes the published global
+against every one. The shim stays the single Ingress URL authority; what
+changes is that it now says so out loud to code it cannot wrap.
+
+**Two expressions are rewritten, covering three sites.**
+`browser.location=item.url` is the print-menu item above.
+`browser.location.assign(url)` is the `target==="self"` branch of
+`_executeActURLAction` — the generic `ir.actions.act_url` with the same class of
+server-supplied URL — and it is also, byte for byte, the last statement of the
+`home` client action, which builds `"/"+(browser.location.search||"")`. A
+`sub_filter` pattern is a plain string, so one rule rewrites both. **That is
+wanted, not tolerated:** `home` navigates the Ingress frame to the Home
+Assistant root today for exactly the reason the print item does, and prefixing
+it is the fix for it. The test asserts the count in each captured bundle so the
+third site can never become a fourth without somebody noticing.
+
+Each rewritten expression falls back to the raw value when the global is
+absent — `(window.__WOOW_INGRESS_URL__||function(u){return u})(…)` — so an
+Ingress page whose shim did not run still navigates instead of throwing, and
+the Public origin, which gets neither the shim nor the rules, is unchanged.
+
+The other `location` writes in the bundle stay where they are, and the reason
+is the same one that admits these two. The router's `redirect()`
+(`browser.location.assign(_url.href)`, `browser.location.assign(href)`) is
+called with literals the shipped prefix rules already cover, and the
+session-expiry `window.location.assign(response.url)` is handed an absolute URL
+by the server. Neither matches either pattern; both wait for a measurement that
+shows an escape.
+
+What proves it is the Static-tier contract — the published global executed
+against every rule `path()` has, both patterns counted in bundle excerpts
+captured from the control group, and each rewritten expression run in node
+with the global present and absent — plus the Live `U-E4` rerun, which is the
+maintainer's after Deploy: `Download > PDF` on a posted invoice lands the file
+under Ingress with `route_escape=0`. The `target: self` half has no item in the
+parity plan, so the rerun checks it by opening
+`<ingress>/odoo/action-website.action_website` — `website.action_website` is a
+shipped `ir.actions.act_url` with `url: /` and `target: self` — which today
+sends the frame to the Home Assistant root and afterwards to the Ingress root.

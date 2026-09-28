@@ -281,6 +281,26 @@ L0  通道               ← nginx 監聽、header、壓縮、快取、緩衝、
 > 前者帶 Internal User，後者帶 Settings。2026-09-23 在控制組上三層實測（乾淨的原廠
 > Odoo 18、`.6` 的資料、以及經 **Public origin** 的未登入請求）都是同一個結論。
 
+> **`U-E4` 發票 Download > PDF 註記**（2026-09-28，issue #174）：`U-E4` 掛在 `RC-9`，
+> 但 `#145` 在這一項上量到的逃逸不是 `RC-9`，是 **`RC-1`（路徑前綴遺失）**。
+> 齒輪選單的 **Download > PDF** 來自 `account.move.get_extra_print_items` 回傳的一個
+> `ir.actions.act_url` dict（`url: /account/download_invoice_documents/<ids>/pdf`，
+> `target: download`），web client 的 `ActionMenus.onItemSelected` 對「有 `url`、沒有
+> `action`」的項目直接執行 `browser.location=item.url`——整個 iframe 導頁，URL 由 RPC
+> 帶回來。ingress 下 iframe 因此跳到 `<HA_BASE>/account/download_invoice_documents/<id>/pdf`，
+> HA 回 404，檔案沒下來、發票表單也不見了（`ingress route_escape=1`，run
+> `WOOW-PARITY-20260925T142416Z`；該筆記錄寫的 `RC-9` 是錯的，重跑後 `root_cause` 改記
+> `RC-1`）。**Runtime shim 攔不到 `location` 的寫入**（ADR 0004），而字面改寫又碰不到
+> 不在 bundle 裡的值，所以修法是改寫「會導頁的那個運算式」本身，讓它呼叫 shim 新發佈的
+> URL helper `__WOOW_INGRESS_URL__`：`browser.location=item.url` 與
+> `browser.location.assign(url)`（`ir.actions.act_url` 的 `target: self` 分支，以及
+> 逐字相同的 `home` client action）兩條規則、三個位置。`Download > PDF without Payment`
+> 走 `/report/…` 報表路徑，兩個 surface 本來就都正常，與本項無關。
+> 　`target: self` 這一半計劃裡沒有對應項目，重跑時就用 `website.action_website`
+> （Odoo 內建的 `ir.actions.act_url`，`url: /`、`target: self`）驗：ingress 下開
+> `<ingress>/odoo/action-website.action_website`，修正前 iframe 會跳到 HA 根，
+> 修正後應停在 `<ingress>/`。
+
 ### F 群組 — 宿主環境（L0/L2）
 
 | ID | 項目 | RC | 測法 | PASS 判定 |

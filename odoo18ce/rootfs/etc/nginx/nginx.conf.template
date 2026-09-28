@@ -132,9 +132,34 @@ http {
         default 'var SB=navigator.sendBeacon;if(SB)navigator.sendBeacon=function(u,d){if(typeof u==="string")arguments[0]=path(u);else if(u instanceof URL)arguments[0]=path(u.href);return SB.apply(this,arguments)};var ES=window.EventSource;if(ES){window.EventSource=function(u,o){return new ES(path(String(u)),o)};window.EventSource.prototype=ES.prototype;window.EventSource.CONNECTING=ES.CONNECTING;window.EventSource.OPEN=ES.OPEN;window.EventSource.CLOSED=ES.CLOSED}var AN=Element.prototype.setAttributeNS;Element.prototype.setAttributeNS=function(s,n,v){var l=String(n).split(":").pop();if((l==="href"||l==="src"||l==="action")&&typeof v==="string")v=path(v);return AN.call(this,s,n,v)};var AU=window.Audio;if(AU){window.Audio=function(s){return arguments.length?new AU(typeof s==="string"?path(s):s instanceof URL?path(s.href):s):new AU()};window.Audio.prototype=AU.prototype}prop(window.HTMLMediaElement&&HTMLMediaElement.prototype,"src");prop(window.HTMLSourceElement&&HTMLSourceElement.prototype,"src");';
     }
 
+    # The URL helper the shim publishes (issue #174). Not a script of its own
+    # either: this is the last statement of the prefix script's IIFE, spliced
+    # in by variable reference because that script is ~200 bytes short of
+    # nginx's 4096-byte parameter buffer. It runs inside the same closure, so
+    # `path` here is the one helper the fetch, XHR, `window.open` and
+    # attribute wrappers already use -- there is no second URL helper, and no
+    # value can be prefixed twice by going through both.
+    #
+    # ADR 0004 makes the Runtime shim the single Ingress URL authority for
+    # anything it can intercept. A write to `location` is not one of those:
+    # the shim cannot wrap it, and a Literal rewrite cannot prefix a URL that
+    # is not in the bundle because it arrived over RPC. So the two expressions
+    # that write `location` with a server-supplied URL are rewritten to call
+    # this global instead, which keeps the prefixing in one place rather than
+    # copying `path()` into a `sub_filter` replacement.
+    #
+    # Read-only and non-configurable, the way __WOOW_CANONICAL_URL__ is, so a
+    # bundle cannot replace the helper a rewritten expression will call. The
+    # IIFE returns before this line when the prefix is empty, so the global
+    # exists only under Ingress -- and every rewritten expression falls back
+    # to the raw value when it is absent.
+    map $upstream_http_content_type $ingress_url_global_shim {
+        default 'try{Object.defineProperty(window,"__WOOW_INGRESS_URL__",{value:path,writable:false,configurable:false,enumerable:true})}catch(e){window.__WOOW_INGRESS_URL__=path}';
+    }
+
     map $upstream_http_content_type $ingress_runtime_shim {
         default "";
-        "~*^text/html(?:;|$)" '$ingress_clipboard_shim$ingress_canonical_url_shim<script>window.__INGRESS_PATH__="$safe_ingress_path";(function(){var P=window.__INGRESS_PATH__||"";if(!P)return;var path=function(u){if(typeof u!=="string")return u;if(u.charAt(0)==="#")return u;try{var x=new URL(u,location.href);if(x.origin===location.origin){var q=x.pathname+x.search+x.hash;while(q.indexOf(P+P)===0)q=q.slice(P.length);if(q.indexOf(P)===0)return q;if(q.charAt(0)==="/")return P+q}}catch(e){}return u};var F=window.fetch;window.fetch=function(i,o){if(typeof i==="string")i=path(i);else if(i instanceof URL)i=path(i.href);else if(i&&i.url){var u=path(i.url);if(u!==i.url)i=new Request(u,i)}return F(i,o)};var X=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){arguments[1]=path(u);return X.apply(this,arguments)};var H=function(fn){return function(s,t,u){if(typeof u==="string")arguments[2]=path(u);else if(u instanceof URL)arguments[2]=path(u.href);return fn.apply(this,arguments)}};var HP=History.prototype.pushState,HR=History.prototype.replaceState;History.prototype.pushState=H(HP);History.prototype.replaceState=H(HR);var A=Element.prototype.setAttribute;Element.prototype.setAttribute=function(n,v){if((n==="href"||n==="src"||n==="action"||n==="xlink:href")&&typeof v==="string")v=path(v);return A.call(this,n,v)};var prop=function(proto,n){if(!proto)return;var d=Object.getOwnPropertyDescriptor(proto,n);if(!d||!d.set)return;Object.defineProperty(proto,n,{get:d.get,set:function(v){return d.set.call(this,path(v))},configurable:true})};prop(window.HTMLAnchorElement&&HTMLAnchorElement.prototype,"href");prop(window.HTMLLinkElement&&HTMLLinkElement.prototype,"href");prop(window.HTMLScriptElement&&HTMLScriptElement.prototype,"src");prop(window.HTMLImageElement&&HTMLImageElement.prototype,"src");prop(window.HTMLImageElement&&HTMLImageElement.prototype,"srcset");prop(window.HTMLFormElement&&HTMLFormElement.prototype,"action");var O=window.open;window.open=function(u){if(typeof u==="string")arguments[0]=path(u);return O.apply(this,arguments)};var WK=window.Worker;if(WK){window.Worker=function(u,o){return new WK(path(String(u)),o)};window.Worker.prototype=WK.prototype}var SW=window.SharedWorker;if(SW){window.SharedWorker=function(u,o){return new SW(path(String(u)),o)};window.SharedWorker.prototype=SW.prototype}var W=window.WebSocket;window.WebSocket=function(u,p){var s=String(u),h=location.host;if(s.indexOf("ws://"+h)===0||s.indexOf("wss://"+h)===0){var x=new URL(s);if(x.pathname.indexOf(P)!==0)x.pathname=P+x.pathname;s=x.toString()}return p===undefined?new W(s):new W(s,p)};window.WebSocket.prototype=W.prototype;window.WebSocket.CONNECTING=W.CONNECTING;window.WebSocket.OPEN=W.OPEN;window.WebSocket.CLOSING=W.CLOSING;window.WebSocket.CLOSED=W.CLOSED;try{if(navigator.serviceWorker){var C={addEventListener:function(){},removeEventListener:function(){},postMessage:function(){}};var K="woow-odoo-sw-clean-%%INGRESS_CACHE_VERSION%%";if(navigator.serviceWorker.getRegistrations)navigator.serviceWorker.getRegistrations().then(function(rs){var removed=false;return Promise.all(rs.map(function(r){var a=r.active||r.waiting||r.installing,s=a&&a.scriptURL||"";if(r.scope.indexOf("/odoo")!==-1||s.indexOf("/web/service-worker.js")!==-1)return r.unregister().then(function(ok){removed=removed||ok});return Promise.resolve()})).then(function(){if(removed&&!sessionStorage.getItem(K)){sessionStorage.setItem(K,"1");location.reload()}})});try{Object.defineProperty(navigator.serviceWorker,"controller",{get:function(){return C},configurable:true})}catch(e){};navigator.serviceWorker.register=function(){return Promise.resolve({scope:P+"/",installing:null,waiting:null,active:C,update:function(){return Promise.resolve()},unregister:function(){return Promise.resolve(true)},addEventListener:function(){},removeEventListener:function(){}})}}}catch(e){}$ingress_injection_hooks_shim})()</script>';
+        "~*^text/html(?:;|$)" '$ingress_clipboard_shim$ingress_canonical_url_shim<script>window.__INGRESS_PATH__="$safe_ingress_path";(function(){var P=window.__INGRESS_PATH__||"";if(!P)return;var path=function(u){if(typeof u!=="string")return u;if(u.charAt(0)==="#")return u;try{var x=new URL(u,location.href);if(x.origin===location.origin){var q=x.pathname+x.search+x.hash;while(q.indexOf(P+P)===0)q=q.slice(P.length);if(q.indexOf(P)===0)return q;if(q.charAt(0)==="/")return P+q}}catch(e){}return u};var F=window.fetch;window.fetch=function(i,o){if(typeof i==="string")i=path(i);else if(i instanceof URL)i=path(i.href);else if(i&&i.url){var u=path(i.url);if(u!==i.url)i=new Request(u,i)}return F(i,o)};var X=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){arguments[1]=path(u);return X.apply(this,arguments)};var H=function(fn){return function(s,t,u){if(typeof u==="string")arguments[2]=path(u);else if(u instanceof URL)arguments[2]=path(u.href);return fn.apply(this,arguments)}};var HP=History.prototype.pushState,HR=History.prototype.replaceState;History.prototype.pushState=H(HP);History.prototype.replaceState=H(HR);var A=Element.prototype.setAttribute;Element.prototype.setAttribute=function(n,v){if((n==="href"||n==="src"||n==="action"||n==="xlink:href")&&typeof v==="string")v=path(v);return A.call(this,n,v)};var prop=function(proto,n){if(!proto)return;var d=Object.getOwnPropertyDescriptor(proto,n);if(!d||!d.set)return;Object.defineProperty(proto,n,{get:d.get,set:function(v){return d.set.call(this,path(v))},configurable:true})};prop(window.HTMLAnchorElement&&HTMLAnchorElement.prototype,"href");prop(window.HTMLLinkElement&&HTMLLinkElement.prototype,"href");prop(window.HTMLScriptElement&&HTMLScriptElement.prototype,"src");prop(window.HTMLImageElement&&HTMLImageElement.prototype,"src");prop(window.HTMLImageElement&&HTMLImageElement.prototype,"srcset");prop(window.HTMLFormElement&&HTMLFormElement.prototype,"action");var O=window.open;window.open=function(u){if(typeof u==="string")arguments[0]=path(u);return O.apply(this,arguments)};var WK=window.Worker;if(WK){window.Worker=function(u,o){return new WK(path(String(u)),o)};window.Worker.prototype=WK.prototype}var SW=window.SharedWorker;if(SW){window.SharedWorker=function(u,o){return new SW(path(String(u)),o)};window.SharedWorker.prototype=SW.prototype}var W=window.WebSocket;window.WebSocket=function(u,p){var s=String(u),h=location.host;if(s.indexOf("ws://"+h)===0||s.indexOf("wss://"+h)===0){var x=new URL(s);if(x.pathname.indexOf(P)!==0)x.pathname=P+x.pathname;s=x.toString()}return p===undefined?new W(s):new W(s,p)};window.WebSocket.prototype=W.prototype;window.WebSocket.CONNECTING=W.CONNECTING;window.WebSocket.OPEN=W.OPEN;window.WebSocket.CLOSING=W.CLOSING;window.WebSocket.CLOSED=W.CLOSED;try{if(navigator.serviceWorker){var C={addEventListener:function(){},removeEventListener:function(){},postMessage:function(){}};var K="woow-odoo-sw-clean-%%INGRESS_CACHE_VERSION%%";if(navigator.serviceWorker.getRegistrations)navigator.serviceWorker.getRegistrations().then(function(rs){var removed=false;return Promise.all(rs.map(function(r){var a=r.active||r.waiting||r.installing,s=a&&a.scriptURL||"";if(r.scope.indexOf("/odoo")!==-1||s.indexOf("/web/service-worker.js")!==-1)return r.unregister().then(function(ok){removed=removed||ok});return Promise.resolve()})).then(function(){if(removed&&!sessionStorage.getItem(K)){sessionStorage.setItem(K,"1");location.reload()}})});try{Object.defineProperty(navigator.serviceWorker,"controller",{get:function(){return C},configurable:true})}catch(e){};navigator.serviceWorker.register=function(){return Promise.resolve({scope:P+"/",installing:null,waiting:null,active:C,update:function(){return Promise.resolve()},unregister:function(){return Promise.resolve(true)},addEventListener:function(){},removeEventListener:function(){}})}}}catch(e){}$ingress_injection_hooks_shim$ingress_url_global_shim})()</script>';
     }
 
     # ---- Origin listener (8069): who is calling? ----
@@ -443,6 +468,41 @@ http {
             # Canonical URL the link keeps the browser origin, so it is as
             # broken as it was, but it no longer carries the token.
             sub_filter 'const currentUrl=window.location.href;' 'const currentUrl=(function(){var L=window.location,B=window.__WOOW_CANONICAL_URL__||L.origin,P="$safe_ingress_path",p=L.pathname;if(P&&p.indexOf(P)===0)p=p.slice(P.length)||"/";return B+p+L.search+L.hash})();';
+            # The two places the web client navigates the whole frame to a
+            # server-supplied URL (issue #174, U-E4). Both write `location`,
+            # which the Runtime shim cannot wrap (ADR 0004), with a URL that
+            # arrives over RPC and so is nowhere in the bundle for a prefix
+            # rule to find. Under Ingress the frame leaves for the Home
+            # Assistant root and Home Assistant answers 404: a Prefix escape
+            # that loses the file and the screen with it.
+            #
+            # Each rewrite hands the value to __WOOW_INGRESS_URL__, the
+            # helper the Runtime shim publishes, so the prefixing stays the
+            # shim's own path() and not a copy of it. The identity fallback
+            # keeps the expression total: an Ingress page whose shim did not
+            # run, and the Public origin if this rule ever reached it, still
+            # navigate to the raw value instead of throwing.
+            #
+            # `browser.location=item.url` is ActionMenus.onItemSelected, which
+            # is how the cog menu runs a print item that carries a `url` and no
+            # `action` -- Download > PDF on an invoice, whose URL comes from
+            # account.move.get_extra_print_items.
+            #
+            # `browser.location.assign(url)` is two expressions, not one, and
+            # the rule rewrites both by design: the `target==="self"` branch of
+            # _executeActURLAction, which is the generic ir.actions.act_url
+            # with the same class of server-supplied URL, and the `home` client
+            # action, which builds `"/"+location.search` and today lands on the
+            # Home Assistant root the same way. Prefixing `home` is the fix for
+            # it, not a side effect to be avoided. Both counts are measured in
+            # the fixtures; `tests/test_ingress_location_writes.py` pins them.
+            #
+            # The other `location` writes in the bundle stay as they are:
+            # the router's redirect() (its callers pass literals the rules
+            # above already prefix) and the session-expiry
+            # `window.location.assign(response.url)`, whose URL is absolute.
+            sub_filter 'browser.location=item.url' 'browser.location=(window.__WOOW_INGRESS_URL__||function(u){return u})(item.url)';
+            sub_filter 'browser.location.assign(url)' 'browser.location.assign((window.__WOOW_INGRESS_URL__||function(u){return u})(url))';
             # The website editor's Blocks panel (issue #170, U-D2). Odoo 18
             # inlines OWL templates into the bundle as `registerTemplate(...)`
             # template literals, appended unminified after the JavaScript, so
