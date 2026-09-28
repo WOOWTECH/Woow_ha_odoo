@@ -13,8 +13,8 @@ creates a survey answer on each surface. ADR 0012 is what authorises that.
 This is the one acceptance box #168 could not tick by itself. #168 decided
 (and shipped, `cedd13e`) that a tab Odoo opens from Ingress carries the
 Supervisor session token in its address **by construction** — section 1.4's
-`STRUCTURAL`, RC-15, `G-07` — carried by the Public origin's address of the
-same page. The decision was already Static-tier tested; what was missing was
+Structural gap, RC-15, `G-07`, recorded as the verdict `STRUCTURAL` — carried
+by the Public origin's address of the same page. The decision was already Static-tier tested; what was missing was
 a Live round recording `U-C23` under it. This run is that round: it confirms
 the address shapes on the host, not the decision.
 
@@ -31,7 +31,7 @@ nothing.
 | P-2 | PASS: `GET /web/login` -> 200 |
 | P-3 | PASS: `web.base.url` = `<PUBLIC_BASE>` |
 | P-4 | PASS: `web.base.url.freeze` = `True` |
-| P-5 | PASS: `website.domain` = `['<PUBLIC_BASE>']` |
+| P-5 | PASS: `website.domain` = `['<PUBLIC_BASE>']` (`pcheck` prints the field's list) |
 | P-6 | PASS: the same login on both surfaces, both serving `odoo_parity` |
 
 ## Checks — `checks.jsonl`
@@ -92,7 +92,22 @@ readable:
   `product.template` 56, `sale.order` 23 and 24, `survey.survey` **3**,
   `event.event` 3, `hr.job` 2, `discuss.channel` 12, `mrp.workcenter` 2,
   `project.task` 7, `ir.attachment` 1359. Only the survey is what `U-C23`
-  uses; the step creates the whole P-7 set.
+  uses; the step creates the whole P-7 set. Every one of them is named with the
+  marker, read back off the host after the run:
+
+  | Model | Id | Name |
+  |---|---|---|
+  | `res.partner` | 64 | `WOOW-PARITY-20260928T070408Z Partner` |
+  | `product.template` | 56 | `WOOW-PARITY-20260928T070408Z Service` |
+  | `sale.order` | 23 | `S00023`, `client_order_ref` `WOOW-PARITY-20260928T070408Z` |
+  | `sale.order` | 24 | `S00024`, `client_order_ref` `WOOW-PARITY-20260928T070408Z own` |
+  | `survey.survey` | 3 | `WOOW-PARITY-20260928T070408Z Survey` |
+  | `event.event` | 3 | `WOOW-PARITY-20260928T070408Z Event` |
+  | `hr.job` | 2 | `WOOW-PARITY-20260928T070408Z Job` |
+  | `discuss.channel` | 12 | `WOOW-PARITY-20260928T070408Z Channel` |
+  | `mrp.workcenter` | 2 | `WOOW-PARITY-20260928T070408Z Work Center` |
+  | `project.task` | 7 | `WOOW-PARITY-20260928T070408Z Task` |
+  | `ir.attachment` | 1359 | `WOOW-PARITY-20260928T070408Z 測試.txt` |
 - **Two survey answers** on survey 3, `survey_user_input` 27 and 28 — one per
   surface, both `test_entry = true`, both left in state `new`. These are what
   the Test button creates.
