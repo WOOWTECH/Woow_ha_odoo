@@ -43,6 +43,45 @@
   opened it. Issue #168.
 
 ### Fixed
+- Under Ingress, sending a website form now ends on its thank-you page
+  instead of a Home Assistant 404. Contact Us and a job application were sent
+  -- the lead and the applicant were created -- and then the page went to
+  `<HA_BASE>/contactus-thank-you` or `<HA_BASE>/job-thank-you` at the Home
+  Assistant root, which answered 404: the person saw an error where the
+  confirmation belonged, while the same form on the Public origin opened its
+  thank-you page (`U-D6` for `shared|generic` and
+  `hr_recruitment|job application`, root cause `RC-1`/`RC-10`). Every form
+  built on the website form snippet carries its confirmation target as an
+  attribute of the server-rendered page --
+  `data-success-mode="redirect" data-success-page="/contactus-thank-you"` --
+  and the form script assigns that root-relative path to the page location
+  once the submit RPC answers. The Ingress HTML rules rewrote `href`, `src`,
+  `action`, `data-src` and `srcset` and no other attribute, the Runtime shim
+  wraps no location assignment (ADR 0004 records that as a decision, not an
+  omission), and the Rewrite scan reads asset bundles and not page HTML, so
+  the value reached the browser bare. The Ingress listener's generic HTML
+  location now carries two more rules beside those five, for
+  `data-success-page="/` and for the pre-Odoo-14 spelling
+  `data-success_page="/` that the form script still falls back to when
+  `data-success-mode` is absent, so a form carried over by a database upgrade
+  is covered as well; the copy of that location for `/web/action/load` carries
+  them too, being that location plus its own escaped-quote rules. The rules
+  belong to the attribute and not to any one form or path, so they cover every
+  website form on every website page, including one a user builds in the
+  editor. A value that is a same-page anchor (`#thanks`) or an absolute URL is
+  left exactly as it was, no JSON or JavaScript response is affected, and the
+  Public origin serves the attribute byte for byte. A protocol-relative value
+  (`//host/path`) is prefixed and breaks, which is the limit every such rule in
+  the gateway shares and which #166 fixes for all of them at once or not at
+  all; unlike the others this one is typed by a person in the editor's redirect
+  field rather than written by Odoo, and the template says so. The survey's own
+  form was never affected: it redirects server-side, where `proxy_redirect`
+  already adds the prefix. The Static tier gains the template contract for both
+  rules -- on the Ingress listener, beside the attribute group they join, and
+  absent from the asset location and from the origin listener -- and the
+  live-nginx HTML test now serves a form page through both sockets and checks
+  every shape. The maintainer reruns `U-D6` for both forms on the test host
+  after deploy. No version bump. Issue #167, parent #148.
 - Under Ingress, an action's help pictures load instead of 404ing. A window
   action's `help` field is HTML kept in the database, and Odoo's own help
   carries root-relative addresses: the Surveys screen of an empty survey list
