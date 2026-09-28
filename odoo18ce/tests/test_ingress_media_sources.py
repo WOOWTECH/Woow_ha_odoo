@@ -158,7 +158,13 @@ function makeContext(options) {
   ]) {
     assert.equal(new context.Audio(value).src, value === ORIGIN + P + ERROR_SOUND ? P + ERROR_SOUND : value, value);
   }
-  // A non-string argument is handed to the browser as it came, as path() does.
+  // A `URL` object is prefixed too, the way fetch() and sendBeacon() take one.
+  assert.equal(new context.Audio(new URL(ORIGIN + ERROR_SOUND)).src, P + ERROR_SOUND);
+  assert.equal(
+    new context.Audio(new URL("https://odoo.example" + ERROR_SOUND)).src,
+    "https://odoo.example" + ERROR_SOUND,
+  );
+  // Anything else is handed to the browser as it came, as path() does.
   assert.equal(new context.Audio(null).src, "null");
 }
 // An absent Audio is left absent: the shim must not invent one.
@@ -244,6 +250,11 @@ def test_media_hooks_reuse_the_shims_own_helpers() -> None:
     )
     assert shim.count("var path=function(u)") == 1, "the media hooks must reuse path(), not add a helper"
     assert shim.count("var prop=function(proto,n)") == 1, "the media hooks must reuse prop()"
-    # Out of scope by decision (#159): nothing reported them escaping.
+    # Out of scope by decision (#159): nothing reported them escaping. `srcset` is
+    # in the shim for HTMLImageElement, so `<source>`'s is checked by prototype.
     for absent in ('"poster"', '"srcObject"', "HTMLTrackElement", "HTMLObjectElement", "HTMLEmbedElement"):
         assert absent not in shim, f"{absent} is out of scope for #159; add it when a test shows the escape"
+    assert 'HTMLSourceElement.prototype,"srcset"' not in shim, (
+        "HTMLSourceElement.srcset is the responsive <picture> candidate list, not a media "
+        "source, and has not been reported escaping; it is out of scope for #159 by decision"
+    )

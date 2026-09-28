@@ -56,14 +56,18 @@
   of `HTMLSourceElement.prototype`, through the same `path()` helper and the
   same property-setter helper it already uses for `href`/`src`/`srcset`: an
   already prefixed, cross-origin, `blob:`, `data:` or fragment-only value is
-  untouched, `new Audio()` with no argument is left alone, an absent
-  constructor is left absent, and the wrapper keeps `prototype` — as the
-  `Worker` wrapper does — so `new Audio(...) instanceof HTMLAudioElement`
-  still holds. One shim change covers every media prefix at once (POS sounds,
+  untouched, a `URL` object is prefixed the way `fetch` and `sendBeacon` take
+  one, `new Audio()` with no argument is left alone, an absent constructor is
+  left absent, and the wrapper keeps `prototype` — as the `Worker` wrapper
+  does — so `new Audio(...) instanceof HTMLAudioElement` still holds. One shim change covers every media prefix at once (POS sounds,
   `/barcodes/`, any future app), where a generated rewrite would cover one
   prefix at a time, so the Rewrite scan is unchanged and `/barcodes/` stays
-  `INFO`. `<track>`, `<embed>`/`<object>`, `poster` and CSS `url(...)` media
-  have not been reported escaping and stay uncovered. The wrappers live in the
+  `INFO`. `<track>`, `<embed>`/`<object>`, `poster`, `srcObject`,
+  `HTMLSourceElement.srcset` (the responsive `<picture>` candidate list, not a
+  media source) and CSS `url(...)` media have not been reported escaping and
+  stay uncovered, and `U-A6`'s probe list is unchanged: the guard for the media
+  wrappers is the Static-tier contract plus the Registration Desk's own crawler
+  record. The wrappers live in the
   same nginx map as the injection-way hooks, the tail of the prefix script's
   closure, because that script is a few hundred bytes short of nginx's
   4096-byte parameter buffer. ADR 0004 gains a 2026-09-28 media-sources

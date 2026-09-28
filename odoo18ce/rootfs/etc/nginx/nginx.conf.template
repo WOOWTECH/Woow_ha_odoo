@@ -118,10 +118,14 @@ http {
     # and the `src` setter of `HTMLMediaElement.prototype` (`<audio>` and
     # `<video>`) and of `HTMLSourceElement.prototype` goes through prop().
     # That covers every media prefix at once, where a Generated rewrite would
-    # cover one prefix at a time. `<track>`, `<embed>`/`<object>`, `poster` and
-    # CSS `url(...)` media have not been reported escaping and stay uncovered.
+    # cover one prefix at a time. A string and a `URL` object are both prefixed,
+    # as `fetch` and `sendBeacon` take either; anything else is handed to the
+    # browser as it came, which is what path() does too. `<track>`,
+    # `<embed>`/`<object>`, `poster`, `srcObject`, `HTMLSourceElement.srcset`
+    # (the responsive `<picture>` candidate list, not a media source) and CSS
+    # `url(...)` media have not been reported escaping and stay uncovered.
     map $upstream_http_content_type $ingress_injection_hooks_shim {
-        default 'var SB=navigator.sendBeacon;if(SB)navigator.sendBeacon=function(u,d){if(typeof u==="string")arguments[0]=path(u);else if(u instanceof URL)arguments[0]=path(u.href);return SB.apply(this,arguments)};var ES=window.EventSource;if(ES){window.EventSource=function(u,o){return new ES(path(String(u)),o)};window.EventSource.prototype=ES.prototype;window.EventSource.CONNECTING=ES.CONNECTING;window.EventSource.OPEN=ES.OPEN;window.EventSource.CLOSED=ES.CLOSED}var AN=Element.prototype.setAttributeNS;Element.prototype.setAttributeNS=function(s,n,v){var l=String(n).split(":").pop();if((l==="href"||l==="src"||l==="action")&&typeof v==="string")v=path(v);return AN.call(this,s,n,v)};var AU=window.Audio;if(AU){window.Audio=function(s){return arguments.length?new AU(typeof s==="string"?path(s):s):new AU()};window.Audio.prototype=AU.prototype}prop(window.HTMLMediaElement&&HTMLMediaElement.prototype,"src");prop(window.HTMLSourceElement&&HTMLSourceElement.prototype,"src");';
+        default 'var SB=navigator.sendBeacon;if(SB)navigator.sendBeacon=function(u,d){if(typeof u==="string")arguments[0]=path(u);else if(u instanceof URL)arguments[0]=path(u.href);return SB.apply(this,arguments)};var ES=window.EventSource;if(ES){window.EventSource=function(u,o){return new ES(path(String(u)),o)};window.EventSource.prototype=ES.prototype;window.EventSource.CONNECTING=ES.CONNECTING;window.EventSource.OPEN=ES.OPEN;window.EventSource.CLOSED=ES.CLOSED}var AN=Element.prototype.setAttributeNS;Element.prototype.setAttributeNS=function(s,n,v){var l=String(n).split(":").pop();if((l==="href"||l==="src"||l==="action")&&typeof v==="string")v=path(v);return AN.call(this,s,n,v)};var AU=window.Audio;if(AU){window.Audio=function(s){return arguments.length?new AU(typeof s==="string"?path(s):s instanceof URL?path(s.href):s):new AU()};window.Audio.prototype=AU.prototype}prop(window.HTMLMediaElement&&HTMLMediaElement.prototype,"src");prop(window.HTMLSourceElement&&HTMLSourceElement.prototype,"src");';
     }
 
     map $upstream_http_content_type $ingress_runtime_shim {

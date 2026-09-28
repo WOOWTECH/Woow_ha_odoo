@@ -125,6 +125,15 @@ this use", and for a media consumer that is now true, so `/barcodes/` staying
 read it as. No Generated rewrite and no Shipped rewrite is added for
 `/barcodes/`.
 
-`<track>`, `<embed>`/`<object>`, `poster`, `srcObject` and CSS `url(...)`
-media stay uncovered: nothing has been reported escaping through them. Each is
-one more wrapper in the same shape if a check ever shows one does.
+`<track>`, `<embed>`/`<object>`, `poster`, `srcObject`,
+`HTMLSourceElement.srcset` (the responsive `<picture>` candidate list rather
+than a media source) and CSS `url(...)` media stay uncovered: nothing has been
+reported escaping through them. Each is one more wrapper in the same shape if a
+check ever shows one does.
+
+What guards the media wrappers is the Static-tier shim contract, which executes
+the rendered shim against a DOM stand-in, plus the Registration Desk's own
+crawler record (`ir.actions.client` 609) returning to `PARITY`. `U-A6`'s probe
+list is *not* extended: its covered group still holds only the #169 ways, so a
+media escape would be caught by the desk's screen rather than by the audit.
+Adding a media probe to `U-A6` is a change of its own.
