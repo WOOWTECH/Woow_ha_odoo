@@ -242,6 +242,32 @@ def test_nginx_template_contract() -> None:
     assert "listen 8072 default_server;" in listeners
     assert GENERATED_REWRITES not in listeners
 
+    # --- entity-quoted url(...) in page HTML (issue #166) ---
+    # QWeb escapes attribute values, so a website snippet's inline background
+    # arrives as style="background-image: url(&#39;/web/image/...&#39;)". The
+    # three raw-quote rules match none of those forms, so each form the
+    # escaper can produce carries a rule of its own in the generic HTML
+    # location -- and only there: bundles hold no HTML entities.
+    generic = ingress[ingress.index("\n        location / {") :]
+    raw_url_rules = [
+        "sub_filter 'url(/' 'url($safe_ingress_path/';",
+        "sub_filter \"url('/\" \"url('$safe_ingress_path/\";",
+        "sub_filter 'url(\"/' 'url(\"$safe_ingress_path/';",
+    ]
+    entity_url_rules = [
+        "sub_filter 'url(&#39;/' 'url(&#39;$safe_ingress_path/';",
+        "sub_filter 'url(&#34;/' 'url(&#34;$safe_ingress_path/';",
+        "sub_filter 'url(&quot;/' 'url(&quot;$safe_ingress_path/';",
+        "sub_filter 'url(&#x27;/' 'url(&#x27;$safe_ingress_path/';",
+    ]
+    for rule in raw_url_rules:
+        assert rule in generic, rule
+        assert rule in assets, rule
+    for rule in entity_url_rules:
+        assert rule in generic, rule
+        assert rule not in assets, rule
+        assert rule not in listeners, rule
+
 
 def test_maintenance_bootstrap_contract() -> None:
     # String presence only; the decision logic is covered by
