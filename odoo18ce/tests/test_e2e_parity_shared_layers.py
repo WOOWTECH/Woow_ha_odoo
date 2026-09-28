@@ -5,6 +5,7 @@ Nothing here opens a browser, a websocket or reads credentials.
 """
 import json
 import os
+import re
 import unittest
 from unittest import mock
 
@@ -14,8 +15,13 @@ import e2e_pos_offline_live
 from e2e_menu_action_adapter import EVIDENCE_SCHEMA, Masker, RunInfo, Surface, parse_env_file
 from e2e_parity_shared_layers_live import artifact_dir
 from e2e_parity_shared_layers import (
+    ACCEPTED,
     CATALOG,
+    COVERED,
     INGRESS_PREFIX_DETAIL,
+    INJECTION_KINDS,
+    INJECTION_WAYS,
+    META_REFRESH_NOTE,
     MODULE_SCREENS,
     NOT_RUN,
     Outcome,
@@ -23,6 +29,9 @@ from e2e_parity_shared_layers import (
     capability_upper_bound,
     check_record,
     conservation,
+    injection_group,
+    injection_verdict,
+    injection_ways,
     judge,
     new_tab_verdict,
     planned_checks,
@@ -185,6 +194,93 @@ class CookieTests(unittest.TestCase):
     def test_a_missing_cookie_is_one_problem(self) -> None:
         self.assertEqual(session_cookie_problems(None, surface=Surface.PUBLIC, ingress_prefix=None, https=True),
                          ["no session_id cookie"])
+
+
+class InjectionWayTests(unittest.TestCase):
+    """U-A6 as two groups (#169): the ways the shim covers, and the ways it does not."""
+
+    def ways(self, *escaped: str, not_requested: tuple[str, ...] = ()) -> Outcome:
+        requested = [kind for kind in INJECTION_KINDS if kind not in not_requested]
+        return Outcome(available=True,
+                       result="no escape" if not escaped else "escaped: " + ", ".join(sorted(escaped)),
+                       details={"requested": sorted(requested), "escaped": sorted(escaped),
+                                "not_requested": sorted(not_requested),
+                                "groups": {kind: injection_group(kind) for kind in INJECTION_KINDS}})
+
+    def test_every_way_the_check_tries_is_in_one_group(self) -> None:
+        self.assertEqual(sorted(INJECTION_KINDS), sorted(injection_ways(COVERED) + injection_ways(ACCEPTED)))
+        self.assertEqual(injection_ways(COVERED),
+                         ["sendBeacon", "EventSource", "svg-use", "svg-use-href", "svg-use-ns"])
+        # An accepted way is a decision, so the screens it is known to hit are named with it.
+        issues = {way.kind: way.issues for way in INJECTION_WAYS}
+        self.assertEqual(issues["innerHTML-img"], ("#158",))
+        self.assertEqual(issues["style-attr"], ("#170",))
+        # A way with no screen filed against it names none; the group is the decision.
+        self.assertEqual(issues["insertAdjacentHTML-use"], ())
+        self.assertEqual([way.issues for way in INJECTION_WAYS if way.group == COVERED], [()] * 5)
+
+    def test_no_escape_on_either_surface_is_parity(self) -> None:
+        self.assertEqual(injection_verdict(self.ways(), self.ways()), ("PARITY", "none", []))
+
+    def test_a_covered_way_escaping_under_ingress_is_a_gap(self) -> None:
+        verdict, severity, notes = injection_verdict(self.ways(), self.ways("sendBeacon", "svg-use"))
+        self.assertEqual((verdict, severity), ("GAP", "important"))
+        self.assertEqual(notes, ["ingress: the shim did not prefix sendBeacon (navigator.sendBeacon(url)), "
+                                 "svg-use (createElementNS <use>, an existing xlink:href updated with "
+                                 'setAttribute("xlink:href", url))'])
+
+    def test_an_accepted_way_escaping_under_ingress_stays_parity_with_its_screens(self) -> None:
+        verdict, severity, notes = injection_verdict(self.ways(), self.ways("innerHTML-img", "style-attr",
+                                                                            "css-import"))
+        self.assertEqual((verdict, severity), ("PARITY", "none"))
+        self.assertEqual(notes, ["accepted escapes, uncovered by decision: "
+                                 "css-import, innerHTML-img (#158), style-attr (#170)"])
+
+    def test_a_covered_escape_beside_an_accepted_one_is_still_a_gap(self) -> None:
+        verdict, _, notes = injection_verdict(self.ways(), self.ways("EventSource", "style-url"))
+        self.assertEqual(verdict, "GAP")
+        self.assertEqual(notes, ["ingress: the shim did not prefix EventSource (new EventSource(url))",
+                                 "accepted escapes, uncovered by decision: style-url"])
+
+    def test_any_escape_on_the_public_origin_is_a_gap(self) -> None:
+        # The Public origin has no prefix to lose, so an accepted way escaping there is
+        # a root-relative URL leaving the origin it was asked from: a defect on both.
+        verdict, severity, notes = injection_verdict(self.ways("innerHTML-img"), self.ways())
+        self.assertEqual((verdict, severity), ("GAP", "important"))
+        self.assertEqual(notes, ["public: a root-relative URL left the origin through innerHTML-img"])
+
+    def test_a_way_no_decision_knows_is_covered(self) -> None:
+        self.assertEqual(injection_group("meta-refresh"), COVERED)
+        verdict, _, notes = injection_verdict(self.ways(), self.ways("meta-refresh"))
+        self.assertEqual(verdict, "GAP")
+        self.assertEqual(notes, ["ingress: the shim did not prefix meta-refresh"])
+
+    def test_a_covered_way_that_made_no_request_is_named_not_judged(self) -> None:
+        verdict, severity, notes = injection_verdict(self.ways(), self.ways(not_requested=("EventSource",
+                                                                                           "css-import")))
+        self.assertEqual((verdict, severity), ("PARITY", "none"))
+        self.assertEqual(notes, ["covered ways the browser never asked for: EventSource"])
+
+    def test_an_unavailable_surface_is_still_a_blocker(self) -> None:
+        verdict, severity, notes = injection_verdict(self.ways(), Outcome(available=False, result="blank page"))
+        self.assertEqual((verdict, severity), ("GAP", "blocker"))
+        self.assertEqual(notes, ["ingress unavailable: blank page"])
+
+    def test_the_live_probe_asks_the_covered_ways_through_the_apis_the_shim_hooks(self) -> None:
+        script = e2e_parity_shared_layers_live._INJECTION_JS
+        for api in ("navigator.sendBeacon(probe('sendBeacon')", "new EventSource(probe('EventSource')",
+                    "createElementNS(SVG, 'use')", "node.setAttribute('xlink:href', url)",
+                    "node.setAttributeNS(XLINK, 'xlink:href', '#seed')",
+                    "node.setAttribute('href', url)", "node.setAttributeNS(XLINK, 'xlink:href', url)"):
+            self.assertIn(api, script)
+        # The accepted ways stay markup and style, including the style attribute #170 hits.
+        for markup in ("markup.innerHTML =", "markup.insertAdjacentHTML(", "inline.setAttribute('style',",
+                       "style.textContent =", "@import url("):
+            self.assertIn(markup, script)
+        # Every way the groups declare is probed, and nothing else is.
+        probed = set(re.findall(r"(?:probe|use)\('([A-Za-z-]+)'", script))
+        self.assertEqual(probed, set(INJECTION_KINDS))
+        self.assertIn("http-equiv=refresh", META_REFRESH_NOTE)
 
 
 class SeoOutputTests(unittest.TestCase):

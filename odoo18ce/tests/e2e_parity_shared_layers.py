@@ -316,6 +316,122 @@ def session_cookie_problems(
     ]
 
 
+def _details(outcome: Outcome) -> Mapping[str, Any]:
+    return outcome.details or {}
+
+
+# --- U-A6 -------------------------------------------------------------------
+
+# RC-12: the ways a root-relative URL can reach the browser without passing
+# through an API the Runtime shim wraps. #169 split them in two, and the
+# check has to hold both, or it cannot tell a shim defect from a way left
+# uncovered on purpose.
+COVERED = "covered"
+ACCEPTED = "accepted"
+
+
+@dataclass(frozen=True)
+class InjectionWay:
+    """One way `U-A6` asks for its probe path, and what its group means.
+
+    `covered`: the shim must prefix it (ADR 0004 makes the shim the Ingress
+    URL authority for anything it can intercept), so an escape is a defect.
+    `accepted`: the shim leaves it alone by decision. The HTML editor and the
+    website editor load and save record content through markup and style, so
+    a hook there would write the Ingress prefix -- which carries the Ingress
+    token -- into the database, breaking the Public origin and leaking the
+    token. A screen that hits one gets a route-scoped Literal rewrite of its
+    own, filed as its own issue (`issues`).
+    """
+
+    kind: str
+    group: str
+    how: str
+    issues: tuple[str, ...] = ()
+
+
+INJECTION_WAYS: tuple[InjectionWay, ...] = (
+    InjectionWay("sendBeacon", COVERED, "navigator.sendBeacon(url)"),
+    InjectionWay("EventSource", COVERED, "new EventSource(url)"),
+    InjectionWay("svg-use", COVERED, 'createElementNS <use>, an existing xlink:href updated with '
+                 'setAttribute("xlink:href", url)'),
+    InjectionWay("svg-use-href", COVERED, 'createElementNS <use>, setAttribute("href", url)'),
+    InjectionWay("svg-use-ns", COVERED, 'createElementNS <use>, setAttributeNS(xlink, "xlink:href", url)'),
+    InjectionWay("innerHTML-img", ACCEPTED, 'innerHTML with <img src="url">', ("#158",)),
+    InjectionWay("insertAdjacentHTML-use", ACCEPTED, 'insertAdjacentHTML with <svg><use xlink:href="url">'),
+    InjectionWay("style-attr", ACCEPTED, "style attribute with url(url)", ("#170",)),
+    InjectionWay("style-url", ACCEPTED, "dynamic <style> element with url(url)"),
+    InjectionWay("css-import", ACCEPTED, "dynamic <style> element with @import url(url)"),
+)
+INJECTION_KINDS: tuple[str, ...] = tuple(way.kind for way in INJECTION_WAYS)
+INJECTION_GROUPS: Mapping[str, str] = {way.kind: way.group for way in INJECTION_WAYS}
+# Odoo 18 redirects server-side, and the probe would navigate the page away
+# from the screen under test, so this way is not tried at all.
+META_REFRESH_NOTE = "<meta http-equiv=refresh> is not tried: Odoo 18 redirects server-side, and the probe " \
+                    "would navigate the page away from the screen under test"
+
+
+def injection_group(kind: str) -> str:
+    """The group of a way. A way no decision knows is covered: nothing accepted it."""
+    return INJECTION_GROUPS.get(kind, COVERED)
+
+
+def injection_ways(group: str) -> list[str]:
+    return [way.kind for way in INJECTION_WAYS if way.group == group]
+
+
+def _way_issues(kinds: Iterable[str]) -> list[str]:
+    """Each way with the screens filed against it, for the notes."""
+    issues = {way.kind: way.issues for way in INJECTION_WAYS}
+    return ["%s%s" % (kind, " (%s)" % ", ".join(issues[kind]) if issues.get(kind) else "") for kind in kinds]
+
+
+def _way_how(kinds: Iterable[str]) -> list[str]:
+    """Each way with the call that made it, so a gap names what to fix."""
+    how = {way.kind: way.how for way in INJECTION_WAYS}
+    return ["%s%s" % (kind, " (%s)" % how[kind] if kind in how else "") for kind in kinds]
+
+
+def injection_verdict(public: Outcome, ingress: Outcome) -> tuple[str, str, list[str]]:
+    """U-A6: which injection ways escaped, read against the two groups.
+
+    A `GAP` only for a way the shim is meant to cover escaping under Ingress,
+    or for any way escaping on the Public origin -- where a root-relative URL
+    stays on the origin it was asked from, whatever the way. An escape in the
+    `accepted` group is what the decision says it is, so the check stays
+    `PARITY` and names the escaped ways and their screen issues in the notes.
+    Everything else section 1.1 judges as usual: an unavailable surface or a
+    route escape is a Blocker, a console error is Important.
+
+    Each outcome carries `details["escaped"]` (the ways that left), plus
+    `details["requested"]` and `details["not_requested"]`, which say which
+    ways the browser asked for at all. A covered way that made no request
+    proves nothing either way, so it is named in the notes rather than judged.
+    """
+    _, severity, reasons = judge(public, ingress)
+    # judge() compares the two results, which name each surface's escaped ways: an
+    # accepted escape under Ingress is expected, so that difference is not the gap.
+    reasons = [reason for reason in reasons if not reason.startswith("result: ")]
+    blocker = severity == "blocker"
+    escaped_public = sorted(_details(public).get("escaped", []))
+    escaped_ingress = sorted(_details(ingress).get("escaped", []))
+    covered = [kind for kind in escaped_ingress if injection_group(kind) == COVERED]
+    accepted = [kind for kind in escaped_ingress if injection_group(kind) == ACCEPTED]
+    if escaped_public:
+        reasons.append("public: a root-relative URL left the origin through %s" % ", ".join(escaped_public))
+    if covered:
+        reasons.append("ingress: the shim did not prefix %s" % ", ".join(_way_how(covered)))
+    notes = []
+    if accepted:
+        notes.append("accepted escapes, uncovered by decision: %s" % ", ".join(_way_issues(accepted)))
+    silent = [kind for kind in _details(ingress).get("not_requested", []) if injection_group(kind) == COVERED]
+    if silent:
+        notes.append("covered ways the browser never asked for: %s" % ", ".join(sorted(silent)))
+    if reasons:
+        return "GAP", ("blocker" if blocker else "important"), reasons + notes
+    return "PARITY", "none", notes
+
+
 # --- U-D8 -------------------------------------------------------------------
 
 PUBLIC_BASE = "<PUBLIC_BASE>"
@@ -324,10 +440,6 @@ PUBLIC_BASE = "<PUBLIC_BASE>"
 AD8_DISALLOW = "Disallow: /"
 AD8_SITEMAP = "Sitemap: %s/sitemap.xml" % PUBLIC_BASE
 AD8_ROBOTS_LINES = (AD8_DISALLOW, AD8_SITEMAP)
-
-
-def _details(outcome: Outcome) -> Mapping[str, Any]:
-    return outcome.details or {}
 
 
 def _robots(outcome: Outcome) -> set[str]:

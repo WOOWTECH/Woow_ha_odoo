@@ -11,6 +11,7 @@ from pathlib import Path
 import yaml
 
 from conftest import require_tool
+from test_ingress_router_rewrite import resolve_splices
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config.yaml"
@@ -192,6 +193,18 @@ def test_nginx_template_contract() -> None:
     assert 'if(u.charAt(0)==="#")return u' in n
     assert "href^='#'" not in n
     assert 'HTMLImageElement.prototype,"srcset"' in n
+    # Group A of the #169 decision: the injection ways the shim covers. Each is
+    # one wrapper in the shim's existing pattern, and the SVG <use> reference
+    # is covered through both APIs that set it.
+    assert "navigator.sendBeacon=function" in n
+    assert "window.EventSource=function" in n
+    assert "window.EventSource.prototype=ES.prototype" in n
+    assert "window.EventSource.CONNECTING=ES.CONNECTING" in n
+    assert "Element.prototype.setAttributeNS=function" in n
+    assert 'n==="xlink:href"' in n
+    # They are the tail of the prefix script's closure, spliced in by variable
+    # reference because that script nearly fills nginx's parameter buffer.
+    assert "$ingress_injection_hooks_shim})()" in n
     assert "return 302 $safe_ingress_path/odoo" not in n
     assert n.count("proxy_set_header X-Forwarded-Proto $ingress_proto;") >= 3
     assert "proxy_set_header Origin $ingress_proto://$http_host;" in n
@@ -252,7 +265,10 @@ def runtime_shim_source() -> str:
     assert '"~*^text/html(?:;|$)"' in runtime_shim, "runtime shim must be limited to HTML upstream responses"
     match = re.search(r"<script>(.*?)</script>';", runtime_shim, re.S)
     assert match, "HTML runtime shim not found"
-    return match.group(1).replace("$safe_ingress_path", "/P").replace("%%INGRESS_CACHE_VERSION%%", "V")
+    # The injection-way hooks (#169) are spliced in from a map of their own,
+    # so the script the page gets is longer than the one written here.
+    script = resolve_splices(source, match.group(1))
+    return script.replace("$safe_ingress_path", "/P").replace("%%INGRESS_CACHE_VERSION%%", "V")
 
 
 def test_runtime_shim_is_valid_javascript(tmp_path: Path) -> None:
