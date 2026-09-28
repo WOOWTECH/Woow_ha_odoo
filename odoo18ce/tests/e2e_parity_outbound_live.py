@@ -58,12 +58,12 @@ from e2e_parity_outbound import (
 )
 from e2e_parity_shared_layers import Outcome, attach_issues, conservation
 from e2e_parity_shared_layers_live import (
-    ARTIFACTS,
     CHECKS,
     TIMEOUT,
     Env,
     Run,
     Side,
+    artifact_dir,
     cog_item,
     download,
     open_form,
@@ -201,15 +201,15 @@ def next_weekday(day: dt.date) -> dt.date:
 
 
 def fixture_path(run_id: str) -> str:
-    return os.path.join(ARTIFACTS, "%s-outbound-fixtures.json" % run_id)
+    return os.path.join(artifact_dir(), "%s-outbound-fixtures.json" % run_id)
 
 
 def reach_path(run_id: str) -> str:
-    return os.path.join(ARTIFACTS, "%s-reach.json" % run_id)
+    return os.path.join(artifact_dir(), "%s-reach.json" % run_id)
 
 
 def mail_plan_path(run_id: str) -> str:
-    return os.path.join(ARTIFACTS, "%s-mail-plan.json" % run_id)
+    return os.path.join(artifact_dir(), "%s-mail-plan.json" % run_id)
 
 
 # --- The run ------------------------------------------------------------------
@@ -666,7 +666,7 @@ def trigger_mail(run: OutboundRun, screens: set[str] | None = None, sides: set[s
             except Exception as error:  # noqa: BLE001 -- the mail step records it
                 entry["triggered"] = False
                 entry["error"] = run.env.mask((str(error).splitlines() or [""])[0])
-                side.page.screenshot(path=os.path.join(ARTIFACTS, "%s-%s-%s.png" % (run.info.run_id, what, side.name)))
+                side.page.screenshot(path=os.path.join(artifact_dir(), "%s-%s-%s.png" % (run.info.run_id, what, side.name)))
                 try:
                     close_dialogs(side)
                 except Exception:  # noqa: BLE001
@@ -801,7 +801,7 @@ def main(argv=None) -> int:
             parse_env_file(handle, os.environ)
     os.environ["ODOO_DB"] = args.db
     env = Env(args.db)
-    os.makedirs(ARTIFACTS, exist_ok=True)
+    os.makedirs(artifact_dir(), exist_ok=True)
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as playwright:
