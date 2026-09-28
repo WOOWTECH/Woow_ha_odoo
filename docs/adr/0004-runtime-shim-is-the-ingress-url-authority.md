@@ -233,5 +233,76 @@ the survey menus from `route_escape`/`http_4xx_5xx`/`console_error` = 8 each to
 zero, with the four pictures answered 200. The crawler's two-surface `PARITY`
 verdict is still owed: the local add-on has no `public_url`, so that one waits
 for a Release. The other screen filed against the uncovered group, the
-website editor's snippet thumbnails (#170), is still open and gets a rewrite of
-its own in the same shape.
+website editor's snippet thumbnails (#170), gets a rewrite of its own in the
+postscript below -- not in this shape, because that URL is written back.
+
+## Postscript (2026-09-28, snippet thumbnails)
+
+The second screen filed against the uncovered group has its Literal rewrite,
+and it moves the rule one step further: **a Group B URL that round-trips to the
+database is rewritten where it is rendered, not where it is delivered.**
+
+The #143 parity run found the website editor's Blocks panel asking the Home
+Assistant root for all 36 snippet thumbnails and getting 404 -- 36 **Prefix
+escapes** and 36 console errors per editor open, blank tiles, the Public origin
+clean (`U-D2`, #170). Editing itself worked and there was no
+`AssetsLoadingError`. The editor loads the snippet catalogue with a JSON-RPC
+call to `render_public_asset` on `ir.ui.view`; each tile's picture arrives in
+that HTML string as `data-oe-thumbnail=\"/website/static/…\"`, and the OWL
+template puts the value into a `style` attribute as `background-image:
+url(...)` -- the `style` way of the uncovered group, which no rule reached: the
+JSON rules on the Ingress `location /` match `src="/`, not the escaped
+`data-oe-thumbnail=\"`, and the asset location's `url(/` rules do not match
+`url({{`.
+
+**Why not the response, which is where #158 put its rule.** Because this value
+comes back. The editor's "Save block" reads the snippet's `thumbnailSrc` -- the
+raw `data-oe-thumbnail` of that same catalogue response -- and passes it to
+`ir.ui.view.save_snippet` as `thumbnail_url`, which writes it into the new
+snippet view's arch as `t-thumbnail`. A rewrite on the response would therefore
+store the Ingress prefix, Supervisor token and all, in the database the first
+time somebody saved a custom block under Ingress: broken on the Public origin,
+token in a record. That is this decision's own harm, reached the way
+`marketing_card`'s wizard defaults reach it in the postscript above. Action
+help is safe to rewrite on delivery precisely because nothing writes it back,
+and that is the distinction, not the transport:
+
+> Rewrite a URL where it is *delivered* only when nothing writes it back.
+> Otherwise rewrite it where it is *rendered*, and leave the delivered value
+> alone.
+
+**The render site is the OWL template**, and Odoo 18 serves it. Templates are
+inlined into the `.min.js` bundle as `registerTemplate(...)` template literals,
+appended unminified after the JavaScript, so the tile's own markup goes through
+the Ingress asset location where the ADR 0006 exact-expression rewrites live.
+One rule there replaces `url({{snippet.thumbnailSrc}})` with an interpolation
+that puts `$safe_ingress_path` in front of a value beginning `/` and returns
+anything else unchanged -- a snippet with no `t-thumbnail` arrives as the
+literal `oe-thumbnail` and stays that way.
+
+What that rewrite has to survive is unusual enough to write down: the
+expression lives inside an XML attribute delimited by double quotes, inside a
+JavaScript template literal. It therefore carries no double quote, no backtick,
+no backslash and no `${`, and quotes with `'` -- which is why this is the one
+`sub_filter` in the template whose replacement is written with a double-quoted
+parameter. `thumbnailSrc` keeps its raw value, so `save_snippet` stores exactly
+what it stores today and a custom block saved on either surface shows its
+thumbnail on both.
+
+No double prefix: `sub_filter` never reads back what it wrote, the `url(/`
+rules match a different byte, and the shim's `path()` never sees a `style`
+attribute. The protocol-relative limit shared with every other prefix rule is
+inherited and belongs to #166. The catalogue response, `save_snippet` and the
+Public origin listener are untouched, and a Static-tier test asserts no
+directive in the template names `oe-thumbnail`, `render_public_asset` or
+`save_snippet`, so changing that means reopening this postscript.
+
+`U-A6`'s probe list is not extended: its `style`-attribute probe still records
+the escape as the decision it is. What proves this fix is the Static-tier
+contract -- the pattern measured against a captured `web_editor.assets_wysiwyg`
+excerpt, the rewritten expression executed in node, and the rewritten
+`registerTemplate` payload parsed as XML, because an OWL template is not
+something node can render -- plus the Live `U-D2` rerun, which is the
+maintainer's after Deploy: the Blocks panel at 200 under Ingress, and a custom
+block saved under Ingress whose view arch shows a `t-thumbnail` with no prefix
+in it.
