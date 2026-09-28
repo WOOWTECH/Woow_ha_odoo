@@ -57,6 +57,7 @@ jobs:
             echo "${ADDON_DIR}/rootfs/usr/local/bin/odoo-rewrite-apply"
             echo "${ADDON_DIR}/rootfs/usr/local/bin/odoo-canonical-catchup"
             echo "${ADDON_DIR}/rootfs/usr/local/lib/supervisor-read.sh"
+            echo "docs/runbooks/slow-link-pull.sh"
           )
           shellcheck --version | head -2
           shellcheck -s bash -e SC1008 "${scripts[@]}"
