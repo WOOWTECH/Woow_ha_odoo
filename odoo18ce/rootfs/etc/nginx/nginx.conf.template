@@ -82,11 +82,12 @@ http {
         default '<script>(function(){var U="%%CANONICAL_URL%%";try{Object.defineProperty(window,"__WOOW_CANONICAL_URL__",{value:U,writable:false,configurable:false,enumerable:true})}catch(e){window.__WOOW_CANONICAL_URL__=U}})()</script>';
     }
 
-    # Injection-way hooks (issue #169). Not a script of its own: this is the
-    # tail of the prefix script's IIFE below, spliced in by variable reference
-    # because that script is a few hundred bytes short of nginx's 4096-byte
-    # parameter buffer. It runs inside the same closure and so prefixes
-    # through the same path() helper; there is no second URL helper.
+    # Injection-way and media-source hooks (issues #169, #159). Not a script of
+    # its own: this is the tail of the prefix script's IIFE below, spliced in by
+    # variable reference because that script is a few hundred bytes short of
+    # nginx's 4096-byte parameter buffer. It runs inside the same closure and so
+    # prefixes through the same path() helper, and reuses the same prop()
+    # property-setter wrapper; there is no second URL helper.
     #
     # Group A of the #169 decision -- the ways the shim can intercept without
     # ever writing a URL back into record content: `navigator.sendBeacon`, the
@@ -104,8 +105,23 @@ http {
     # leaks the token. A screen that hits one of them gets a route-scoped
     # Literal rewrite of its own instead (#158, #170). ADR 0004's postscript
     # records both groups.
+    #
+    # Media sources (#159). Odoo's event barcode client action builds the
+    # Registration Desk sounds with
+    # `new Audio(url("/barcodes/static/src/audio/error.ogg"))` -- an absolute
+    # same-origin URL -- and the shim wrapped nothing for media, so under
+    # Ingress the request reached the Home Assistant root and answered 404: a
+    # scanner silent on a failed scan. The Rewrite scan lists `/barcodes/` as
+    # `INFO`, "the shim intercepts it", which was not true of this consumer.
+    # So the `Audio` constructor is wrapped -- keeping `prototype` the way the
+    # `Worker` wrapper does, and leaving `new Audio()` with no argument alone --
+    # and the `src` setter of `HTMLMediaElement.prototype` (`<audio>` and
+    # `<video>`) and of `HTMLSourceElement.prototype` goes through prop().
+    # That covers every media prefix at once, where a Generated rewrite would
+    # cover one prefix at a time. `<track>`, `<embed>`/`<object>`, `poster` and
+    # CSS `url(...)` media have not been reported escaping and stay uncovered.
     map $upstream_http_content_type $ingress_injection_hooks_shim {
-        default 'var SB=navigator.sendBeacon;if(SB)navigator.sendBeacon=function(u,d){if(typeof u==="string")arguments[0]=path(u);else if(u instanceof URL)arguments[0]=path(u.href);return SB.apply(this,arguments)};var ES=window.EventSource;if(ES){window.EventSource=function(u,o){return new ES(path(String(u)),o)};window.EventSource.prototype=ES.prototype;window.EventSource.CONNECTING=ES.CONNECTING;window.EventSource.OPEN=ES.OPEN;window.EventSource.CLOSED=ES.CLOSED}var AN=Element.prototype.setAttributeNS;Element.prototype.setAttributeNS=function(s,n,v){var l=String(n).split(":").pop();if((l==="href"||l==="src"||l==="action")&&typeof v==="string")v=path(v);return AN.call(this,s,n,v)};';
+        default 'var SB=navigator.sendBeacon;if(SB)navigator.sendBeacon=function(u,d){if(typeof u==="string")arguments[0]=path(u);else if(u instanceof URL)arguments[0]=path(u.href);return SB.apply(this,arguments)};var ES=window.EventSource;if(ES){window.EventSource=function(u,o){return new ES(path(String(u)),o)};window.EventSource.prototype=ES.prototype;window.EventSource.CONNECTING=ES.CONNECTING;window.EventSource.OPEN=ES.OPEN;window.EventSource.CLOSED=ES.CLOSED}var AN=Element.prototype.setAttributeNS;Element.prototype.setAttributeNS=function(s,n,v){var l=String(n).split(":").pop();if((l==="href"||l==="src"||l==="action")&&typeof v==="string")v=path(v);return AN.call(this,s,n,v)};var AU=window.Audio;if(AU){window.Audio=function(s){return arguments.length?new AU(typeof s==="string"?path(s):s):new AU()};window.Audio.prototype=AU.prototype}prop(window.HTMLMediaElement&&HTMLMediaElement.prototype,"src");prop(window.HTMLSourceElement&&HTMLSourceElement.prototype,"src");';
     }
 
     map $upstream_http_content_type $ingress_runtime_shim {

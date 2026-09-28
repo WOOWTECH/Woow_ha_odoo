@@ -98,3 +98,33 @@ under Ingress, or on any way escaping on the Public origin. An escape in the
 uncovered group is recorded as what it is: the decision, with the screens
 filed against it. Adding a hook for one of those ways means reopening this
 postscript first; a Static-tier test asserts the shim has none of them.
+
+## Postscript (2026-09-28, media sources)
+
+The media sources the postscript above left open are now covered by the
+Runtime shim. `U-C25` and the #144 crawler found the Event Registration Desk
+(`ir.actions.client` 609) loading its barcode error sound from the Home
+Assistant root and getting 404 (#159): the desk builds it with
+`new Audio(url("/barcodes/static/src/audio/error.ogg"))`, an absolute
+same-origin URL, and the shim wrapped nothing for media. The `/mail/` sound
+on the next line survived only because `/mail/` is a Shipped rewrite.
+
+The rule above decides it: `new Audio(...)` is a call the shim can intercept,
+so this is a shim change and not a Rewrite scan change. The shim now wraps the
+`Audio` constructor -- keeping `prototype` the way the `Worker` wrapper does,
+and leaving `new Audio()` with no argument alone -- and the `src` setter of
+`HTMLMediaElement.prototype` (`<audio>` and `<video>`) and of
+`HTMLSourceElement.prototype`, all through the existing `path()` and property-
+setter helpers. One shim change covers every media prefix at once -- POS
+sounds, `/barcodes/`, and any future app -- where a Generated rewrite would
+cover one prefix at a time.
+
+The **Rewrite scan is unchanged**. Its `INFO` level means "the shim intercepts
+this use", and for a media consumer that is now true, so `/barcodes/` staying
+`INFO` is the correct classification rather than the missed `FAIL` #159 first
+read it as. No Generated rewrite and no Shipped rewrite is added for
+`/barcodes/`.
+
+`<track>`, `<embed>`/`<object>`, `poster`, `srcObject` and CSS `url(...)`
+media stay uncovered: nothing has been reported escaping through them. Each is
+one more wrapper in the same shape if a check ever shows one does.
