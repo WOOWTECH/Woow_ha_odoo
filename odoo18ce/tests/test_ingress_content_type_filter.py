@@ -17,12 +17,31 @@ PREVIEW_HTML = (
     '<html><head><link href="/web/assets/preview.css">'
     '<script src="/web/assets/preview.js"></script></head></html>'
 )
+# A website snippet's inline background, as QWeb's escaper emits it and as
+# the two raw-quote forms and the bare form reach the browser, plus the two
+# shapes no rule may touch (issue #166).
+STYLE_HTML = (
+    "<html><body>"
+    "<span style=\"background-image: url(&#39;/web/image/a.png&#39;)\"></span>"
+    "<span style=\"background-image: url(&quot;/web/image/b.png&quot;)\"></span>"
+    "<span style=\"background-image: url(&#34;/web/image/c.png&#34;)\"></span>"
+    "<span style=\"background-image: url(&#x27;/web/image/d.png&#x27;)\"></span>"
+    "<span style=\"background-image: url('/web/image/e.png')\"></span>"
+    "<span style='background-image: url(\"/web/image/f.png\")'></span>"
+    "<span style=\"background-image: url(/web/image/g.png)\"></span>"
+    "<span style=\"background-image: url(https://cdn.example/h.png)\"></span>"
+    "<span style=\"background-image: url(img.png)\"></span>"
+    "</body></html>"
+)
 
 
 class Upstream(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path == "/html":
             body = b"<html><head><title>Odoo</title></head><body>ok</body></html>"
+            content_type = "text/html; charset=utf-8"
+        elif self.path == "/style":
+            body = STYLE_HTML.encode()
             content_type = "text/html; charset=utf-8"
         elif self.path == "/json":
             # Document Layout serializes preview markup. These are literal JSON
@@ -71,6 +90,15 @@ def assert_template_contract(template: str) -> None:
     assert src_rule in generic
     assert href_rule not in public, "preview rewrite must not affect public origin"
     assert src_rule not in public, "preview rewrite must not affect public origin"
+    # Entity-quoted url(...) -- QWeb escapes inline styles, so the raw-quote
+    # rules never see a website snippet's background. Generic HTML only:
+    # asset bundles carry no HTML entities.
+    assets = ingress[: ingress.index("\n        location / {")]
+    for entity in ("&#39;", "&#34;", "&quot;", "&#x27;"):
+        rule = f"sub_filter 'url({entity}/' 'url({entity}$safe_ingress_path/';"
+        assert rule in generic, rule
+        assert rule not in assets, rule
+        assert rule not in public, rule
 
 
 def preview_assets(payload: dict) -> tuple[str, str]:
@@ -116,6 +144,13 @@ http {{
     sub_filter '"src": "/' '"src": "$safe_ingress_path/';
     sub_filter 'href=\\\\"/web/assets/' 'href=\\\\"$safe_ingress_path/web/assets/';
     sub_filter 'src=\\\\"/web/assets/' 'src=\\\\"$safe_ingress_path/web/assets/';
+    sub_filter 'url(/' 'url($safe_ingress_path/';
+    sub_filter "url('/" "url('$safe_ingress_path/";
+    sub_filter 'url("/' 'url("$safe_ingress_path/';
+    sub_filter 'url(&#39;/' 'url(&#39;$safe_ingress_path/';
+    sub_filter 'url(&#34;/' 'url(&#34;$safe_ingress_path/';
+    sub_filter 'url(&quot;/' 'url(&quot;$safe_ingress_path/';
+    sub_filter 'url(&#x27;/' 'url(&#x27;$safe_ingress_path/';
     location / {{ proxy_pass http://127.0.0.1:{upstream.server_port}; }}
   }}
   server {{
@@ -151,6 +186,22 @@ http {{
 
                 html = request(ingress_socket, "html")
                 assert f'<head><script>window.__INGRESS_PATH__="{PREFIX}";</script>' in html
+
+                styled = request(ingress_socket, "style")
+                for quote in ("&#39;", "&quot;", "&#34;", "&#x27;", "'", '"'):
+                    path = {
+                        "&#39;": "a", "&quot;": "b", "&#34;": "c",
+                        "&#x27;": "d", "'": "e", '"': "f",
+                    }[quote]
+                    want = f"url({quote}{PREFIX}/web/image/{path}.png{quote})"
+                    assert want in styled, (want, styled)
+                assert f"url({PREFIX}/web/image/g.png)" in styled, styled
+                # Already absolute or relative: no rule may touch these.
+                assert "url(https://cdn.example/h.png)" in styled, styled
+                assert "url(img.png)" in styled, styled
+                assert PREFIX + PREFIX not in styled, styled
+
+                assert request(public_socket, "style") == STYLE_HTML
 
                 ingress_payload = request(ingress_socket, "json")
                 decoded_ingress = json.loads(ingress_payload)

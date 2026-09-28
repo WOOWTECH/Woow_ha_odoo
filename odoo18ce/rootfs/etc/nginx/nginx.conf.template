@@ -485,6 +485,28 @@ http {
             sub_filter 'url(/' 'url($safe_ingress_path/';
             sub_filter "url('/" "url('$safe_ingress_path/";
             sub_filter 'url("/' 'url("$safe_ingress_path/';
+            # QWeb escapes attribute values with markupsafe, so a website
+            # snippet's inline background -- style="background-image:
+            # url(&#39;/web/image/...&#39;)" -- reaches the browser with its
+            # quote as an HTML entity and matches none of the three rules
+            # above: the path went unprefixed and resolved against the Home
+            # Assistant root. Each form the escaper can produce gets a rule
+            # of its own, keeping the entity exactly as it was. These belong
+            # to the generic HTML location only -- asset bundles hold no HTML
+            # entities -- and they are written by hand here, so the Rewrite
+            # scan, which reads bundles, never learns about page HTML.
+            #
+            # They inherit the limit of the three above: the pattern is a
+            # plain string, so a protocol-relative reference
+            # (url(&#39;//cdn/x.png&#39;)) is prefixed too and breaks. No
+            # sub_filter can express "root-relative but not //", and no
+            # later rule can undo it, because nginx never rescans what a
+            # rule replaced. Odoo writes none, and folding the rules into
+            # something broader is a change to all seven (issue #166).
+            sub_filter 'url(&#39;/' 'url(&#39;$safe_ingress_path/';
+            sub_filter 'url(&#34;/' 'url(&#34;$safe_ingress_path/';
+            sub_filter 'url(&quot;/' 'url(&quot;$safe_ingress_path/';
+            sub_filter 'url(&#x27;/' 'url(&#x27;$safe_ingress_path/';
 
             sub_filter '<head>' '<head>$ingress_runtime_shim';
         }

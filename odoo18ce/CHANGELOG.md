@@ -43,6 +43,33 @@
   opened it. Issue #168.
 
 ### Fixed
+- Ingress: a website page whose snippet stores its background in an inline
+  style -- the Contact Us parallax, a cover, any image background set in the
+  editor -- now loads the picture under the prefix instead of asking the
+  Home Assistant root for it. The generic HTML location already rewrote
+  `url(/`, `url('/` and `url("/`, but QWeb escapes attribute values with
+  markupsafe, so the page arrives as
+  `style="background-image: url(&#39;/web/image/website.s_parallax_default_image&#39;)"`
+  and no rule matched an entity-encoded quote: one prefix escape, one 404 and
+  one console error per visit, and a blank section. Four `sub_filter` rules
+  now sit beside the three, one per form the escaper can produce --
+  `&#39;`, `&#34;`, `&quot;`, `&#x27;` -- each keeping the entity exactly as
+  it was. The existing three are untouched, so the bare and raw-quote forms
+  rewrite as before, and a `url(` that is already absolute
+  (`url(https://...)`) or relative (`url(img.png)`) is still left alone.
+  The rules are hand-written in the generic HTML location only: asset
+  bundles carry no HTML entities, so the `/web/assets/` location is
+  unchanged, and the Rewrite scan, which reads bundles, learns nothing
+  about page HTML. They inherit the one limit of the three beside them --
+  a plain-string `sub_filter` cannot say "root-relative but not `//`", so
+  a protocol-relative `url(&#39;//cdn/x.png&#39;)` is prefixed and breaks;
+  Odoo writes none, and the template comment records it. The Runtime shim is unchanged -- it never
+  sees markup the server sent -- so a `style` attribute the browser builds
+  (#169, #170) stays where it is. The Static-tier template contract asserts
+  the four rules, and the live-nginx content-type test serves an HTML
+  upstream body in every form and asserts the prefix lands inside the entity
+  quotes with no double prefix. The Public origin has no such rules and is
+  unchanged. No version bump. Issue #166, parent #148.
 - Ingress: the Event Registration Desk's barcode error sound plays again on a
   failed scan. The desk builds it with
   `new Audio(url("/barcodes/static/src/audio/error.ogg"))`, which resolves
