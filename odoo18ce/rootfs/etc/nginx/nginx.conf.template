@@ -488,6 +488,23 @@ http {
             sub_filter 'action="/' 'action="$safe_ingress_path/';
             sub_filter 'data-src="/' 'data-src="$safe_ingress_path/';
             sub_filter 'srcset="/' 'srcset="$safe_ingress_path/';
+            # A website form keeps its confirmation target in the page HTML --
+            # data-success-mode="redirect" data-success-page="/contactus-thank-you"
+            # on Contact Us, "/job-thank-you" on a job application, whatever the
+            # user chose on a form built in the editor -- and the form script
+            # assigns that root-relative path to the page location once the
+            # submit RPC answers. The five rules above are the only attributes
+            # rewritten here, the Runtime shim wraps no location assignment (ADR
+            # 0004 records that as a decision, not an omission), and the Rewrite
+            # scan reads asset bundles and not page HTML, so the value reached
+            # the browser bare: the record was created and then the thank-you
+            # page was asked of the Home Assistant root, which answered 404
+            # (issue #167). The rule belongs to the attribute and not to any one
+            # form or path, so it covers every website form on every page. A
+            # value that is a same-page anchor (`#thanks`) or an absolute URL
+            # matches no byte of it and is left alone; the protocol-relative
+            # limit of the five rules above is inherited (issue #166).
+            sub_filter 'data-success-page="/' 'data-success-page="$safe_ingress_path/';
             # Rewritten asset bytes change with ingress releases while Odoo's
             # content hash does not. Cache-bust HTML references so clients do
             # not keep an older transformed bundle after an add-on update.
@@ -636,6 +653,7 @@ http {
             sub_filter 'action="/' 'action="$safe_ingress_path/';
             sub_filter 'data-src="/' 'data-src="$safe_ingress_path/';
             sub_filter 'srcset="/' 'srcset="$safe_ingress_path/';
+            sub_filter 'data-success-page="/' 'data-success-page="$safe_ingress_path/';
             sub_filter '.min.js"' '.min.js?woow_ingress=%%INGRESS_CACHE_VERSION%%"';
             sub_filter '.min.css"' '.min.css?woow_ingress=%%INGRESS_CACHE_VERSION%%"';
             sub_filter '&#39;/web/login&#39;' '&#39;$safe_ingress_path/web/login&#39;';
@@ -659,8 +677,11 @@ http {
 
             sub_filter '<head>' '<head>$ingress_runtime_shim';
 
-            # Action help, escaped-quote rules, over the five attributes the
-            # generic location's raw-quote rules already cover.
+            # Action help, escaped-quote rules, over the five URL attributes
+            # the generic location's raw-quote rules cover. The sixth attribute
+            # there, `data-success-page`, is a website form's confirmation
+            # target in page HTML (issue #167); a stored action's help never
+            # carries one, so it gets no escaped-quote rule.
             #
             # The identity rules come first because they have to: sub_filter
             # settles two patterns that match at the same byte by the order

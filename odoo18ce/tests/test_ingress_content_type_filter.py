@@ -34,6 +34,19 @@ STYLE_HTML = (
     "</body></html>"
 )
 
+# A website form's confirmation target, as the `s_website_form` snippet renders
+# it into the page. The form script assigns that value to the page location
+# after the submit RPC answers, so a root-relative one has to arrive prefixed;
+# a same-page anchor and an absolute URL have to arrive as they were (#167).
+FORM_HTML = (
+    "<html><body>"
+    '<form data-success-mode="redirect" data-success-page="/contactus-thank-you"></form>'
+    '<form data-success-mode="redirect" data-success-page="/job-thank-you"></form>'
+    '<form data-success-mode="redirect" data-success-page="#thanks"></form>'
+    '<form data-success-mode="redirect" data-success-page="https://cdn.example/thanks"></form>'
+    "</body></html>"
+)
+
 
 class Upstream(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
@@ -42,6 +55,9 @@ class Upstream(BaseHTTPRequestHandler):
             content_type = "text/html; charset=utf-8"
         elif self.path == "/style":
             body = STYLE_HTML.encode()
+            content_type = "text/html; charset=utf-8"
+        elif self.path == "/form":
+            body = FORM_HTML.encode()
             content_type = "text/html; charset=utf-8"
         elif self.path == "/json":
             # Document Layout serializes preview markup. These are literal JSON
@@ -99,6 +115,15 @@ def assert_template_contract(template: str) -> None:
         assert rule in generic, rule
         assert rule not in assets, rule
         assert rule not in public, rule
+    # A website form's success page -- one more rule beside the attribute rules
+    # of the generic HTML location, and there only: no bundle carries the
+    # attribute, and the Public origin serves it byte for byte (#167).
+    success_rule = (
+        "sub_filter 'data-success-page=\"/' 'data-success-page=\"$safe_ingress_path/';"
+    )
+    assert success_rule in generic, success_rule
+    assert success_rule not in assets, success_rule
+    assert success_rule not in public, success_rule
 
 
 def preview_assets(payload: dict) -> tuple[str, str]:
@@ -151,6 +176,7 @@ http {{
     sub_filter 'url(&#34;/' 'url(&#34;$safe_ingress_path/';
     sub_filter 'url(&quot;/' 'url(&quot;$safe_ingress_path/';
     sub_filter 'url(&#x27;/' 'url(&#x27;$safe_ingress_path/';
+    sub_filter 'data-success-page="/' 'data-success-page="$safe_ingress_path/';
     location / {{ proxy_pass http://127.0.0.1:{upstream.server_port}; }}
   }}
   server {{
@@ -202,6 +228,19 @@ http {{
                 assert PREFIX + PREFIX not in styled, styled
 
                 assert request(public_socket, "style") == STYLE_HTML
+
+                formed = request(ingress_socket, "form")
+                for path in ("/contactus-thank-you", "/job-thank-you"):
+                    want = f'data-success-page="{PREFIX}{path}"'
+                    assert want in formed, (want, formed)
+                # A same-page anchor is resolved against the current URL by the
+                # form script, and an absolute URL is already addressed: the
+                # rule matches no byte of either.
+                assert 'data-success-page="#thanks"' in formed, formed
+                assert 'data-success-page="https://cdn.example/thanks"' in formed, formed
+                assert PREFIX + PREFIX not in formed, formed
+
+                assert request(public_socket, "form") == FORM_HTML
 
                 ingress_payload = request(ingress_socket, "json")
                 decoded_ingress = json.loads(ingress_payload)
