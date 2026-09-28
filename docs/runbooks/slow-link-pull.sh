@@ -17,12 +17,15 @@
 # to, and nothing else. It refuses an image that is not on ghcr.io.
 #
 # Usage:
-#   ./slow-link-pull.sh [--dry-run] [<slug>] [<version>]
+#   ./slow-link-pull.sh [--dry-run] [--image <ref>] [<slug>] [<version>]
 #
 #   <slug>      the add-on slug; default 1b7b4ce7_odoo18ce
 #   <version>   an override; default the Supervisor's version_latest
 #   --dry-run   fetch and verify the manifest and the config only, skip the
 #               layer blobs, the load and the gate
+#   --image     the image to pull, without a tag. Default: the Supervisor's
+#               answer if it still carries one, otherwise the image the
+#               installed add-on container runs.
 #
 # Exit codes:
 #   0   the image is loaded and the gate passed (or the dry run verified)
@@ -55,7 +58,11 @@ readonly EXIT_LOCKED=11
 
 readonly DEFAULT_SLUG="1b7b4ce7_odoo18ce"
 readonly REGISTRY="ghcr.io"
-readonly WORK_ROOT="/share/slow-link-pull"
+# `/share` is the add-on-visible path that survives an SSH session drop and a
+# reboot, which is the whole point of the work directory. The override exists
+# so the Static tier can drive this script without a Supervisor: nothing on a
+# real host sets it.
+readonly WORK_ROOT="${SLOW_LINK_WORK_ROOT:-/share/slow-link-pull}"
 
 # A new connection often starts fast and then collapses. Give up on a
 # connection that stays under 50 KB/s for a minute and open a fresh one,
@@ -85,6 +92,7 @@ readonly MAX_ATTEMPTS=500
 readonly ACCEPT_MANIFEST='application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json'
 
 DRY_RUN=0
+IMAGE_OVERRIDE=""
 
 log() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*"; }
 die() { local code="$1"; shift; printf 'error: %s\n' "$*" >&2; exit "${code}"; }
@@ -102,6 +110,10 @@ POSITIONAL=()
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --dry-run) DRY_RUN=1; shift ;;
+        --image)
+            [ "$#" -ge 2 ] || { usage >&2; die "${EXIT_USAGE}" "--image needs a value"; }
+            IMAGE_OVERRIDE="$2"; shift 2 ;;
+        --image=*) IMAGE_OVERRIDE="${1#--image=}"; shift ;;
         -h|--help) usage; exit 0 ;;
         --) shift; while [ "$#" -gt 0 ]; do POSITIONAL+=("$1"); shift; done ;;
         -*) usage >&2; die "${EXIT_USAGE}" "unknown option: $1" ;;
@@ -148,7 +160,53 @@ INFO_JSON="$(ha_json info)"
 ARCH="$(json_field "${INFO_JSON}" '.data.arch')"
 
 APP_JSON="$(ha_json apps info "${SLUG}")"
-IMAGE="$(json_field "${APP_JSON}" '.data.image')"
+
+# An image reference without its tag or digest. Only the last path segment can
+# carry a tag, so `ghcr.io:443/woowtech/woow-ha-odoo-amd64` keeps its port.
+strip_tag() {
+    local ref="${1%%@*}"
+    local last="${ref##*/}"
+    case "${last}" in
+        *:*) printf '%s' "${ref%:*}" ;;
+        *)   printf '%s' "${ref}" ;;
+    esac
+}
+
+# Where the image comes from, in order. The Supervisor used to answer with it,
+# and on Supervisor 2026.09.2 the field is gone: `.data.image` is absent
+# from `ha apps info`, from `ha addons info`, and from the REST
+# `/addons/<slug>/info` and `/store/addons/<slug>` alike (measured on HA OS,
+# Supervisor 2026.09.2, 2026-09-28). The installed container is the second
+# source and the reliable one here: this script exists for an update that
+# failed, so the add-on is installed and its container names the image it
+# runs -- the same repository, an older tag. `app_` is the current container
+# prefix and `addon_` the older one. `--image` is the third, for a host where
+# neither answers.
+resolve_image() {
+    local image name
+    image="$(printf '%s' "${APP_JSON}" | jq -r '.data.image // empty' 2>/dev/null)" || image=""
+    if [ -n "${image}" ]; then
+        printf '%s' "${image}"
+        return 0
+    fi
+    command -v docker >/dev/null 2>&1 || return 1
+    for name in "app_${SLUG}" "addon_${SLUG}"; do
+        image="$(docker inspect --format '{{.Config.Image}}' "${name}" 2>/dev/null)" || image=""
+        if [ -n "${image}" ]; then
+            strip_tag "${image}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+if [ -n "${IMAGE_OVERRIDE}" ]; then
+    IMAGE="$(strip_tag "${IMAGE_OVERRIDE}")"
+else
+    IMAGE="$(resolve_image)" || die "${EXIT_SUPERVISOR}" \
+        "could not work out which image ${SLUG} runs: the Supervisor's answer has no .data.image (Supervisor 2026.09 dropped the field), no container app_${SLUG} or addon_${SLUG} is installed to read it from, and --image was not given"
+fi
+
 if [ -n "${VERSION_OVERRIDE}" ]; then
     VERSION="${VERSION_OVERRIDE}"
 else

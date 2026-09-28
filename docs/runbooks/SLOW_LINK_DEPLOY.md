@@ -144,6 +144,21 @@ dry run: /share/slow-link-pull/1b7b4ce7_odoo18ce/0.4.4 is kept; run again withou
 /share/slow-link-pull.sh 1b7b4ce7_odoo18ce 0.4.4   # 指定 slug 與版本
 ```
 
+> **映像是從哪裡來的。** 腳本按三個來源依序問：Supervisor 的 `.data.image`
+> → 裝好的 add-on 容器（`app_<slug>`，舊命名 `addon_<slug>`）跑的映像 →
+> `--image` 參數。第一個在 **Supervisor 2026.09.2 上已經不存在**：`ha apps info`、
+> `ha addons info`、REST `/addons/<slug>/info` 與 `/store/addons/<slug>` 都不再帶這個欄位
+> （2026-09-28 在測試機上實測）。所以實務上答案來自第二個來源 —— 而這正好永遠成立：
+> 這支腳本存在的情境是「更新失敗」，add-on 一定已經裝著舊版本，容器上的映像名稱
+> 與要抓的新版本是同一個 repository。
+>
+> 只有在 add-on 還沒裝過、或容器被移除的機器上，三個來源才會全空，這時腳本會
+> 以 exit 4 停住並把三條路都列出來；自己補上即可：
+>
+> ```bash
+> /share/slow-link-pull.sh --image ghcr.io/woowtech/woow-ha-odoo-amd64 1b7b4ce7_odoo18ce 0.4.4
+> ```
+
 **會跑很久。** 在慢速線路上以小時計。工作目錄在 `/share/slow-link-pull/<slug>/<version>/`，
 所以 SSH 斷線不會損失進度：**重跑同一行指令就從斷掉的 byte 繼續**。
 建議在 `tmux` 或 Web Terminal 裡跑。
