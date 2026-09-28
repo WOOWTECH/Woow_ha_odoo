@@ -43,6 +43,39 @@
   opened it. Issue #168.
 
 ### Fixed
+- Public origin: the browser keeps its `Secure`, `SameSite=Lax` session
+  cookie when the web client opens its bus socket. Odoo saves the session on
+  its websocket route too and answers the `101` handshake with a
+  `Set-Cookie: session_id=...; HttpOnly; Path=/` of its own, without `Secure`
+  and without `SameSite`. The 8069 `location = /websocket` and the whole 8072
+  listener proxied that response through untouched, so the bare cookie
+  replaced the one `location /` had just rewritten: after login plus one
+  screen the Public cookie read `Secure=False` until the next ordinary page
+  response restored it, and again after the next socket (`U-B2`, root cause
+  RC-4). Cookie rewriting is a property of the surface, not of one location,
+  so every location that proxies to Odoo now carries its surface's rewriting:
+  on the origin listeners `proxy_cookie_flags session_id
+  $woow_origin_cookie_secure httponly samesite=lax` -- the websocket
+  locations, the LAN-only database lifecycle locations and `/jsonrpc` beside
+  the `location /` that already had it -- and on the Ingress listener
+  `proxy_cookie_path / $safe_ingress_path/` with
+  `proxy_cookie_flags session_id $ingress_cookie_secure httponly
+  samesite=lax`, on its websocket and asset locations as well. The
+  `$woow_origin_cookie_secure` and `$ingress_cookie_secure` maps are
+  unchanged and stay the only source of the `Secure` decision, so the LAN
+  tier over plain http still receives a cookie without `Secure` -- marking it
+  Secure there means the browser never sends it back, which reads as a login
+  that bounces straight to the login page -- and Ingress over plain http is
+  unaffected. The Ingress half was hardening: the parity run observed its
+  attributes as expected. Odoo's own cookie behaviour is untouched. The
+  Static-tier contract no longer asserts the directive as a bare substring of
+  the template: it parses the template into `server` and `location` blocks,
+  pins the ten locations that proxy to Odoo across the 8069, 8072 and 5691
+  listeners, and fails when any of them lacks the rewriting of its surface --
+  with a second test that removes one directive from a copy and asserts the
+  rule reports exactly that location. `nginx -t` over both rendered
+  `public_url` shapes still passes. The maintainer reruns `U-B2` generic on
+  the test host after deploy. No version bump. Issue #165, parent #148.
 - Ingress: a website page whose snippet stores its background in an inline
   style -- the Contact Us parallax, a cover, any image background set in the
   editor -- now loads the picture under the prefix instead of asking the

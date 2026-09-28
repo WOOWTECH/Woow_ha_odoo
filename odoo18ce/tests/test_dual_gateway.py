@@ -152,8 +152,14 @@ def test_nginx_template_contract() -> None:
     assert '"lan"   "127.0.0.1:8070";' in n
     assert 'default "127.0.0.1:8071";' in n
     assert "proxy_pass http://$woow_jsonrpc_upstream;" in n
-    # A Secure cookie over plain LAN http is never returned by the browser.
-    assert "proxy_cookie_flags session_id $woow_origin_cookie_secure" in n
+    # A Secure cookie over plain LAN http is never returned by the browser, so
+    # the tunnel's pinned scheme -- and not the LAN's -- is what makes the
+    # cookie Secure. This map is the only source of that decision; which
+    # locations apply it is pinned by
+    # test_every_odoo_location_rewrites_the_session_cookie.
+    assert "map $woow_origin_proto $woow_origin_cookie_secure" in n
+    assert '"https" "secure";' in n
+    assert 'default "nosecure";' in n
     assert "proxy_set_header X-Forwarded-Proto $woow_origin_proto;" in n
     # The old unconditional guard must be gone, not merely bypassed.
     assert "%%PUBLIC_HOST_GUARD%%" not in n
@@ -215,7 +221,6 @@ def test_nginx_template_contract() -> None:
     assert n.count("proxy_set_header X-Forwarded-Proto $ingress_proto;") >= 3
     assert "proxy_set_header Origin $ingress_proto://$http_host;" in n
     assert "map $ingress_proto $ingress_cookie_secure" in n
-    assert "proxy_cookie_flags session_id $ingress_cookie_secure" in n
     assert "proxy_hide_header X-Frame-Options;" in n
     assert "location = /xmlrpc/2/db" in n
     assert "window.WebSocket.OPEN=W.OPEN" in n
@@ -268,6 +273,124 @@ def test_nginx_template_contract() -> None:
         assert rule not in assets, rule
         assert rule not in listeners, rule
 
+
+# --- cookie flags per location (issue #165) ---
+# Odoo saves the session on its websocket route too and answers the handshake
+# with its own `Set-Cookie: session_id`. Cookie flag treatment is therefore a
+# property of the surface, not of one location: every location that proxies to
+# Odoo has to rewrite that cookie the way its surface's `location /` does, or
+# the first bus socket replaces the browser's good cookie with a bare one.
+ORIGIN_COOKIE_FLAGS = "proxy_cookie_flags session_id $woow_origin_cookie_secure httponly samesite=lax;"
+INGRESS_COOKIE_FLAGS = "proxy_cookie_flags session_id $ingress_cookie_secure httponly samesite=lax;"
+INGRESS_COOKIE_PATH = "proxy_cookie_path / $safe_ingress_path/;"
+# Every upstream that is Odoo. `$woow_jsonrpc_upstream` maps to the Odoo HTTP
+# worker or to the RPC policy filter in front of it, which proxies to Odoo.
+ODOO_UPSTREAMS = ("odoo_http", "odoo_websocket", "$woow_jsonrpc_upstream")
+
+
+def mask_strings_and_comments(text: str) -> str:
+    """Blank out quoted parameters and comments, keeping every byte offset.
+
+    The Ingress locations carry sub_filter rules whose JavaScript holds braces,
+    so the block structure is only readable once quoted text is out of the way.
+    """
+    out = []
+    quote = None
+    comment = False
+    escaped = False
+    for ch in text:
+        if comment:
+            comment = ch != "\n"
+            out.append(ch if ch == "\n" else " ")
+        elif quote:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote:
+                quote = None
+            out.append(ch if ch == "\n" else " ")
+        elif ch in "'\"":
+            quote = ch
+            out.append(" ")
+        elif ch == "#":
+            comment = True
+            out.append(" ")
+        else:
+            out.append(ch)
+    assert quote is None, "unterminated quoted parameter in the template"
+    return "".join(out)
+
+
+def block_end(masked: str, brace: int) -> int:
+    depth = 0
+    for i in range(brace, len(masked)):
+        if masked[i] == "{":
+            depth += 1
+        elif masked[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+    raise AssertionError("unbalanced braces in the template")
+
+
+def odoo_proxy_locations(template: str) -> list:
+    """(listen port, location header, body) per location that proxies to Odoo."""
+    masked = mask_strings_and_comments(template)
+    found = []
+    for server in re.finditer(r"\bserver\s*\{", masked):
+        start, end = server.end() - 1, block_end(masked, server.end() - 1)
+        listen = re.search(r"\blisten\s+(\S+)", masked[start:end])
+        assert listen, "a server block with no listen directive"
+        port = listen.group(1).rstrip(";")
+        for loc in re.finditer(r"\blocation\s+([^{]+?)\s*\{", masked[start:end]):
+            loc_start = start + loc.end() - 1
+            body = template[loc_start : block_end(masked, loc_start) + 1]
+            target = re.search(r"\bproxy_pass\s+https?://([^;/\s]+)", body)
+            if target and target.group(1) in ODOO_UPSTREAMS:
+                found.append((port, f"location {loc.group(1)}", body))
+    return found
+
+
+def cookie_flag_violations(template: str) -> list:
+    """Locations whose cookie rewriting does not match their surface's."""
+    violations = []
+    for port, header, body in odoo_proxy_locations(template):
+        required = [INGRESS_COOKIE_FLAGS, INGRESS_COOKIE_PATH] if port == "5691" else [ORIGIN_COOKIE_FLAGS]
+        for directive in required:
+            if directive not in body:
+                violations.append(f"{port} {header}: missing {directive}")
+    return violations
+
+
+def test_every_odoo_location_rewrites_the_session_cookie() -> None:
+    template = read(TEMPLATE)
+    # Pin the inventory as well as the rule: a parser that found nothing would
+    # satisfy the rule vacuously, and a new Odoo location has to be decided on.
+    assert sorted((port, header) for port, header, _ in odoo_proxy_locations(template)) == [
+        ("5691", "location /"),
+        ("5691", "location = /websocket"),
+        ("5691", "location ^~ /web/assets/"),
+        ("8069", "location /"),
+        ("8069", "location = /jsonrpc"),
+        ("8069", "location = /websocket"),
+        ("8069", "location = /xmlrpc/2/db"),
+        ("8069", "location = /xmlrpc/db"),
+        ("8069", "location ^~ /web/database/"),
+        ("8072", "location /"),
+    ]
+    assert cookie_flag_violations(template) == []
+
+
+def test_a_location_that_drops_the_cookie_flags_is_caught() -> None:
+    # The gap this rule closes, reintroduced: the 8069 websocket handshake
+    # answers with Odoo's own `session_id`, without Secure and without
+    # SameSite, and the browser replaces the cookie `location /` had set.
+    template = read(TEMPLATE)
+    websocket = template.index("location = /websocket")
+    flagless = template[:websocket] + template[websocket:].replace(f"\n            {ORIGIN_COOKIE_FLAGS}", "", 1)
+    assert flagless != template
+    assert cookie_flag_violations(flagless) == [f"8069 location = /websocket: missing {ORIGIN_COOKIE_FLAGS}"]
 
 def test_maintenance_bootstrap_contract() -> None:
     # String presence only; the decision logic is covered by
