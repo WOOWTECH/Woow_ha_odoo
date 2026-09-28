@@ -44,8 +44,12 @@ http {
     # one exceeds it; the prefix script below is close to that limit, so every
     # other part of the Runtime shim lives in its own map and is spliced into
     # `$ingress_runtime_shim` by variable reference, as the clipboard script
-    # is. That keeps the text/html gate and the Ingress-only sub_filter as the
-    # single injection point.
+    # is. That keeps this map -- the text/html gate -- as the single place the
+    # shim is assembled, whatever injects it: the `<head>` rule is written once
+    # per Ingress location that can answer with a page, which since issue #158
+    # means the generic `location /` and the action-load location that copies
+    # it. Both carry the same rule and both read this map, so a JSON answer
+    # gets the empty replacement either way.
     #
     # Clipboard script (issue #60). Home Assistant opened over plain http on
     # the LAN is a supported usage, and that page is not a secure context, so
