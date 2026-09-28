@@ -460,19 +460,21 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 | Safari／非 Chromium | 第三方 cookie、SharedWorker、clipboard 限制不同 | 同上 |
 | 開發者模式差集 | 由 `docs/plans/2026-09-05-odoo-developer-mode-delta-tdd.md` 承接 | 交叉引用，不重複 |
 
-### 10.6 共用層實測結果（2026-09-25，2026-09-27 補跑，#143）
+### 10.6 共用層實測結果（2026-09-25，2026-09-27／28 補跑，#143）
 
 F、A、B、C、D 群組在 `odoo_parity`（0.4.4）各跑一次，外加 10.1–10.3 指定的模組畫面；Ingress 端是 HA 前端
-面板裡的 iframe（plain-http LAN 入口），`U-C25` 走 https 入口。`U-D8` 拆成兩筆後共 76 項 = 54 `PARITY` + 8 `GAP`
-+ 2 `APPROVED-DIVERGENCE` + 5 `STRUCTURAL` + 7 `NOT-RUN`；每個 `GAP` 都有 issue（#159、#165–#170）。
+面板裡的 iframe（plain-http LAN 入口），`U-C25` 走 https 入口。`U-D8` 拆成兩筆後共 76 項 = 54 `PARITY` + 7 `GAP`
++ 2 `APPROVED-DIVERGENCE` + 6 `STRUCTURAL` + 7 `NOT-RUN`；每個 `GAP` 都有 issue（#159、#165–#167、#169、#170）。
 POS 兩項在 #161 之後於 2026-09-27 補跑，收據列印（`U-F5`）與相機掃描（`U-C25`）兩端皆 `PARITY`；同次補跑 P-Check
 全數通過，`U-D8` 當時仍為 `GAP`（`sitemap.xml` 跟著請求位址走，#172）。
 `U-D8` 於 2026-09-27 再補跑一次並拆成兩筆（#172）：head 連結與 `robots.txt` 是 `PARITY`，`sitemap.xml` 是
 `APPROVED-DIVERGENCE`（`AD-8`），上面的數字已含這兩筆。#143 那一輪自己的證據檔保留它當時記錄的數字；這兩筆記錄與
 重算後的守恆報告見 `docs/testing/evidence/2026-09-27-issue-172/`。
-`U-C23` 的那一筆 `GAP` 已依 #168 的決定改判：新分頁的位址必然帶 token 是 `STRUCTURAL`（RC-15，`G-07`），
-上面的數字是各輪**實際記錄**的結果，還沒有一輪以新規則跑過 `U-C23`（補跑追蹤 #183）；補跑之後 `GAP` 為 7、`STRUCTURAL` 為 6，
-`#168` 也不再是 `GAP` 的 issue。
+`U-C23` 於 2026-09-28 以 #168 的新規則補跑一次（#183）：新分頁的位址必然帶 token 是 `STRUCTURAL`（RC-15，`G-07`，severity
+`none`，`public_path` 為 `<PUBLIC_BASE>/survey/<token>`）。Ingress 分頁在 `<HA_BASE><INGRESS_PREFIX>/survey/<token>`、public 分頁在
+`<PUBLIC_BASE>/survey/<token>`，兩邊開的是同一頁；同次補跑 P-Check 全數通過（P-5 是 public 分頁位址的比較基準）。上面的數字已含這一筆，
+`#168` 因此不再是 `GAP` 的 issue。這一輪會寫入 Odoo 資料（P-7 問卷 fixture、Test 按鈕產生的問卷作答），依 ADR 0012 授權；#143 那一輪
+自己的證據檔保留它當時記錄的 `GAP`／`important`。這一筆記錄與重算後的守恆報告見 `docs/testing/evidence/2026-09-28-issue-183/`。
 `NOT-RUN`：`U-A9`（無 60 秒以上的動作）、`U-C22`（只有一種語言）、`/event` 與活動報名
 （未裝 `website_event`）、CE 沒有該控制項的三個模組畫面（MRP 工作中心與工單、出勤 kiosk 全螢幕）。證據與方法見 `docs/testing/evidence/2026-09-25-issue-143/`。
 
@@ -523,7 +525,7 @@ E 群組的判定**不只比較兩邊**：產出物裡只要有 HA 位址、相�
 | `G-04` | `@web/core/utils/urls` 的 `url()`／`getOrigin()` 在 Odoo 18 一律退回瀏覽器的 protocol + host（session info 無 `origin` 欄位），而同一個函式同時組出 `/web/image`、`/web/content` 等**站內**位址 | **Important** | RC-9 | `.6` 服務的 `web.assets_backend`：`getOrigin()` 取 `browser.location` 的 `protocol`／`host`，`url()` 以 `getOrigin(options.origin ?? session.origin)` 取基底 | **`STRUCTURAL`**（ADR 0006）。改寫這個共用函式會把站內位址一起變成絕對公開網址並離開 Ingress，正是 ADR 0006 否決「改寫 `session.origin`」的理由。承接路徑：凡經 `url()` 組出、要給外人開的網址，一律從 **Public origin** 產生。2026-09-22 盤點 `.6` 實際服務的 15 個 bundle，目前沒有任何對外分享連結走這條路；日後若出現，逐一評估能否以精確表達式補丁，否則留在本列。追蹤 #70 |
 | `G-05` | ~~Ingress-only 且 Supervisor 取不到 LAN 位址（Canonical URL 為空）時，Website 分享 snippet 仍把 `location.href` 交給社群網站，其中含 Supervisor 的 ingress token~~ **已修正（2026-09-23）** | ~~**Important**~~ | RC-9 | `nginx.conf.template` 的 `const currentUrl=` 補丁現在**無論有沒有 Canonical URL 都剝掉 ingress 前綴** | ADR 0006 已補一段修正，把這條列為「空值即今日行為」的唯一例外：今日行為是把憑證交給第三方，那不值得保留。無 Canonical URL 時連結仍指向 HA 主機、仍然打不開，但不再帶 token。另兩條補丁不受影響。促成重審的是 #108——空值的形態比原先估計的容易達到 |
 | `G-06` | ~~add-on 啟動**之後**才安裝 `website`（例如從 Apps 畫面裝），預設網站的 `domain` 一直是空的，直到下一次重啟；Ingress 下首頁的 `canonical`／`og:url`／`og:image`／`twitter:image` 與 `sitemap.xml` 因此以 HA 位址為基底~~ **已修正並在測試主機驗證（2026-09-25，`docs/testing/evidence/2026-09-25-issue-164/`）** | ~~**Important**~~ | RC-9 | `odoo-maintenance.py` 只在 add-on 啟動當下 `website` 已在 registry 時才寫 `website.domain`（「website module not installed」）；#143 跑 `odoo_parity` 時 `P-5` FAIL、`U-D8` GAP | Rewrite scan service 每輪多一步 **Canonical URL catch-up**（`odoo-canonical-catchup`）：以 `psql` 讀每個資料庫的預設網站 `domain`，空值或與 Canonical URL 不同時，才用同一支 maintenance library 經 `odoo shell` 補寫；穩態每輪不載入 registry。add-on log 出現 `maintenance db=<name>: … website.domain=<Canonical URL>`。追蹤 #164；Ingress 下 `sitemap.xml` 仍跟著請求位址走，已由 `AD-8` 收錄為核准分歧（#172） |
-| `G-07` | Odoo 自己在瀏覽器開出的新分頁（問卷的 Test 按鈕、任何開新分頁的連結、「在新分頁開啟」），在 ingress 下位址必然是 `<HA_BASE><INGRESS_PREFIX>/…`，帶著 Supervisor 的 session token | **`STRUCTURAL`**（原始發現記為 Important；依第 1.4 節，證據記錄的 severity 為 `none`） | RC-15 | `docs/testing/evidence/2026-09-25-issue-143/checks.jsonl` 的 `check:U-C23\|shared\|generic`（run `WOOW-PARITY-20260925T043539Z`）：ingress 分頁在 `<HA_BASE><INGRESS_PREFIX>/survey/<token>`，public 分頁在 `<PUBLIC_BASE>/survey/<token>`，兩邊頁面相同（該筆記錄本身記於決定之前，verdict 仍是 `GAP`／`important`；以新規則補跑後才會是 `STRUCTURAL`） | **Public origin 承接**：ingress 的每一個頂層頁面都在 Supervisor 路徑之下，新分頁因此只有兩種結果——帶 token，或離開 Ingress 去別的 origin。Runtime shim 只夠得到 `window.open`，`target="_blank"` 錨點、中鍵與「在新分頁開啟」走的是 `href`，而 `href` 必須保持前綴才能在頁內導覽；分頁落到別的 origin 還要求第二次登入，LAN fallback 下離開內網就打不開，通道斷線時也打不開。ADR 0006 對 Ingress 內位址的判斷相同，故不改 shim、不改 Literal rewrite；要給別人開的同一個畫面，從 Public origin 取位址分享。使用者文件見 `odoo18ce/DOCS.md`「What only the Public origin can do」。決定本身見 #168（已關閉）；依新規則的補跑追蹤 #183 |
+| `G-07` | Odoo 自己在瀏覽器開出的新分頁（問卷的 Test 按鈕、任何開新分頁的連結、「在新分頁開啟」），在 ingress 下位址必然是 `<HA_BASE><INGRESS_PREFIX>/…`，帶著 Supervisor 的 session token | **`STRUCTURAL`**（原始發現記為 Important；依第 1.4 節，證據記錄的 severity 為 `none`） | RC-15 | `docs/testing/evidence/2026-09-28-issue-183/checks.jsonl` 的 `check:U-C23\|shared\|generic`（run `WOOW-PARITY-20260928T070408Z`，2026-09-28，#183）：verdict `STRUCTURAL`、severity `none`、`public_path` `<PUBLIC_BASE>/survey/<token>`；ingress 分頁在 `<HA_BASE><INGRESS_PREFIX>/survey/<token>`，public 分頁在 `<PUBLIC_BASE>/survey/<token>`，兩邊開的是同一頁。原始發現見 `docs/testing/evidence/2026-09-25-issue-143/checks.jsonl`（run `WOOW-PARITY-20260925T043539Z`）：同樣的形態，但記於決定之前，verdict 仍是 `GAP`／`important` | **Public origin 承接**：ingress 的每一個頂層頁面都在 Supervisor 路徑之下，新分頁因此只有兩種結果——帶 token，或離開 Ingress 去別的 origin。Runtime shim 只夠得到 `window.open`，`target="_blank"` 錨點、中鍵與「在新分頁開啟」走的是 `href`，而 `href` 必須保持前綴才能在頁內導覽；分頁落到別的 origin 還要求第二次登入，LAN fallback 下離開內網就打不開，通道斷線時也打不開。ADR 0006 對 Ingress 內位址的判斷相同，故不改 shim、不改 Literal rewrite；要給別人開的同一個畫面，從 Public origin 取位址分享。使用者文件見 `odoo18ce/DOCS.md`「What only the Public origin can do」。決定本身見 #168（已關閉）；依新規則的補跑已於 2026-09-28 完成（#183） |
 
 ---
 
