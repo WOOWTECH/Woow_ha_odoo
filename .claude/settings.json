@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ssh ha:*)",
+      "Bash(~/venvs/woow/bin/python odoo18ce/tests/:*)",
+      "Bash(~/venvs/woow/bin/python -m pytest:*)"
+    ]
+  }
+}
