@@ -353,11 +353,12 @@ class InjectionWay:
 INJECTION_WAYS: tuple[InjectionWay, ...] = (
     InjectionWay("sendBeacon", COVERED, "navigator.sendBeacon(url)"),
     InjectionWay("EventSource", COVERED, "new EventSource(url)"),
-    InjectionWay("svg-use", COVERED, 'createElementNS <use>, setAttribute("xlink:href", url)'),
+    InjectionWay("svg-use", COVERED, 'createElementNS <use>, an existing xlink:href updated with '
+                 'setAttribute("xlink:href", url)'),
     InjectionWay("svg-use-href", COVERED, 'createElementNS <use>, setAttribute("href", url)'),
     InjectionWay("svg-use-ns", COVERED, 'createElementNS <use>, setAttributeNS(xlink, "xlink:href", url)'),
     InjectionWay("innerHTML-img", ACCEPTED, 'innerHTML with <img src="url">', ("#158",)),
-    InjectionWay("insertAdjacentHTML-use", ACCEPTED, 'insertAdjacentHTML with <svg><use href="url">', ("#158",)),
+    InjectionWay("insertAdjacentHTML-use", ACCEPTED, 'insertAdjacentHTML with <svg><use xlink:href="url">'),
     InjectionWay("style-attr", ACCEPTED, "style attribute with url(url)", ("#170",)),
     InjectionWay("style-url", ACCEPTED, "dynamic <style> element with url(url)"),
     InjectionWay("css-import", ACCEPTED, "dynamic <style> element with @import url(url)"),

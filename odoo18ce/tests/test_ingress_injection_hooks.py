@@ -72,7 +72,15 @@ function makeContext(options) {
   EventSource.OPEN = 1;
   EventSource.CLOSED = 2;
   function Element() { this.attributes = {}; this.attributesNS = {}; }
-  Element.prototype.setAttribute = function (name, value) { this.attributes[name] = String(value); };
+  // setAttribute() matches an existing attribute by qualified name whatever its namespace,
+  // and only creates one in no namespace when there is none: that is what makes
+  // setAttribute("xlink:href", ...) reach the SVG <use> reference a page rendered as markup,
+  // and what makes the same call on a fresh element land somewhere SVG ignores.
+  Element.prototype.setAttribute = function (name, value) {
+    const existing = Object.keys(this.attributesNS).find((key) => key.split("|")[1] === name);
+    if (existing) this.attributesNS[existing] = String(value);
+    else this.attributes[name] = String(value);
+  };
   Element.prototype.setAttributeNS = function (ns, name, value) {
     this.attributesNS[String(ns) + "|" + name] = String(value);
   };
@@ -153,6 +161,13 @@ function makeContext(options) {
   const node = new context.Element();
   node.setAttribute("xlink:href", "/web/image/1");
   assert.equal(node.attributes["xlink:href"], P + "/web/image/1");
+  // The same call over a reference that arrived as markup: the shim prefixes it, and the DOM
+  // writes it to the XLink-namespaced attribute SVG actually reads (U-A6's `svg-use` probe).
+  const rendered = new context.Element();
+  rendered.setAttributeNS(XLINK, "xlink:href", "#seed");
+  rendered.setAttribute("xlink:href", "/web/image/9");
+  assert.equal(rendered.attributesNS[XLINK + "|xlink:href"], P + "/web/image/9");
+  assert.deepEqual(rendered.attributes, {}, "an existing xlink:href is updated, not shadowed");
   node.setAttribute("href", "/web/image/2");
   assert.equal(node.attributes.href, P + "/web/image/2");
   node.setAttributeNS(XLINK, "xlink:href", "/web/image/3");
@@ -171,10 +186,14 @@ function makeContext(options) {
     ["href", P + "/web/image/7"],
     ["href", "https://odoo.example/web/image/8"],
   ]) {
-    node.setAttribute(name, value);
-    assert.equal(node.attributes[name], value, name + "=" + value);
-    node.setAttributeNS(XLINK, name, value);
-    assert.equal(node.attributesNS[XLINK + "|" + name], value, name + "=" + value);
+    // A fresh element each time: setAttribute() would otherwise find the attribute the
+    // setAttributeNS() case left behind and write there instead.
+    const plain = new context.Element();
+    plain.setAttribute(name, value);
+    assert.equal(plain.attributes[name], value, name + "=" + value);
+    const namespaced = new context.Element();
+    namespaced.setAttributeNS(XLINK, name, value);
+    assert.equal(namespaced.attributesNS[XLINK + "|" + name], value, name + "=" + value);
   }
 }
 """

@@ -215,6 +215,8 @@ class InjectionWayTests(unittest.TestCase):
         issues = {way.kind: way.issues for way in INJECTION_WAYS}
         self.assertEqual(issues["innerHTML-img"], ("#158",))
         self.assertEqual(issues["style-attr"], ("#170",))
+        # A way with no screen filed against it names none; the group is the decision.
+        self.assertEqual(issues["insertAdjacentHTML-use"], ())
         self.assertEqual([way.issues for way in INJECTION_WAYS if way.group == COVERED], [()] * 5)
 
     def test_no_escape_on_either_surface_is_parity(self) -> None:
@@ -224,7 +226,8 @@ class InjectionWayTests(unittest.TestCase):
         verdict, severity, notes = injection_verdict(self.ways(), self.ways("sendBeacon", "svg-use"))
         self.assertEqual((verdict, severity), ("GAP", "important"))
         self.assertEqual(notes, ["ingress: the shim did not prefix sendBeacon (navigator.sendBeacon(url)), "
-                                 'svg-use (createElementNS <use>, setAttribute("xlink:href", url))'])
+                                 "svg-use (createElementNS <use>, an existing xlink:href updated with "
+                                 'setAttribute("xlink:href", url))'])
 
     def test_an_accepted_way_escaping_under_ingress_stays_parity_with_its_screens(self) -> None:
         verdict, severity, notes = injection_verdict(self.ways(), self.ways("innerHTML-img", "style-attr",
@@ -267,6 +270,7 @@ class InjectionWayTests(unittest.TestCase):
         script = e2e_parity_shared_layers_live._INJECTION_JS
         for api in ("navigator.sendBeacon(probe('sendBeacon')", "new EventSource(probe('EventSource')",
                     "createElementNS(SVG, 'use')", "node.setAttribute('xlink:href', url)",
+                    "node.setAttributeNS(XLINK, 'xlink:href', '#seed')",
                     "node.setAttribute('href', url)", "node.setAttributeNS(XLINK, 'xlink:href', url)"):
             self.assertIn(api, script)
         # The accepted ways stay markup and style, including the style attribute #170 hits.

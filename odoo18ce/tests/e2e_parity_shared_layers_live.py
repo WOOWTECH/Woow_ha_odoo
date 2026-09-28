@@ -914,14 +914,23 @@ _INJECTION_JS = """async () => {
     const svg = document.createElementNS(SVG, 'svg'), node = document.createElementNS(SVG, 'use');
     set(node, probe(kind) + '#a'); svg.appendChild(node); box.appendChild(svg);
   };
-  use('svg-use', (node, url) => node.setAttribute('xlink:href', url));
+  // setAttribute('xlink:href') writes the qualified name in no namespace, which SVG ignores,
+  // unless the element already carries an xlink:href: the DOM then matches the existing
+  // attribute by qualified name and updates it. That is how a screen reaches this way -- the
+  // icon arrives as markup, a script points it somewhere else -- so the probe seeds it first.
+  use('svg-use', (node, url) => {
+    node.setAttributeNS(XLINK, 'xlink:href', '#seed');
+    node.setAttribute('xlink:href', url);
+  });
   use('svg-use-href', (node, url) => node.setAttribute('href', url));
   use('svg-use-ns', (node, url) => node.setAttributeNS(XLINK, 'xlink:href', url));
   // Accepted: markup and style, which the shim leaves alone by decision.
   const markup = document.createElement('div'); markup.style.display = 'none'; document.body.appendChild(markup);
   markup.innerHTML = '<img src="' + probe('innerHTML-img') + '">';
+  // The HTML parser puts a markup xlink:href in the XLink namespace, so this is the way
+  // #169 saw escape; the shim must still leave it alone.
   markup.insertAdjacentHTML('beforeend',
-    '<svg><use href="' + probe('insertAdjacentHTML-use') + '#a"></use></svg>');
+    '<svg><use xlink:href="' + probe('insertAdjacentHTML-use') + '#a"></use></svg>');
   const inline = document.createElement('div');
   inline.setAttribute('style', 'background:url(' + probe('style-attr') + ')');
   document.body.appendChild(inline);
