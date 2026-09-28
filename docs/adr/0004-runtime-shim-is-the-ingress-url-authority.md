@@ -161,26 +161,38 @@ without going anywhere near the editors.
 
 What that means in the template, and what it deliberately is not:
 
-- **Its own `location`, matched against three routes and nothing else.** The
-  three are the ones whose answer the web client runs `markup(action.help)`
-  over: `/web/action/load`, which a menu click and a direct `/odoo/action-<id>`
-  both reach through `_loadAction`; `/web/action/run`, which returns whatever
-  a server action returned; and `/web/dataset/call_button/<model>/<method>`,
-  which returns whatever a button method returned. (The fourth `markup(` site
-  in `action_service.js` restores `lastAction` from session storage and
-  crosses no wire.) `/web/action/load_breadcrumbs` answers with display names
-  only and is left alone. Rewriting escaped attributes on *all* JSON is the
-  option this ADR already rejected once: 0.3.34 had to stop doing it after the
-  Document Layout preview came back blank.
-- **`/web/dataset/call_kw` is excluded, and that is the line.** It is
-  `call_button`'s sibling, and the temptation is to treat them together --
-  but it carries record content in *both* directions: it is how the HTML
-  editor loads a field and how it saves one. Prefixing its response is
-  therefore the database-poisoning this whole decision exists to avoid, one
-  step removed. `call_button` answers only with `clean_action(...)` or
-  `false`, never with a record the client will write back, which is what makes
-  it safe and `call_kw` not. A route is covered when its answer is an action
-  dict the client only reads, never when it is content the client may return.
+- **Its own exact-match `location` for `/web/action/load`, and no other
+  route** -- even though three deliver the help. The web client runs
+  `markup(action.help)` over the answer of `/web/action/load`, of
+  `/web/action/run` and of `/web/dataset/call_button/<model>/<method>` alike.
+  (The fourth `markup(` site in `action_service.js` restores `lastAction` from
+  session storage and crosses no wire.) Rewriting escaped attributes on *all*
+  JSON is the option this ADR already rejected once: 0.3.34 had to stop doing
+  it after the Document Layout preview came back blank.
+- **What separates the three is not the help; it is the rest of the action
+  dict.** `/web/action/load` answers with a **stored**
+  `ir.actions.act_window` record: its `help` is database HTML the client only
+  displays, and its `context` is the static string a developer wrote into the
+  action definition. Nothing in that response is content the client hands
+  back. The other two answer with an action **computed at call time**, and a
+  computed action carries record content in its `context` as wizard defaults.
+  `marketing_card`'s `action_share()` is the shipped proof: the button returns
+  an `act_window` whose `context.default_body_arch` is a mail body holding
+  `<img src="/web/image/card.campaign/<id>/image_preview">` and
+  `<a href="/cards/<id>/preview">`. Prefix those and the mailing opens
+  pre-filled with the Ingress prefix; the first save writes the Supervisor
+  token into `mailing.mailing.body_arch`. That is this decision's own harm,
+  reached by one more step, and a server action's returned dict -- user-
+  authored Python -- is at least as open. So the rule this ADR gains is:
+  **rewrite a response only when everything in it is something the client
+  displays and never returns.** `/web/dataset/call_kw` fails it most plainly
+  of all, being how the HTML editor both loads a field and saves it.
+- **What that leaves open, said plainly.** Help delivered through
+  `/web/action/run` or a button keeps escaping. It is the smaller harm -- a
+  404 picture against a token in the database -- and closing it needs a fix
+  that can tell one JSON field from another, which a byte-level `sub_filter`
+  cannot. `/web/action/load_breadcrumbs` answers with display names only and
+  needs nothing.
 - **Escaped-quote patterns.** Inside JSON the attribute quote is escaped
   (`src=\"/survey/…`), which is why the generic location's raw-quote HTML rules
   never matched a byte of the help; the only escaped-quote rules there cover
@@ -206,9 +218,7 @@ What that means in the template, and what it deliberately is not:
   timeouts of the generic Ingress location, and every rule it carries; it
   differs only by the added rules. A Static-tier test compares the two bodies
   directive by directive, so drift in either fails rather than quietly changing
-  the routes. One regex location rather than four exact ones for the same
-  reason: `call_button` needs its path form covered anyway, and a body written
-  out four times is a body that drifts.
+  the route.
 - **The Public origin is untouched,** and so is the Rewrite scan: this is a
   **Shipped rewrite**, because action help comes from the database and not from
   a bundle, so no Generated rewrite could ever derive it.

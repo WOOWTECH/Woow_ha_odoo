@@ -542,8 +542,8 @@ http {
         # window action's `help` field is HTML held in the database, and Odoo's
         # own help carries root-relative attributes -- the Surveys screen of an
         # empty list shows four `<img src="/survey/static/src/img/...">` sample
-        # tiles. The web client reads that field out of a JSON-RPC response and
-        # hands it to `markup()`, so it reaches the DOM as markup
+        # tiles. The web client reads that field out of this route's JSON-RPC
+        # response and hands it to `markup()`, so it reaches the DOM as markup
         # (`innerHTML`) and never passes an API the Runtime shim wraps. Under
         # Ingress the four pictures were asked of the Home Assistant root and
         # answered 404: eight Prefix escapes per screen.
@@ -552,52 +552,61 @@ http {
         # uncovered *by decision*: the HTML editor and the website editor load
         # and save record content through that same path, so a shim hook would
         # write the Ingress prefix -- which carries the Ingress token -- back
-        # into the database. Action help is only ever read through these
-        # responses and never saved through them, so a Literal rewrite scoped
-        # to the routes reaches it without reaching the editors.
+        # into the database. Action help is only ever read through this
+        # response and never saved through it, so a Literal rewrite scoped to
+        # the route reaches it without reaching the editors.
         #
         # Inside JSON the attribute quote is escaped (`src=\"/survey/...`), so
         # the generic location's raw-quote HTML rules never matched a byte of
         # it; the only escaped-quote rules there cover `/web/assets/`, for the
         # Document Layout preview. Widening those to all JSON is what ADR 0004
         # calls unsafe -- 0.3.34 had to restrict the shim to `text/html` after
-        # rewriting JSON blanked that preview -- so the new rules live in a
-        # location matched against these routes alone.
+        # rewriting JSON blanked that preview -- so the new rules live in an
+        # exact-match location of their own and no other JSON response sees
+        # them.
         #
-        # The three routes are the ones whose answer the web client runs
-        # `markup(action.help)` over (`action_service.js`, the four `markup(`
-        # sites: two of them are this `_loadAction` path, one is
-        # `_executeServerAction`, one is `doActionButton`; the fourth reads
-        # `lastAction` back out of session storage and crosses no wire):
+        # **This route and no other, even though three deliver help.** The web
+        # client runs `markup(action.help)` over the answer of
+        # `/web/action/load`, of `/web/action/run` and of
+        # `/web/dataset/call_button/<model>/<method>` alike. Only the first is
+        # safe to rewrite, and the difference is not the help: it is the rest
+        # of the action dict.
         #
-        #   /web/action/load              a menu click and a direct
-        #                                 /odoo/action-<id>, through _loadAction
-        #   /web/action/run               whatever a server action returned
-        #   /web/dataset/call_button/...  whatever a button method returned;
-        #                                 always the path form
-        #                                 /web/dataset/call_button/<model>/<method>
+        # `/web/action/load` answers with a **stored** `ir.actions.act_window`
+        # record. Its `help` is database HTML the client only ever displays,
+        # and its `context` is the static string a developer wrote into the
+        # action definition. Nothing in that response is content the client
+        # will hand back.
         #
-        # `/web/dataset/call_kw` is the sibling of that last one and is
-        # deliberately **not** here. It carries record content in both
-        # directions -- it is how the HTML editor loads a field and how it
-        # saves it -- so prefixing its response is the database-poisoning this
-        # whole decision exists to avoid. `call_button` answers only with
-        # `clean_action(...)` or `false`, never with a record the client will
-        # write back. `/web/action/load_breadcrumbs` answers with display names
-        # only and is left alone.
+        # The other two answer with an action **computed at call time**, and a
+        # computed action carries record content in its `context` as wizard
+        # defaults. `marketing_card`'s `action_share()` button is the shipped
+        # example: it returns an `act_window` whose
+        # `context.default_body_arch` is a mail body holding
+        # `<img src="/web/image/card.campaign/<id>/image_preview">` and
+        # `<a href="/cards/<id>/preview">`. Prefix those and the mailing opens
+        # pre-filled with the Ingress prefix, and the first save writes the
+        # Supervisor token into `mailing.mailing.body_arch`. That is the
+        # database-poisoning this entire decision exists to avoid, reached by
+        # one more step. A server action's returned dict is user-authored
+        # Python and is at least as open.
         #
-        # One regex location rather than four exact ones: it is matched against
-        # these routes and nothing else, `call_button` needs its path form
-        # covered anyway, and the body below would otherwise be written out
-        # four times. Everything before `# Action help, escaped-quote rules` is
-        # every directive of `location /` above, in its order and with only its
+        # So the rule is: **rewrite a response only when everything in it is
+        # something the client displays and never returns.** Help delivered
+        # through the other two routes keeps escaping, and that is the smaller
+        # harm; it needs a fix that can tell a field from a field, which a
+        # byte-level `sub_filter` cannot. `/web/action/load_breadcrumbs`
+        # answers with display names only and needs nothing.
+        #
+        # Everything before `# Action help, escaped-quote rules` is every
+        # directive of `location /` above, in its order and with only its
         # comments left behind: proxy headers, cookie path and flags,
         # X-Frame-Options removal, buffering, timeouts, and every rule it
-        # carries. Ingress behaviour for these routes differs from the generic
+        # carries. Ingress behaviour for this route differs from the generic
         # location only by the added rules, and `test_ingress_action_help.py`
         # compares the two directive lists, so later drift in either fails
-        # rather than quietly changing the routes.
-        location ~ ^/web/(action/(load|run)|dataset/call_button)(/|$) {
+        # rather than quietly changing the route.
+        location = /web/action/load {
             proxy_pass http://odoo_http;
             proxy_http_version 1.1;
             proxy_set_header Host $http_host;

@@ -17,18 +17,27 @@ a hook would write the token-bearing Ingress prefix into the database -- and
 sends a screen that hits it to a route-scoped **Literal rewrite** instead. That
 is what these contracts guard:
 
-* the two routes that hand the web client an action dict, ``/web/action/load``
-  and ``/web/action/run``, each get an exact-match ``location`` of their own,
-  so no other JSON response sees the rules (ADR 0004's second rejected option,
-  and the reason 0.3.34 had to stop rewriting JSON wholesale);
-* each of those locations is otherwise the Ingress ``location /`` -- proxy
-  headers, cookie path and flags, ``X-Frame-Options`` removal, buffering,
-  timeouts and every rule it carries. The comparison is by directive, so drift
-  in either body fails here rather than quietly changing the route;
+* the rules live in an exact-match ``location`` for ``/web/action/load`` and
+  nowhere else, so no other JSON response sees them (ADR 0004's second
+  rejected option, and the reason 0.3.34 had to stop rewriting JSON
+  wholesale);
+* ``/web/action/run`` and ``/web/dataset/call_button/<model>/<method>`` deliver
+  markup()'d help too and are **still left alone**, because they answer with an
+  action computed at call time, and a computed action carries record content in
+  its ``context`` as wizard defaults. ``marketing_card``'s ``action_share()``
+  is the shipped proof: its ``context.default_body_arch`` holds
+  ``<img src="/web/image/card.campaign/…">``, which the user then saves into
+  ``mailing.mailing``. Prefixing it would put the Supervisor token in the
+  database -- the harm this whole decision exists to avoid. A stored action
+  record, which is what ``/web/action/load`` answers with, has no such field;
+* the location is otherwise the Ingress ``location /`` -- proxy headers, cookie
+  path and flags, ``X-Frame-Options`` removal, buffering, timeouts and every
+  rule it carries. The comparison is by directive, so drift in either body
+  fails here rather than quietly changing the route;
 * the rules run, over the real template's directives, against a live nginx: an
   escaped-quote attribute URL is prefixed, one that already carries the prefix
-  is left alone, and the generic location on the same listener still does not
-  touch either.
+  is left alone, and the routes above plus the generic location still touch
+  neither.
 """
 import json
 import re
@@ -65,22 +74,41 @@ HELP_HTML = (
 )
 
 
+# What a *computed* action carries that a stored one does not: record content
+# as a wizard default. This is `marketing_card`'s `action_share()`, shortened --
+# a button method returning an act_window whose context holds a mail body the
+# user edits and saves into `mailing.mailing.body_arch`. Prefixing these two
+# URLs would write the Ingress prefix, Supervisor token and all, into the
+# database, so no route that can answer with one of these may be rewritten.
+COMPUTED_CONTEXT = {
+    "default_subject": "Send Cards",
+    "default_body_arch": (
+        '<div class="o_layout">'
+        '<a href="/cards/4/preview">'
+        '<img src="/web/image/card.campaign/4/image_preview" class="img-fluid"/>'
+        "</a></div>"
+    ),
+}
+
+
 class Upstream(BaseHTTPRequestHandler):
     """Odoo's answer to an action load: JSON-RPC around the action dict."""
 
     def respond(self) -> None:
-        payload = json.dumps(
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "result": {
-                    "id": 930,
-                    "type": "ir.actions.act_window",
-                    "res_model": "survey.survey",
-                    "help": HELP_HTML,
-                },
-            }
-        )
+        action = {
+            "id": 930,
+            "type": "ir.actions.act_window",
+            "res_model": "survey.survey",
+            "help": HELP_HTML,
+            # A stored action's context is the static string a developer wrote
+            # into the action definition, not record content.
+            "context": "{'search_default_my_surveys': 1}",
+        }
+        if self.path != "/web/action/load":
+            # Everything else stands in for a route that answers with an action
+            # computed at call time.
+            action = dict(action, context=COMPUTED_CONTEXT)
+        payload = json.dumps({"jsonrpc": "2.0", "id": 1, "result": action})
         # Inside JSON the attribute quote is escaped, which is the whole reason
         # the generic location's raw-quote rules never matched a byte of it.
         assert r'src=\"/survey/static/src/img/survey_sample_survey.png\"' in payload
@@ -144,7 +172,7 @@ ACTION_HELP_RULES = [
 ] + [
     f"sub_filter '{a}=\\\\\"/' '{a}=\\\\\"$safe_ingress_path/';" for a in ATTRIBUTES
 ]
-ACTION_LOCATION = "~ ^/web/(action/(load|run)|dataset/call_button)(/|$)"
+ACTION_LOCATION = "= /web/action/load"
 ACTION_LOCATIONS = (ACTION_LOCATION,)
 
 
@@ -323,34 +351,40 @@ def main() -> None:
                 else:
                     raise AssertionError("nginx action-help harness socket did not become ready")
 
-                for route in (
-                    "/web/action/load",
-                    "/web/action/run",
-                    # Always the path form: the web client builds it as
-                    # /web/dataset/call_button/<model>/<method>.
-                    "/web/dataset/call_button/survey.survey/action_open",
-                ):
-                    body = request(socket, route)
-                    assert_help_is_prefixed(body)
-                    # The response is still JSON, and the Runtime shim -- a
-                    # text/html replacement -- is not injected into it.
-                    assert json.loads(body)["result"]["id"] == 930
-                    assert "__INGRESS_PATH__" not in body
+                body = request(socket, "/web/action/load")
+                assert_help_is_prefixed(body)
+                # The response is still JSON, and the Runtime shim -- a
+                # text/html replacement -- is not injected into it.
+                assert json.loads(body)["result"]["id"] == 930
+                assert "__INGRESS_PATH__" not in body
 
-                # The generic location on the same listener is unchanged: it
-                # has no escaped-quote rule but the /web/assets/ one, so the
-                # help HTML comes back as Odoo wrote it. `call_kw` is the route
-                # that matters here -- it carries record content in both
-                # directions, so prefixing its response would put the Ingress
-                # token into whatever the HTML editor saves next.
+                # Every other route on the same listener falls through to the
+                # generic location, which has no escaped-quote rule but the
+                # /web/assets/ one, so the help HTML comes back as Odoo wrote
+                # it -- and, decisively, so does the record content a computed
+                # action carries as a wizard default. `/web/action/run` and
+                # `/web/dataset/call_button/...` deliver markup()'d help too;
+                # they are left alone *because* of that context, which a user
+                # edits and saves. `/web/dataset/call_kw` is the same story one
+                # step plainer, and `/web/action/load_breadcrumbs` needs
+                # nothing.
                 for route in (
+                    "/web/action/run",
+                    "/web/dataset/call_button/card.campaign/action_share",
                     "/web/dataset/call_kw/survey.survey/web_read",
                     "/web/action/load_breadcrumbs",
                 ):
-                    help_html = json.loads(request(socket, route))["result"]["help"]
+                    result = json.loads(request(socket, route))["result"]
+                    help_html = result["help"]
                     assert '<img src="/survey/static/src/img/survey_sample_survey.png">' in help_html, route
                     assert f'<a href="{PREFIX}/odoo/surveys/new">' not in help_html, route
                     assert f'href="{PREFIX}/web/assets/1/web.assets_backend.min.css"' in help_html, route
+                    # The reason these routes are out: the wizard default is
+                    # record content, and a prefix written into it is a
+                    # Supervisor token written into the database.
+                    body_arch = result["context"]["default_body_arch"]
+                    assert body_arch == COMPUTED_CONTEXT["default_body_arch"], route
+                    assert PREFIX not in body_arch, route
             finally:
                 process.terminate()
                 try:
