@@ -137,3 +137,63 @@ crawler record (`ir.actions.client` 609) returning to `PARITY`. `U-A6`'s probe
 list is *not* extended: its covered group still holds only the #169 ways, so a
 media escape would be caught by the desk's screen rather than by the audit.
 Adding a media probe to `U-A6` is a change of its own.
+
+## Postscript (2026-09-28, action help)
+
+The first of the screens the postscript above filed against the uncovered
+group has its Literal rewrite. The #144 parity run found the Surveys screen of
+an empty survey list (`ir.actions.act_window` 930, both survey menus) asking
+the Home Assistant root for the four sample-survey pictures and getting 404 --
+eight **Prefix escapes**, eight 4xx and eight console errors per screen, with
+the Public origin clean (#158). The pictures are `<img src="/survey/static/…">`
+in the action's `help` field: HTML that lives in the database, reaches the
+browser inside the `/web/action/load` JSON-RPC response, and is inserted as
+markup (`markup(action.help)` → `innerHTML`). The **Rewrite scan** cannot see
+it either -- it reads asset bundles, and this literal is in a record.
+
+The rule above decides it the way the postscript said it would. Markup
+insertion is in the uncovered group, so this is **not** a shim change: the HTML
+editor loads and saves record content through the same property, and a hook
+there would write the Ingress prefix -- token and all -- into the database.
+Action help is only ever read through the action-load response and never saved
+through it, so a **Literal rewrite scoped to that route** reaches the escape
+without going anywhere near the editors.
+
+What that means in the template, and what it deliberately is not:
+
+- **Its own exact-match `location`,** one per route that hands the web client
+  an action dict: `/web/action/load`, which a menu click and a direct
+  `/odoo/action-<id>` both reach through `_loadAction`, and `/web/action/run`,
+  which returns whatever a server action returned. `/web/action/load_breadcrumbs`
+  returns display names only and is left alone. Rewriting escaped attributes on
+  *all* JSON is the option this ADR already rejected once: 0.3.34 had to stop
+  doing it after the Document Layout preview came back blank.
+- **Escaped-quote patterns.** Inside JSON the attribute quote is escaped
+  (`src=\"/survey/…`), which is why the generic location's raw-quote HTML rules
+  never matched a byte of the help; the only escaped-quote rules there cover
+  `/web/assets/`, for that same preview. The new rules cover the five
+  attributes the raw-quote rules already do: `href`, `src`, `action`,
+  `data-src`, `srcset`.
+- **No double prefix, by rule order.** `sub_filter` settles two patterns that
+  match at the same byte by the order they are written -- the earlier one wins
+  even where a later one is longer -- so each attribute gets an identity rule
+  (`src=\"$safe_ingress_path/` → itself) written *ahead* of its general rule.
+  A URL that already carries the prefix is consumed by the identity rule and
+  left as it was. The template's older claim that "no later rule can undo it"
+  stays true and is the reason these are written first.
+- **A copy of `location /`, not a subset of it.** The route keeps the proxy
+  headers, cookie path and flags, `X-Frame-Options` removal, buffering and
+  timeouts of the generic Ingress location, and every rule it carries; it
+  differs only by the added rules. A Static-tier test compares the two bodies
+  directive by directive, so drift in either fails rather than quietly changing
+  the route.
+- **The Public origin is untouched,** and so is the Rewrite scan: this is a
+  **Shipped rewrite**, because action help comes from the database and not from
+  a bundle, so no Generated rewrite could ever derive it.
+
+`U-A6`'s probe list is not extended. Its `accepted` group still records the
+`innerHTML` escape as the decision it is; what proves this fix is the Surveys
+screen's own crawler record for action 930 returning to `PARITY`, plus the
+Static-tier contract. The other screen filed against the uncovered group, the
+website editor's snippet thumbnails (#170), is still open and gets a rewrite of
+its own in the same shape.

@@ -30,6 +30,7 @@ from pathlib import Path
 
 import pytest
 
+from test_ingress_action_help import location_block, server_block
 from test_ingress_clipboard_fallback import NGX_CONF_BUFFER, directive_lines
 from test_ingress_router_rewrite import TEMPLATE, map_block
 
@@ -139,8 +140,18 @@ def test_the_global_is_defined_before_any_bundle_can_read_it() -> None:
         "$ingress_canonical_url_shim must be referenced only inside $ingress_runtime_shim, "
         f"found it on lines {references}"
     )
-    assert text.count("sub_filter '<head>' '<head>$ingress_runtime_shim';") == 1, (
-        "the Runtime shim keeps a single injection point"
+    # One injection rule per Ingress location that can answer with a page, and
+    # nowhere else. The action-help routes (issue #158) are copies of the
+    # Ingress `location /`, this rule included -- on a JSON response the map
+    # yields an empty replacement, so it is inert there, and keeping it is what
+    # makes the copy a copy.
+    injection = "sub_filter '<head>' '<head>$ingress_runtime_shim';"
+    ingress = server_block(text, "5691")
+    assert text.count(injection) == ingress.count(injection)
+    for header in ("/", "= /web/action/load", "= /web/action/run"):
+        assert location_block(ingress, header).count(injection) == 1, header
+    assert ingress.count(injection) == 3, (
+        "the Runtime shim is injected by one rule per Ingress page location"
     )
 
 

@@ -371,6 +371,10 @@ def test_every_odoo_location_rewrites_the_session_cookie() -> None:
     # satisfy the rule vacuously, and a new Odoo location has to be decided on.
     assert sorted((port, header) for port, header, _ in proxying_locations(template)) == [
         ("5691", "location /"),
+        # The two routes that hand the web client an action dict, each a copy
+        # of the Ingress `location /` plus the action-help rules (issue #158).
+        ("5691", "location = /web/action/load"),
+        ("5691", "location = /web/action/run"),
         ("5691", "location = /websocket"),
         ("5691", "location ^~ /web/assets/"),
         ("8069", "location /"),
