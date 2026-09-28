@@ -1,8 +1,8 @@
 # Survey sample pictures under Ingress, before and after the action-help rewrite (#158)
 
 Two menu/action crawls on the test host on 2026-09-28, against the **local**
-add-on `local_odoo18ce` built from `agent/issue-158` at `3c2ab53`
-(`0.4.4-202609281355`, image `local/amd64-addon-odoo18ce:0.4.4-202609281355`,
+add-on `local_odoo18ce` built from `agent/issue-158`
+(`0.4.4-202609281425`, image `local/amd64-addon-odoo18ce:0.4.4-202609281425`,
 so the branch and not a pulled Release), database **`catchup164b`**, with the
 `survey` module installed for the run. Driver:
 
@@ -25,11 +25,13 @@ reached from `survey.menu_surveys` and `survey.menu_survey_form`.
 
 ## Control — `crawl-control.jsonl`
 
-Run `WOOW-PARITY-20260928T140831Z`. Same container, same database, same
-minute, with the two `location = /web/action/load` and
-`location = /web/action/run` blocks cut out of the rendered
+Run `WOOW-PARITY-20260928T140831Z`. Same container, same database, minutes
+apart, with the Issue's `location` block cut out of the rendered
 `/etc/nginx/nginx.conf` and nginx reloaded, so the only difference from the
-run below is this Issue's rules.
+run below is this Issue's rules. (The control ran against the first shape of
+the fix, two exact-match locations; the run below is the one the branch
+ships, a single regex location over the three routes. What the control
+measures — the escape with no rule at all — is the same either way.)
 
 | Control identity | `route_escape` | `http_4xx_5xx` | `console_error` |
 |---|---|---|---|
@@ -49,19 +51,19 @@ unprefixed, exactly as the #144 run recorded them for action 930:
 
 ## With the rules — `crawl-fixed.jsonl`
 
-Run `WOOW-PARITY-20260928T140633Z`. Every one of the six survey actions is
+Run `WOOW-PARITY-20260928T142639Z`. Every one of the six survey actions is
 `CLEAN`: `route_escape`, `http_4xx_5xx`, `console_error`, `failed_requests`
 and `pageerror` are all **0**, and `url_violations` is empty. On action 220
 the same four pictures are now recorded as
-`<INGRESS_PREFIX>/survey/static/src/img/survey_sample_*.png`, and the add-on's
-access log has each of them answered **HTTP 200** twice — once per survey
-menu.
+`<INGRESS_PREFIX>/survey/static/src/img/survey_sample_*.png`, and each of them
+is **HTTP 200** in the add-on's access log — four requests rather than eight,
+because the second survey menu takes them from the browser cache.
 
 ## What the run left on the host
 
 - `local_odoo18ce` is running the branch build, not the 6edf781 build it held
   before; `/addons/odoo18ce` holds this branch's source with `image:` removed
-  and `version: 0.4.4-202609281355`, per `LOCAL_BUILD_ON_HOST.md`.
+  and `version: 0.4.4-202609281425`, per `LOCAL_BUILD_ON_HOST.md`.
 - `catchup164b` has the `survey` module **installed** (it did not before) and
   its `admin` password **reset** to a value generated on the host, because the
   `.env` password does not open that database. It is a scratch database left

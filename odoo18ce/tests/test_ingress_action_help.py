@@ -55,6 +55,8 @@ HELP_HTML = (
     '<a href="/odoo/surveys/new">new</a>'
     '<form action="/survey/submit"></form>'
     '<img data-src="/web/image/1" srcset="/web/image/2 2x">'
+    '<img srcset="/web/image/3 1x, /web/image/4 2x">'
+    '<img src="//cdn.example/protocol-relative.png">'
     '<link href="/web/assets/1/web.assets_backend.min.css">'
     f'<img src="{PREFIX}/survey/static/src/img/already.png">'
     '<img src="https://cdn.example/remote.png">'
@@ -142,7 +144,8 @@ ACTION_HELP_RULES = [
 ] + [
     f"sub_filter '{a}=\\\\\"/' '{a}=\\\\\"$safe_ingress_path/';" for a in ATTRIBUTES
 ]
-ACTION_LOCATIONS = ("= /web/action/load", "= /web/action/run")
+ACTION_LOCATION = "~ ^/web/(action/(load|run)|dataset/call_button)(/|$)"
+ACTION_LOCATIONS = (ACTION_LOCATION,)
 
 
 def test_action_routes_clone_the_generic_ingress_location() -> None:
@@ -224,7 +227,15 @@ events {{}}
 http {{
   access_log off;
 {maps}
-  map $upstream_http_content_type $ingress_runtime_shim {{ default ""; }}
+  # The shape of the template's own map: keyed on the upstream content type,
+  # so a JSON response gets an empty replacement and an HTML one gets the
+  # script. A `default ""` stand-in would make the "no shim in JSON" assertion
+  # below vacuous -- and 0.3.34, which injected the shim into JSON and blanked
+  # the Document Layout preview, is exactly what that assertion guards.
+  map $upstream_http_content_type $ingress_runtime_shim {{
+    default "";
+    "~*^text/html(?:;|$)" '<script>window.__INGRESS_PATH__="$safe_ingress_path";</script>';
+  }}
   upstream odoo_http {{ server 127.0.0.1:{upstream_port}; }}
   server {{
     listen unix:{socket};
@@ -259,6 +270,14 @@ def assert_help_is_prefixed(body: str) -> None:
     assert f'<form action="{PREFIX}/survey/submit">' in help_html, help_html
     assert f'data-src="{PREFIX}/web/image/1"' in help_html, help_html
     assert f'srcset="{PREFIX}/web/image/2 2x"' in help_html, help_html
+    # The two limits of a plain-string pattern, pinned so they stay known
+    # rather than becoming a surprise (issue #166 owns fixing them, for every
+    # such rule in the template at once):
+    #   * `srcset` is a list, and only its first candidate sits behind the
+    #     attribute opener, so the second one still escapes;
+    #   * a protocol-relative reference is prefixed, and breaks.
+    assert f'srcset="{PREFIX}/web/image/3 1x, /web/image/4 2x"' in help_html, help_html
+    assert f'<img src="{PREFIX}//cdn.example/protocol-relative.png">' in help_html, help_html
     # The escaped `/web/assets/` rule the generic body already carried is ahead
     # of the new ones and answers first; its result is the same.
     assert f'href="{PREFIX}/web/assets/1/web.assets_backend.min.css"' in help_html, help_html
@@ -304,7 +323,13 @@ def main() -> None:
                 else:
                     raise AssertionError("nginx action-help harness socket did not become ready")
 
-                for route in ("/web/action/load", "/web/action/run"):
+                for route in (
+                    "/web/action/load",
+                    "/web/action/run",
+                    # Always the path form: the web client builds it as
+                    # /web/dataset/call_button/<model>/<method>.
+                    "/web/dataset/call_button/survey.survey/action_open",
+                ):
                     body = request(socket, route)
                     assert_help_is_prefixed(body)
                     # The response is still JSON, and the Runtime shim -- a
@@ -314,12 +339,18 @@ def main() -> None:
 
                 # The generic location on the same listener is unchanged: it
                 # has no escaped-quote rule but the /web/assets/ one, so the
-                # help HTML comes back as Odoo wrote it.
-                generic = json.loads(request(socket, "/web/action/load_breadcrumbs"))
-                help_html = generic["result"]["help"]
-                assert '<img src="/survey/static/src/img/survey_sample_survey.png">' in help_html
-                assert f'<a href="{PREFIX}/odoo/surveys/new">' not in help_html
-                assert f'href="{PREFIX}/web/assets/1/web.assets_backend.min.css"' in help_html
+                # help HTML comes back as Odoo wrote it. `call_kw` is the route
+                # that matters here -- it carries record content in both
+                # directions, so prefixing its response would put the Ingress
+                # token into whatever the HTML editor saves next.
+                for route in (
+                    "/web/dataset/call_kw/survey.survey/web_read",
+                    "/web/action/load_breadcrumbs",
+                ):
+                    help_html = json.loads(request(socket, route))["result"]["help"]
+                    assert '<img src="/survey/static/src/img/survey_sample_survey.png">' in help_html, route
+                    assert f'<a href="{PREFIX}/odoo/surveys/new">' not in help_html, route
+                    assert f'href="{PREFIX}/web/assets/1/web.assets_backend.min.css"' in help_html, route
             finally:
                 process.terminate()
                 try:

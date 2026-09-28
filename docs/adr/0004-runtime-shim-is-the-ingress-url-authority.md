@@ -161,13 +161,26 @@ without going anywhere near the editors.
 
 What that means in the template, and what it deliberately is not:
 
-- **Its own exact-match `location`,** one per route that hands the web client
-  an action dict: `/web/action/load`, which a menu click and a direct
-  `/odoo/action-<id>` both reach through `_loadAction`, and `/web/action/run`,
-  which returns whatever a server action returned. `/web/action/load_breadcrumbs`
-  returns display names only and is left alone. Rewriting escaped attributes on
-  *all* JSON is the option this ADR already rejected once: 0.3.34 had to stop
-  doing it after the Document Layout preview came back blank.
+- **Its own `location`, matched against three routes and nothing else.** The
+  three are the ones whose answer the web client runs `markup(action.help)`
+  over: `/web/action/load`, which a menu click and a direct `/odoo/action-<id>`
+  both reach through `_loadAction`; `/web/action/run`, which returns whatever
+  a server action returned; and `/web/dataset/call_button/<model>/<method>`,
+  which returns whatever a button method returned. (The fourth `markup(` site
+  in `action_service.js` restores `lastAction` from session storage and
+  crosses no wire.) `/web/action/load_breadcrumbs` answers with display names
+  only and is left alone. Rewriting escaped attributes on *all* JSON is the
+  option this ADR already rejected once: 0.3.34 had to stop doing it after the
+  Document Layout preview came back blank.
+- **`/web/dataset/call_kw` is excluded, and that is the line.** It is
+  `call_button`'s sibling, and the temptation is to treat them together --
+  but it carries record content in *both* directions: it is how the HTML
+  editor loads a field and how it saves one. Prefixing its response is
+  therefore the database-poisoning this whole decision exists to avoid, one
+  step removed. `call_button` answers only with `clean_action(...)` or
+  `false`, never with a record the client will write back, which is what makes
+  it safe and `call_kw` not. A route is covered when its answer is an action
+  dict the client only reads, never when it is content the client may return.
 - **Escaped-quote patterns.** Inside JSON the attribute quote is escaped
   (`src=\"/survey/…`), which is why the generic location's raw-quote HTML rules
   never matched a byte of the help; the only escaped-quote rules there cover
@@ -180,13 +193,22 @@ What that means in the template, and what it deliberately is not:
   (`src=\"$safe_ingress_path/` → itself) written *ahead* of its general rule.
   A URL that already carries the prefix is consumed by the identity rule and
   left as it was. The template's older claim that "no later rule can undo it"
-  stays true and is the reason these are written first.
-- **A copy of `location /`, not a subset of it.** The route keeps the proxy
+  stays true and is the reason these are written first; its other claim, that
+  overlapping patterns are settled "not by the order the rules are written
+  in", was wrong and has been corrected where it stood. Two limits survive,
+  because the pattern is a string and not a parser: a protocol-relative
+  reference is prefixed and breaks, and `srcset` is a list whose candidates
+  after the first are not behind the attribute opener. Both are pinned by the
+  Static-tier test and belong to #166, which fixes them for every such rule at
+  once or not at all.
+- **A copy of `location /`, not a subset of it.** The location keeps the proxy
   headers, cookie path and flags, `X-Frame-Options` removal, buffering and
   timeouts of the generic Ingress location, and every rule it carries; it
   differs only by the added rules. A Static-tier test compares the two bodies
   directive by directive, so drift in either fails rather than quietly changing
-  the route.
+  the routes. One regex location rather than four exact ones for the same
+  reason: `call_button` needs its path form covered anyway, and a body written
+  out four times is a body that drifts.
 - **The Public origin is untouched,** and so is the Rewrite scan: this is a
   **Shipped rewrite**, because action help comes from the database and not from
   a bundle, so no Generated rewrite could ever derive it.

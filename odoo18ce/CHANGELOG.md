@@ -43,6 +43,36 @@
   opened it. Issue #168.
 
 ### Fixed
+- Under Ingress, an action's help pictures load instead of 404ing. A window
+  action's `help` field is HTML kept in the database, and Odoo's own help
+  carries root-relative addresses: the Surveys screen of an empty survey list
+  shows four `<img src="/survey/static/src/img/survey_sample_*.png">` tiles.
+  That HTML reaches the browser inside a JSON-RPC response and the web client
+  inserts it as markup, so the Runtime shim -- which adds the Ingress prefix
+  when a page asks for a URL through an API it wraps -- never sees it, and the
+  Rewrite scan, which reads asset bundles, never sees it either. The browser
+  asked the Home Assistant root for the four pictures and got 404: eight
+  Prefix escapes, eight 4xx and eight console errors on each of the two survey
+  menus, with the Public origin clean (`U-C12`, root cause `RC-1`/`RC-12`).
+  The Ingress listener now carries a location matched against the three routes
+  whose action dict the web client runs `markup()` over --
+  `/web/action/load`, `/web/action/run` and
+  `/web/dataset/call_button/<model>/<method>` -- holding every directive of the
+  generic Ingress location plus escaped-quote rules for `href`, `src`,
+  `action`, `data-src` and `srcset`, because inside JSON the attribute quote
+  is escaped (`src=\"/survey/...`) and the generic raw-quote rules never
+  matched a byte of it. Each attribute also gets an identity rule written
+  ahead of its general rule, so a URL that already carries the prefix is not
+  prefixed twice. `/web/dataset/call_kw` is deliberately not covered: record
+  content travels both ways through it, and prefixing its response would write
+  the token-bearing Ingress prefix into the database the next time the HTML
+  editor saved. No other JSON response is affected and the Public origin is
+  unchanged. Verified on the test host against a local build of the branch:
+  with the location removed the two survey menus record 8/8/8, with it in
+  place every signal is 0 and the four pictures answer 200
+  (`docs/testing/evidence/2026-09-28-issue-158/`). ADR 0004 gains the
+  postscript that records why this is a route-scoped rewrite and not a shim
+  hook. No version bump. Issue #158, parent #148.
 - Public origin: the browser keeps its `Secure`, `SameSite=Lax` session
   cookie when the web client opens its bus socket. Odoo saves the session on
   its websocket route too and answers the `101` handshake with a
