@@ -6,9 +6,10 @@ Nothing here opens a browser, a websocket or reads credentials.
 import json
 import unittest
 
-from e2e_menu_action_adapter import EVIDENCE_SCHEMA, RunInfo, Surface
+from e2e_menu_action_adapter import EVIDENCE_SCHEMA, Masker, RunInfo, Surface
 from e2e_parity_shared_layers import (
     CATALOG,
+    INGRESS_PREFIX_DETAIL,
     MODULE_SCREENS,
     NOT_RUN,
     Outcome,
@@ -26,6 +27,9 @@ from e2e_parity_shared_layers import (
 
 RUN = RunInfo(run_id="WOOW-PARITY-20260925T000000Z", target="local", database="example_db")
 PREFIX = "/api/hassio_ingress/tok_ABC123"
+# The evidence mask a live run writes through: bases, this session's Ingress prefix, its secrets.
+MASK = Masker(bases={"<PUBLIC_BASE>": "https://shop.example", "<HA_BASE>": "http://ha.example:8123"},
+              ingress_prefix=PREFIX, secrets=("s3cret-password",))
 
 
 def ok(result: str = "done", **details) -> Outcome:
@@ -292,7 +296,8 @@ class NewTabTests(unittest.TestCase):
     def tab(self, shape: str, page_text: str | None = None) -> Outcome:
         text = self.PAGE if page_text is None else page_text
         carries = "<INGRESS_PREFIX>" in shape
-        return Outcome(available=True, details={"shape": shape, "page_text": text},
+        return Outcome(available=True,
+                       details={"shape": shape, "page_text": text, INGRESS_PREFIX_DETAIL: carries},
                        result="new tab at %s%s" % (shape, " (carries the Ingress token)" if carries else ""))
 
     def pair(self, *, public: str | None = None, ingress: str | None = None,
@@ -357,7 +362,7 @@ class NewTabTests(unittest.TestCase):
         # The shape holds the path alone, so the probe flags a prefix anywhere in the address.
         public, ingress = self.pair()
         leaked = Outcome(available=True, result=public.result,
-                         details={**public.details, "ingress_token": True})
+                         details={**public.details, INGRESS_PREFIX_DETAIL: True})
         self.assertEqual(new_tab_verdict(leaked, ingress)[:3],
                          ("GAP", "blocker", ["public tab address carries the Ingress prefix"]))
 
@@ -377,6 +382,43 @@ class NewTabTests(unittest.TestCase):
         self.assertEqual(record["severity"], "none")
         self.assertEqual(record["root_cause"], ["RC-15"])
         self.assertEqual(record["public_path"], "<PUBLIC_BASE>/survey/<token>")
+
+    def test_the_recorded_record_says_which_tab_carried_the_ingress_prefix(self) -> None:
+        # #187: the flag was `details["ingress_token"]`, and the evidence mask redacts every
+        # value under a key that reads as a secret -- so both sides wrote `<redacted>` and the
+        # file could not say which tab carried the prefix. The name is what fixed that.
+        verdict, severity, _, public_path = new_tab_verdict(*self.pair())
+        record = check_record(RUN, "U-C23", module="shared", screen="generic", public=self.tab(self.PUBLIC_SHAPE),
+                              ingress=self.tab(self.INGRESS_SHAPE), verdict=verdict, severity=severity,
+                              public_path=public_path, model="survey.survey")
+        written = json.loads(json.dumps(MASK.value(record), sort_keys=True))
+        self.assertIs(written["public"]["details"][INGRESS_PREFIX_DETAIL], False)
+        self.assertIs(written["ingress"]["details"][INGRESS_PREFIX_DETAIL], True)
+
+    def test_the_mask_still_redacts_a_secret_bearing_string(self) -> None:
+        # The fail-safe the rename must not weaken: a value under a secret-bearing key, a
+        # credential of this session, and a foreign Ingress token in a plain string all go.
+        masked = MASK.value({"session_token": "not-listed-anywhere", "authorization": "Bearer abc",
+                             "note": "logged in as admin with s3cret-password",
+                             "url": "https://other.example/api/hassio_ingress/deadbeefcafe/odoo"})
+        self.assertEqual(masked["session_token"], "<redacted>")
+        self.assertEqual(masked["authorization"], "<redacted>")
+        self.assertEqual(masked["note"], "logged in as admin with <redacted>")
+        self.assertEqual(masked["url"], "https://other.example/api/hassio_ingress/<redacted>/odoo")
+
+    def test_a_flag_that_is_not_a_boolean_is_unknown_not_a_leak(self) -> None:
+        # Nothing re-judges a record read back from a file today; when something does, a masked
+        # or missing flag must not invent a Blocker. Only a real `bool` is evidence.
+        public, ingress = self.pair()
+        for flag in ("<redacted>", "True", 1, None):
+            with self.subTest(flag=flag):
+                details = {key: value for key, value in public.details.items()
+                           if key != INGRESS_PREFIX_DETAIL}
+                if flag is not None:
+                    details[INGRESS_PREFIX_DETAIL] = flag
+                read_back = Outcome(available=True, result=public.result, details=details)
+                self.assertEqual(new_tab_verdict(read_back, ingress),
+                                 ("STRUCTURAL", "none", [], "<PUBLIC_BASE>/survey/<token>"))
 
 
 class ConservationTests(unittest.TestCase):

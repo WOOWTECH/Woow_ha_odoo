@@ -416,6 +416,10 @@ INGRESS_TAB_BASE = HA_BASE + INGRESS_PREFIX
 # The masked prefix is this session's own; a prefix the mask did not recognise
 # (a stale one, #160) still reads as what it is.
 INGRESS_PATH = "/api/hassio_ingress/"
+# The evidence sanitiser redacts every value under a key that reads as a secret, whatever its
+# type, so the flag is named for what it reports rather than for the token it looks for (#187):
+# under a `token` key a boolean reached the file as the string `<redacted>` on both surfaces.
+INGRESS_PREFIX_DETAIL = "ingress_prefix_in_url"
 
 
 def new_tab_verdict(public: Outcome, ingress: Outcome) -> tuple[str, str, list[str], str | None]:
@@ -437,8 +441,9 @@ def new_tab_verdict(public: Outcome, ingress: Outcome) -> tuple[str, str, list[s
 
     Each outcome carries the masked address shape of the tab it opened in
     `details["shape"]`, that page's text in `details["page_text"]`, and
-    `details["ingress_token"]` when the whole address -- query and fragment
-    included, which the shape leaves out -- holds an Ingress prefix.
+    `details[INGRESS_PREFIX_DETAIL]` -- a boolean -- for whether the whole
+    address, query and fragment included (which the shape leaves out), holds an
+    Ingress prefix. A flag that is not a `bool` says nothing either way.
     """
     verdict, severity, reasons = judge(public, ingress)
     # judge() compares the two results, which name the two addresses; those differ here by construction.
@@ -450,8 +455,10 @@ def new_tab_verdict(public: Outcome, ingress: Outcome) -> tuple[str, str, list[s
         routes[name] = shape[len(base):] if shape.startswith(base) else None
         if not outcome.available:
             continue
-        if name == "public" and (INGRESS_PREFIX in shape or INGRESS_PATH in shape
-                                 or _details(outcome).get("ingress_token")):
+        flag = _details(outcome).get(INGRESS_PREFIX_DETAIL)
+        # Only the probe's own boolean is evidence: a flag read back from a file, where an
+        # older sanitiser left the truthy string `<redacted>`, must not invent a leak (#187).
+        if name == "public" and (INGRESS_PREFIX in shape or INGRESS_PATH in shape or flag is True):
             # Section 1.3: the Supervisor token in an address outside Ingress is a leaked credential.
             reasons.append("public tab address carries the Ingress prefix")
             blocker = True

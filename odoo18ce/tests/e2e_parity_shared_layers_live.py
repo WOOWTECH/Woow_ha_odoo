@@ -44,6 +44,7 @@ from e2e_menu_action_adapter import (
 )
 from e2e_parity_outbound import NAMESPACE_HOSTS  # XML namespace URIs are names, not links
 from e2e_parity_shared_layers import (
+    INGRESS_PREFIX_DETAIL,
     NOT_RUN,
     Outcome,
     attach_issues,
@@ -2156,14 +2157,15 @@ def check_c23(run: Run) -> None:
         parts = urlsplit(url)
         path = parts.path
         # The shape is the path alone; a prefix in the query or the fragment is a token too.
-        token = "/api/hassio_ingress/" in url
-        if token and side.env.prefix:
+        carries_prefix = "/api/hassio_ingress/" in url
+        if carries_prefix and side.env.prefix:
             path = path.replace(side.env.prefix, "<INGRESS_PREFIX>")
         base = "<PUBLIC_BASE>" if url.startswith(side.env.public) else (
             "<HA_BASE>" if url.startswith(side.env.ha) else "other")
         shape = "%s%s" % (base, re.sub(r"/[0-9a-f-]{16,}", "/<token>", path))
-        return Outcome(True, "new tab at %s%s" % (shape, " (carries the Ingress token)" if token else ""),
-                       details={"shape": shape, "ingress_token": token, "page_text": run.env.mask(rendered)})
+        return Outcome(True, "new tab at %s%s" % (shape, " (carries the Ingress token)" if carries_prefix else ""),
+                       details={"shape": shape, INGRESS_PREFIX_DETAIL: carries_prefix,
+                                "page_text": run.env.mask(rendered)})
 
     public, ingress = run.both(probe)
     verdict, severity, reasons, public_path = new_tab_verdict(public, ingress)
