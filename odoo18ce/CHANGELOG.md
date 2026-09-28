@@ -43,6 +43,31 @@
   opened it. Issue #168.
 
 ### Fixed
+- Under Ingress, **Action menu > Download > PDF** on a posted invoice now
+  downloads the PDF instead of losing both the file and the screen. The web
+  client navigated the whole Ingress frame to
+  `<HA_BASE>/account/download_invoice_documents/<id>/pdf` -- the Home
+  Assistant root, no Ingress prefix -- Home Assistant answered 404, and the
+  invoice form was gone with it, while the same menu item downloaded the file
+  on the Public origin (`U-E4`, a Prefix escape, root cause `RC-1`). No
+  `window.open` was involved: the item is a plain `ir.actions.act_url` dict
+  from `account.move.get_extra_print_items`, and `ActionMenus.onItemSelected`
+  runs `browser.location=item.url` for an item that carries a `url` and no
+  `action`. The Runtime shim cannot intercept a write to `location`, and a
+  rewrite cannot prefix a URL that arrives over RPC and so is nowhere in the
+  bundle -- so the shim now publishes its own URL helper to the page as
+  `__WOOW_INGRESS_URL__` (read-only, Ingress-only, the same `path()` the
+  `fetch`, XHR and `window.open` wrappers already use), and two rewrites on
+  the Ingress listener's asset location hand it the URL before the
+  navigation: `browser.location=item.url`, and `browser.location.assign(url)`
+  -- which is both the `target: self` branch of the generic
+  `ir.actions.act_url` executor and, byte for byte, the `home` client action,
+  so all three sites stay under the prefix. Each rewritten expression falls
+  back to the raw value when the global is absent, so a page whose shim did
+  not run still navigates. The Public origin gets neither the shim nor the
+  rules and is unchanged; **Download > PDF without Payment**, which takes the
+  `/report/...` path, worked on both surfaces before and still does. No
+  version bump. Issue #174, parent #148.
 - Under Ingress, the website editor's Blocks panel now shows its snippet
   thumbnails instead of 36 blank tiles. Website > Edit asked the Home
   Assistant root for every one of them --
