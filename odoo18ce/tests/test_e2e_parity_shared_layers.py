@@ -4,9 +4,15 @@
 Nothing here opens a browser, a websocket or reads credentials.
 """
 import json
+import os
 import unittest
+from unittest import mock
 
-from e2e_menu_action_adapter import EVIDENCE_SCHEMA, Masker, RunInfo, Surface
+import e2e_parity_outbound_live
+import e2e_parity_shared_layers_live
+import e2e_pos_offline_live
+from e2e_menu_action_adapter import EVIDENCE_SCHEMA, Masker, RunInfo, Surface, parse_env_file
+from e2e_parity_shared_layers_live import artifact_dir
 from e2e_parity_shared_layers import (
     CATALOG,
     INGRESS_PREFIX_DETAIL,
@@ -558,6 +564,39 @@ class ScreenRecordTests(unittest.TestCase):
     def test_a_screen_with_the_control_is_judged(self) -> None:
         self.assertEqual(self.recorded("scan: camera streaming", "scan: camera streaming")["verdict"], "PARITY")
         self.assertEqual(self.recorded("scan: camera streaming", "scan: no camera control")["verdict"], "GAP")
+
+
+class ArtifactDirTests(unittest.TestCase):
+    """#188: the artifact directory is resolved when used, after --env-file is parsed."""
+
+    def test_a_name_set_by_the_environment_file_reaches_the_artifact_directory(self) -> None:
+        with mock.patch.dict(os.environ):
+            os.environ.pop("E2E_ARTIFACT_DIR", None)
+            parse_env_file(["E2E_ARTIFACT_DIR=/home/agent/e2e-artifacts"], os.environ)
+            self.assertEqual(artifact_dir(), "/home/agent/e2e-artifacts")
+
+    def test_without_a_name_the_default_stays_out_of_the_checkout(self) -> None:
+        with mock.patch.dict(os.environ):
+            os.environ.pop("E2E_ARTIFACT_DIR", None)
+            self.assertEqual(artifact_dir(), "/tmp/odoo-parity-artifacts")
+
+    def test_no_parity_script_binds_the_directory_at_import(self) -> None:
+        for module in (e2e_parity_shared_layers_live, e2e_parity_outbound_live, e2e_pos_offline_live):
+            self.assertFalse(hasattr(module, "ARTIFACTS"), module.__name__)
+
+    def test_main_parses_the_environment_file_before_the_first_directory_use(self) -> None:
+        import inspect
+
+        for module in (e2e_parity_shared_layers_live, e2e_parity_outbound_live, e2e_pos_offline_live):
+            source = inspect.getsource(module.main)
+            self.assertLess(source.index("parse_env_file"), source.index("artifact_dir()"), module.__name__)
+
+    def test_the_fixture_and_plan_paths_follow_the_environment_at_call_time(self) -> None:
+        with mock.patch.dict(os.environ, {"E2E_ARTIFACT_DIR": "/tmp/elsewhere"}):
+            self.assertEqual(e2e_parity_shared_layers_live.fixture_path("R1"), "/tmp/elsewhere/R1-fixtures.json")
+            self.assertEqual(e2e_parity_outbound_live.fixture_path("R1"), "/tmp/elsewhere/R1-outbound-fixtures.json")
+            self.assertEqual(e2e_parity_outbound_live.reach_path("R1"), "/tmp/elsewhere/R1-reach.json")
+            self.assertEqual(e2e_parity_outbound_live.mail_plan_path("R1"), "/tmp/elsewhere/R1-mail-plan.json")
 
 
 if __name__ == "__main__":

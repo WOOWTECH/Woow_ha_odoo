@@ -35,7 +35,7 @@ from typing import Any, Mapping, Sequence
 
 from e2e_menu_action_adapter import RunInfo, new_run_id, parse_env_file
 from e2e_parity_shared_layers import Outcome, check_record
-from e2e_parity_shared_layers_live import ARTIFACTS, Env, Side, open_sides
+from e2e_parity_shared_layers_live import Env, Side, artifact_dir, open_sides
 
 TIMEOUT = 60_000
 ROUTE = "/pos/ui"
@@ -341,8 +341,8 @@ def main(argv=None) -> int:
                     outcomes[side.name] = offline_sale(side, public, session_id, config_id)
                 except Exception as error:  # noqa: BLE001 -- a failure is evidence, as in Run.both
                     side.context.set_offline(False)
-                    os.makedirs(ARTIFACTS, exist_ok=True)
-                    side.page.screenshot(path=os.path.join(ARTIFACTS, "%s-pos-%s.png" % (info.run_id, side.name)))
+                    os.makedirs(artifact_dir(), exist_ok=True)
+                    side.page.screenshot(path=os.path.join(artifact_dir(), "%s-pos-%s.png" % (info.run_id, side.name)))
                     failed = Outcome(False, "error: %s" % env.mask((str(error).splitlines() or [""])[0]))
                     outcomes[side.name] = (failed, failed)
                 print("%s: %s / %s" % (side.name, outcomes[side.name][0].result, outcomes[side.name][1].result),

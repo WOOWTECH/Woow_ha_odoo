@@ -410,7 +410,7 @@ class Run:
             try:
                 outcome = action(side)
             except Exception as error:  # noqa: BLE001 -- a failure is evidence
-                side.page.screenshot(path=os.path.join(ARTIFACTS, "%s-%s.png" % (self.info.run_id, side.name)))
+                side.page.screenshot(path=os.path.join(artifact_dir(), "%s-%s.png" % (self.info.run_id, side.name)))
                 step = side.step
                 outcome = Outcome(False, "error%s: %s" % (" at " + step if step else "",
                                                           self.env.mask((str(error).splitlines() or [""])[0])))
@@ -424,7 +424,11 @@ class Run:
         return outcomes[0], outcomes[1]
 
 
-ARTIFACTS = os.environ.get("E2E_ARTIFACT_DIR") or os.path.join(os.getcwd(), "parity-artifacts")
+def artifact_dir() -> str:
+    """Resolved at call time, never import time: main() parses --env-file into
+    the environment first, and `from ... import` would freeze an import-time
+    value in this module's importers (#188)."""
+    return os.environ.get("E2E_ARTIFACT_DIR") or "/tmp/odoo-parity-artifacts"
 
 CHECKS: dict[str, Callable[[Run], None]] = {}
 
@@ -819,7 +823,7 @@ def check_a1_a3(run: Run) -> None:
 def check_a4(run: Run) -> None:
     import subprocess
 
-    out_dir = os.path.join(ARTIFACTS, "literal-rewrite-gate")
+    out_dir = os.path.join(artifact_dir(), "literal-rewrite-gate")
     environment = dict(os.environ, ODOO_BASE_URL=run.env.public, E2E_ARTIFACT_DIR=out_dir)
     completed = subprocess.run(
         [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "e2e_literal_rewrite_gate.py")],
@@ -2883,7 +2887,7 @@ def create_fixtures(side: Side, marker: str) -> dict[str, Any]:
 
 
 def fixture_path(run_id: str) -> str:
-    return os.path.join(ARTIFACTS, "%s-fixtures.json" % run_id)
+    return os.path.join(artifact_dir(), "%s-fixtures.json" % run_id)
 
 
 # --- Command line -------------------------------------------------------------
@@ -2934,7 +2938,7 @@ def main(argv=None) -> int:
             parse_env_file(handle, os.environ)
     os.environ["ODOO_DB"] = args.db
     env = Env(args.db)
-    os.makedirs(ARTIFACTS, exist_ok=True)
+    os.makedirs(artifact_dir(), exist_ok=True)
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as playwright:

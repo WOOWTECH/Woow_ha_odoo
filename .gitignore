@@ -5,3 +5,6 @@ __pycache__/
 # Human handoff notes contain LAN addresses and database names; keep them local.
 docs/plans/odoo-handoff-*.html
 .env
+
+# A run that ignored E2E_ARTIFACT_DIR used to drop artifacts here (#188).
+parity-artifacts/
