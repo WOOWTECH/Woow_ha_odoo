@@ -57,10 +57,13 @@
   it was. The existing three are untouched, so the bare and raw-quote forms
   rewrite as before, and a `url(` that is already absolute
   (`url(https://...)`) or relative (`url(img.png)`) is still left alone.
-  The rules are Shipped rewrites in the generic HTML location only: asset
+  The rules are hand-written in the generic HTML location only: asset
   bundles carry no HTML entities, so the `/web/assets/` location is
-  unchanged, and the Rewrite scan stays a bundle-literal classifier that
-  learns nothing about page HTML. The Runtime shim is unchanged -- it never
+  unchanged, and the Rewrite scan, which reads bundles, learns nothing
+  about page HTML. They inherit the one limit of the three beside them --
+  a plain-string `sub_filter` cannot say "root-relative but not `//`", so
+  a protocol-relative `url(&#39;//cdn/x.png&#39;)` is prefixed and breaks;
+  Odoo writes none, and the template comment records it. The Runtime shim is unchanged -- it never
   sees markup the server sent -- so a `style` attribute the browser builds
   (#169, #170) stays where it is. The Static-tier template contract asserts
   the four rules, and the live-nginx content-type test serves an HTML

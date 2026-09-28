@@ -493,8 +493,16 @@ http {
             # Assistant root. Each form the escaper can produce gets a rule
             # of its own, keeping the entity exactly as it was. These belong
             # to the generic HTML location only -- asset bundles hold no HTML
-            # entities -- and they are Shipped rewrites, so the Rewrite scan
-            # stays a bundle-literal classifier (issue #166).
+            # entities -- and they are written by hand here, so the Rewrite
+            # scan, which reads bundles, never learns about page HTML.
+            #
+            # They inherit the limit of the three above: the pattern is a
+            # plain string, so a protocol-relative reference
+            # (url(&#39;//cdn/x.png&#39;)) is prefixed too and breaks. No
+            # sub_filter can express "root-relative but not //", and no
+            # later rule can undo it, because nginx never rescans what a
+            # rule replaced. Odoo writes none, and folding the rules into
+            # something broader is a change to all seven (issue #166).
             sub_filter 'url(&#39;/' 'url(&#39;$safe_ingress_path/';
             sub_filter 'url(&#34;/' 'url(&#34;$safe_ingress_path/';
             sub_filter 'url(&quot;/' 'url(&quot;$safe_ingress_path/';
