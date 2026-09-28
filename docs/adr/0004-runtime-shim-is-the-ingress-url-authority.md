@@ -137,3 +137,101 @@ crawler record (`ir.actions.client` 609) returning to `PARITY`. `U-A6`'s probe
 list is *not* extended: its covered group still holds only the #169 ways, so a
 media escape would be caught by the desk's screen rather than by the audit.
 Adding a media probe to `U-A6` is a change of its own.
+
+## Postscript (2026-09-28, action help)
+
+The first of the screens the postscript above filed against the uncovered
+group has its Literal rewrite. The #144 parity run found the Surveys screen of
+an empty survey list (`ir.actions.act_window` 930, both survey menus) asking
+the Home Assistant root for the four sample-survey pictures and getting 404 --
+eight **Prefix escapes**, eight 4xx and eight console errors per screen, with
+the Public origin clean (#158). The pictures are `<img src="/survey/static/…">`
+in the action's `help` field: HTML that lives in the database, reaches the
+browser inside the `/web/action/load` JSON-RPC response, and is inserted as
+markup (`markup(action.help)` → `innerHTML`). The **Rewrite scan** cannot see
+it either -- it reads asset bundles, and this literal is in a record.
+
+The rule above decides it the way the postscript said it would. Markup
+insertion is in the uncovered group, so this is **not** a shim change: the HTML
+editor loads and saves record content through the same property, and a hook
+there would write the Ingress prefix -- token and all -- into the database.
+Action help is only ever read through the action-load response and never saved
+through it, so a **Literal rewrite scoped to that route** reaches the escape
+without going anywhere near the editors.
+
+What that means in the template, and what it deliberately is not:
+
+- **Its own exact-match `location` for `/web/action/load`, and no other
+  route** -- even though three deliver the help. The web client runs
+  `markup(action.help)` over the answer of `/web/action/load`, of
+  `/web/action/run` and of `/web/dataset/call_button/<model>/<method>` alike.
+  (The fourth `markup(` site in `action_service.js` restores `lastAction` from
+  session storage and crosses no wire.) Rewriting escaped attributes on *all*
+  JSON is the option this ADR already rejected once: 0.3.34 had to stop doing
+  it after the Document Layout preview came back blank.
+- **What separates the three is not the help; it is the rest of the action
+  dict.** `/web/action/load` answers with a **stored**
+  `ir.actions.act_window` record: its `help` is database HTML the client only
+  displays, and its `context` is the static string a developer wrote into the
+  action definition. Nothing in that response is content the client hands
+  back. The other two answer with an action **computed at call time**, and a
+  computed action carries record content in its `context` as wizard defaults.
+  `marketing_card`'s `action_share()` is the shipped proof: the button returns
+  an `act_window` whose `context.default_body_arch` is a mail body holding
+  `<img src="/web/image/card.campaign/<id>/image_preview">` and
+  `<a href="/cards/<id>/preview">`. Prefix those and the mailing opens
+  pre-filled with the Ingress prefix; the first save writes the Supervisor
+  token into `mailing.mailing.body_arch`. That is this decision's own harm,
+  reached by one more step, and a server action's returned dict -- user-
+  authored Python -- is at least as open. So the rule this ADR gains is:
+  **rewrite a response only when everything in it is something the client
+  displays and never returns.** `/web/dataset/call_kw` fails it most plainly
+  of all, being how the HTML editor both loads a field and saves it.
+- **What that leaves open, said plainly.** Help delivered through
+  `/web/action/run` or a button keeps escaping. It is the smaller harm -- a
+  404 picture against a token in the database -- and closing it needs a fix
+  that can tell one JSON field from another, which a byte-level `sub_filter`
+  cannot. `/web/action/load_breadcrumbs` answers with display names only and
+  needs nothing.
+- **Escaped-quote patterns.** Inside JSON the attribute quote is escaped
+  (`src=\"/survey/…`), which is why the generic location's raw-quote HTML rules
+  never matched a byte of the help; the only escaped-quote rules there cover
+  `/web/assets/`, for that same preview. The new rules cover the five
+  attributes the raw-quote rules already do: `href`, `src`, `action`,
+  `data-src`, `srcset`.
+- **No double prefix, by rule order.** `sub_filter` settles two patterns that
+  match at the same byte by the order they are written -- the earlier one wins
+  even where a later one is longer -- so each attribute gets an identity rule
+  (`src=\"$safe_ingress_path/` → itself) written *ahead* of its general rule.
+  A URL that already carries the prefix is consumed by the identity rule and
+  left as it was. The template's older claim that "no later rule can undo it"
+  stays true and is the reason these are written first; its other claim, that
+  overlapping patterns are settled "not by the order the rules are written
+  in", was wrong and has been corrected where it stood. Two limits survive,
+  because the pattern is a string and not a parser: a protocol-relative
+  reference is prefixed and breaks, and `srcset` is a list whose candidates
+  after the first are not behind the attribute opener. Both are pinned by the
+  Static-tier test and belong to #166, which fixes them for every such rule at
+  once or not at all.
+- **A copy of `location /`, not a subset of it.** The location keeps the proxy
+  headers, cookie path and flags, `X-Frame-Options` removal, buffering and
+  timeouts of the generic Ingress location, and every rule it carries; it
+  differs only by the added rules. A Static-tier test compares the two bodies
+  directive by directive, so drift in either fails rather than quietly changing
+  the route.
+- **The Public origin is untouched,** and so is the Rewrite scan: this is a
+  **Shipped rewrite**, because action help comes from the database and not from
+  a bundle, so no Generated rewrite could ever derive it.
+
+`U-A6`'s probe list is not extended. Its `accepted` group still records the
+`innerHTML` escape as the decision it is; what proves this fix is the Surveys
+screen's own crawler record, plus the Static-tier contract. The Live half is in
+`docs/testing/evidence/2026-09-28-issue-158/`: two Ingress crawls a minute
+apart on the test host's local build of this branch, one with the new
+`location` blocks cut out of the rendered config and one with them in, taking
+the survey menus from `route_escape`/`http_4xx_5xx`/`console_error` = 8 each to
+zero, with the four pictures answered 200. The crawler's two-surface `PARITY`
+verdict is still owed: the local add-on has no `public_url`, so that one waits
+for a Release. The other screen filed against the uncovered group, the
+website editor's snippet thumbnails (#170), is still open and gets a rewrite of
+its own in the same shape.
