@@ -43,6 +43,38 @@
   opened it. Issue #168.
 
 ### Fixed
+- Under Ingress, the website editor's Blocks panel now shows its snippet
+  thumbnails instead of 36 blank tiles. Website > Edit asked the Home
+  Assistant root for every one of them --
+  `<HA_BASE>/website/static/src/img/snippets_thumbs/<snippet>.svg` -- and got
+  404: 36 Prefix escapes and 36 console errors per editor open, with the same
+  panel loading its pictures on the Public origin (`U-D2`, root cause
+  `RC-1`/`RC-12`/`RC-14`). Editing itself worked and there was no
+  `AssetsLoadingError`. The editor draws each tile with an OWL template,
+  `t-attf-style="background-image: url({{snippet.thumbnailSrc}});"`, and a
+  `url(` inside a `style` attribute is one of the ways the Runtime shim does
+  not wrap by decision (ADR 0004's 2026-09-28 postscript, #169): the website
+  editor saves record content back through those same paths, so a hook there
+  would write the token-bearing Ingress prefix into the database. The fix is
+  one rewrite on the Ingress listener's asset location, over that exact
+  template text, which puts the Ingress prefix in front of a value beginning
+  `/` and leaves anything else -- a snippet with no thumbnail arrives as the
+  literal `oe-thumbnail` -- as it was. It rewrites the template and **not**
+  the snippet catalogue response, because the value comes back: "Save block"
+  hands `thumbnailSrc` to `ir.ui.view.save_snippet`, which writes it into the
+  new snippet view's arch, so prefixing the response would store a Supervisor
+  token in the database and break the block on the Public origin. A custom
+  block therefore still saves exactly what it saved before and shows its
+  thumbnail on both surfaces. Odoo 18 serves its OWL templates inside the
+  asset bundle, unminified, which is what makes the template text reachable
+  from there; the text occurs once, in `web_editor.assets_wysiwyg`, and the
+  bytes it was measured against are kept as a test fixture. The Public origin
+  listener, the catalogue response and `save_snippet` are untouched. The
+  protocol-relative limit every other prefix rule has is inherited and belongs
+  to #166. One picture on the same panel is not covered and is recorded rather
+  than fixed: the static `snippet_disabled.svg` shown for an undroppable
+  snippet, which no rule prefixes and which the measured run did not reach.
+  No version bump. Issue #170, parent #148.
 - Under Ingress, sending a website form now ends on its thank-you page
   instead of a Home Assistant 404. Contact Us and a job application were sent
   -- the lead and the applicant were created -- and then the page went to

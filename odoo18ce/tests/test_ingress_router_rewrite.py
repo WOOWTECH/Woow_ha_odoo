@@ -26,7 +26,17 @@ def ingress_assets_block(template: str) -> tuple[int, int]:
 
 
 def ingress_rule(template: str, source: str, description: str) -> str:
-    rule = re.compile(r"sub_filter '" + re.escape(source) + r"' '([^']+)';")
+    """The replacement of the one ingress-only `sub_filter` for `source`.
+
+    nginx takes a parameter in either quote, and a replacement that has to
+    carry a `'` of its own -- the snippet-thumbnail rewrite of issue #170,
+    whose JavaScript quotes with single quotes because it sits inside an XML
+    attribute inside a template literal -- is written double-quoted. Both
+    spellings are accepted here; neither may hold its own delimiter.
+    """
+    rule = re.compile(
+        r"sub_filter '" + re.escape(source) + r"' (?:'([^']+)'|\"([^\"]+)\");"
+    )
     matches = list(rule.finditer(template))
     assets_start, assets_end = ingress_assets_block(template)
     outside = [match for match in matches if not assets_start <= match.start() < assets_end]
@@ -36,9 +46,8 @@ def ingress_rule(template: str, source: str, description: str) -> str:
         "(for example, the public listener), which would change public routing"
     )
     assert len(matches) == 1, f"missing ingress-only {description} sub_filter"
-    return matches[0].group(1).replace(
-        "$safe_ingress_path", "/api/hassio_ingress/token"
-    )
+    replacement = matches[0].group(1) or matches[0].group(2)
+    return replacement.replace("$safe_ingress_path", "/api/hassio_ingress/token")
 
 
 def assert_public_rule_is_rejected(template: str) -> None:

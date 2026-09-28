@@ -443,6 +443,47 @@ http {
             # Canonical URL the link keeps the browser origin, so it is as
             # broken as it was, but it no longer carries the token.
             sub_filter 'const currentUrl=window.location.href;' 'const currentUrl=(function(){var L=window.location,B=window.__WOOW_CANONICAL_URL__||L.origin,P="$safe_ingress_path",p=L.pathname;if(P&&p.indexOf(P)===0)p=p.slice(P.length)||"/";return B+p+L.search+L.hash})();';
+            # The website editor's Blocks panel (issue #170, U-D2). Odoo 18
+            # inlines OWL templates into the bundle as `registerTemplate(...)`
+            # template literals, appended unminified after the JavaScript, so
+            # each tile's own markup is served through this location:
+            #   <div class="oe_snippet_thumbnail_img"
+            #        t-attf-style="background-image: url({{snippet.thumbnailSrc}});"/>
+            # A `url(` inside a style attribute is one of the ways the Runtime
+            # shim does not wrap by decision (ADR 0004's 2026-09-28 postscript,
+            # #169), and the `url(/` rules at the top of this location cannot
+            # reach it either: the byte after `url(` here is `{`.
+            #
+            # The rewrite goes where the URL is *rendered* and not where it is
+            # delivered, because this value round-trips to the database. The
+            # editor's "Save block" hands `thumbnailSrc` -- the raw
+            # `data-oe-thumbnail` of the snippet catalogue response -- to
+            # `ir.ui.view.save_snippet` as `thumbnail_url`, which writes it into
+            # the new snippet view's arch as `t-thumbnail`. Prefixing the
+            # response would store the Ingress prefix, Supervisor token and all,
+            # every time somebody saves a custom block under Ingress. So nothing
+            # here touches `data-oe-thumbnail`, `render_public_asset` or
+            # `save_snippet`, and a Static-tier test asserts that absence.
+            #
+            # The replacement has to stay valid in both skins it wears at once:
+            # an XML attribute delimited by double quotes, inside a JavaScript
+            # template literal. It therefore carries no double quote, no
+            # backtick, no backslash and no `${`, and quotes with `'`, which is
+            # why this one rule is written with a double-quoted parameter.
+            # `+''` keeps the expression total: a value that is not a string
+            # renders exactly as it does today instead of throwing in the tile.
+            #
+            # The protocol-relative limit of every other prefix rule is
+            # inherited: `//host/path` starts with `/` and is prefixed like a
+            # path. #166 fixes that for all of them at once or not at all. No
+            # `t-thumbnail` Odoo ships is written that way.
+            #
+            # No double prefix. sub_filter never reads back what it wrote, so
+            # the `$safe_ingress_path` this emits is not rescanned; `url(/` and
+            # its quoted siblings match a different byte; and the shim's
+            # `path()` never sees this value, because a style attribute is not
+            # a way it wraps.
+            sub_filter 'url({{snippet.thumbnailSrc}})' "url({{(snippet.thumbnailSrc+'').indexOf('/')===0?'$safe_ingress_path'+snippet.thumbnailSrc:snippet.thumbnailSrc}})";
             # Generated rewrites (ADR 0005). The add-on writes this file from
             # its own Rewrite scan; the config-rendering init step creates it
             # empty so a fresh install starts. It holds prefix rules only, and
