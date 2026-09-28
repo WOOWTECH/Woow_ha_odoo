@@ -55,11 +55,26 @@ token) are covered in the static tier, not by this run.
 
 The record's `details.shape` is the masked address of each tab and is the
 readable half of the evidence. `details.ingress_token` reads `<redacted>` on
-**both** sides: the evidence sanitiser redacts any key whose name matches
-`token`, so the flag's value does not survive into the file even though it is
-a boolean. The verdict is computed from the in-process value before masking,
-so the judgement is unaffected — but read the file's `shape` and `result`,
-not `ingress_token`, for which tab carried the prefix. Filed as #187.
+**both** sides of the records **in this directory**: the evidence sanitiser
+redacts any key whose name matches `token`, so the flag's value did not
+survive into the file even though it is a boolean. The verdict is computed
+from the in-process value before masking, so the judgement is unaffected —
+but in these two files read `shape` and `result`, not `ingress_token`, for
+which tab carried the prefix.
+
+Filed as #187 and **fixed**: the probe now writes the flag as
+`details.ingress_prefix_in_url`, a name the sanitiser has no reason to
+redact, so a run after the fix says in the file which tab carried the prefix.
+The sanitiser is unchanged and still redacts secret-bearing strings, and
+`new_tab_verdict()` now takes only a `bool` as evidence of a prefix: a flag
+that is missing — which is what the records here look like to it, since they
+carry the old `ingress_token` key it no longer reads — or one masked into the
+truthy string `<redacted>` says nothing, rather than reading as a leaked
+Supervisor token. Their `shape` still shows the prefix if one is there, so
+re-judging a record from before the fix sees what it should and invents
+nothing. `NewTabTests` in `odoo18ce/tests/test_e2e_parity_shared_layers.py`
+covers all of it. The records in this directory were written before the fix
+and are left as the run wrote them.
 
 ## Conservation (parity plan section 12) — `reconciled.jsonl`
 
