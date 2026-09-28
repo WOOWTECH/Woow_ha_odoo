@@ -202,6 +202,12 @@ def test_nginx_template_contract() -> None:
     assert "window.EventSource.CONNECTING=ES.CONNECTING" in n
     assert "Element.prototype.setAttributeNS=function" in n
     assert 'n==="xlink:href"' in n
+    # Media sources (#159): the `Audio` constructor and the `src` setters of the
+    # media and `<source>` prototypes, through the same path() and prop() helpers.
+    assert "window.Audio=function" in n
+    assert "window.Audio.prototype=AU.prototype" in n
+    assert 'prop(window.HTMLMediaElement&&HTMLMediaElement.prototype,"src")' in n
+    assert 'prop(window.HTMLSourceElement&&HTMLSourceElement.prototype,"src")' in n
     # They are the tail of the prefix script's closure, spliced in by variable
     # reference because that script nearly fills nginx's parameter buffer.
     assert "$ingress_injection_hooks_shim})()" in n

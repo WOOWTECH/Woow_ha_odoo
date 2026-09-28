@@ -43,6 +43,37 @@
   opened it. Issue #168.
 
 ### Fixed
+- Ingress: the Event Registration Desk's barcode error sound plays again on a
+  failed scan. The desk builds it with
+  `new Audio(url("/barcodes/static/src/audio/error.ogg"))`, which resolves
+  against the browser origin, and the Runtime shim wrapped nothing for media,
+  so under Ingress the request reached the Home Assistant root and answered
+  404 — one console error, one HTTP 4xx and one prefix escape, on a screen
+  whose scanner was then silent when a scan failed. The `/mail/` sound on the
+  next line was never affected, because `/mail/` is one of the template's
+  shipped prefix rewrites. The shim now wraps the `Audio` constructor and the
+  `src` setter of `HTMLMediaElement.prototype` (`<audio>` and `<video>`) and
+  of `HTMLSourceElement.prototype`, through the same `path()` helper and the
+  same property-setter helper it already uses for `href`/`src`/`srcset`: an
+  already prefixed, cross-origin, `blob:`, `data:` or fragment-only value is
+  untouched, a `URL` object is prefixed the way `fetch` and `sendBeacon` take
+  one, `new Audio()` with no argument is left alone, an absent constructor is
+  left absent, and the wrapper keeps `prototype` — as the `Worker` wrapper
+  does — so `new Audio(...) instanceof HTMLAudioElement` still holds. One shim change covers every media prefix at once (POS sounds,
+  `/barcodes/`, any future app), where a generated rewrite would cover one
+  prefix at a time, so the Rewrite scan is unchanged and `/barcodes/` stays
+  `INFO`. `<track>`, `<embed>`/`<object>`, `poster`, `srcObject`,
+  `HTMLSourceElement.srcset` (the responsive `<picture>` candidate list, not a
+  media source) and CSS `url(...)` media have not been reported escaping and
+  stay uncovered, and `U-A6`'s probe list is unchanged: the guard for the media
+  wrappers is the Static-tier contract plus the Registration Desk's own crawler
+  record. The wrappers live in the
+  same nginx map as the injection-way hooks, the tail of the prefix script's
+  closure, because that script is a few hundred bytes short of nginx's
+  4096-byte parameter buffer. ADR 0004 gains a 2026-09-28 media-sources
+  postscript, and a Static-tier test executes the rendered shim against a DOM
+  stand-in for each case above. The Public origin gets no shim and is
+  unchanged. No version bump. Issue #159, parent #148.
 - Ingress: a root-relative URL sent through `navigator.sendBeacon`, opened
   as an `EventSource`, or used as an SVG `<use>` reference set through
   `setAttribute("xlink:href", ...)`, `setAttribute("href", ...)` or
