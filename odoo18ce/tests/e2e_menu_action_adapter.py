@@ -924,7 +924,9 @@ _SCREEN_JS = r"""() => {
 _CART_QUANTITY_JS = """() => {
   const node = document.querySelector('.my_cart_quantity');
   if (!node) return null;
-  const value = Number((node.textContent || '').trim());
+  const text = (node.textContent || '').trim();
+  if (!text) return null;          // Number('') is 0, which is an answer this is not
+  const value = Number(text);
   return Number.isFinite(value) ? value : null;
 }"""
 _CART_GREW_JS = """(before) => {
@@ -1196,7 +1198,9 @@ class SurfaceDriver:
         try:
             page = self.context.new_page()
             items, order = self._cart(page)
-            if items is None:
+            if not items:
+                # Unreadable, or empty: either way there is no record this run
+                # created or reused. Why the step failed is on the observation.
                 return None
             return {"model": "sale.order", "id": order, "items": items,
                     "how": "the cart holds %d item(s) after the cart step failed" % items}
