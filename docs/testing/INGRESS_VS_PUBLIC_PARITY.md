@@ -387,18 +387,20 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 最後一輪 Rewrite scan 讀 34 個 bundle，`FAIL 0`、`WARN 37`、`INFO 486`；上表各前綴都是 `INFO`
 > （Runtime shim 攔截），沒有產生任何 Generated rewrite。兩個 surface 的選單爬蟲比對 290 個選單：
 > 272 `PARITY`、4 `GAP`、14 跳過；這 13 個 app 的已比對選單全為 `PARITY`（`website` 的訪客清單除外，見 #160）。
-> `project_todo` 唯一的選單是 server action，依唯讀規則跳過；2026-09-29 改用爬蟲新增的 `open` 子指令，
-> 直接開那個 server action 回傳的 window action（`project_todo.project_task_action_todo`，不執行 server action），
-> 在 0.4.5 上兩面各判三個畫面（#163）：待辦看板、待辦清單兩面 `PARITY`；**待辦表單是 `GAP`（blocker）**——
-> 待辦自己的說明 HTML（`project.task.description`，由 `todo_user_onboarding` 複製而來）內的兩張圖在 Ingress 下
-> 向 HA 根網址要，404、`route_escape=2`。與 #158 同型但不是同一個修法：#158 的 Literal rewrite 只綁
-> `/web/action/load`，而待辦說明走 `/web/dataset/call_kw`，正是 ADR 0004 的 2026-09-28 附記拒絕改寫的紀錄內容。
-> 證據在 `docs/testing/evidence/2026-09-29-issue-163/`。
+> `project_todo` 唯一的選單是 server action，依唯讀規則跳過，那一輪沒有可比對的畫面。
 > 證據在 `docs/testing/evidence/2026-09-24-issue-144/`。
 > 注意 `INFO` 表示「shim 攔得到這種用法」，不保證每個消費點都攔得到：`/barcodes/` 也是 `INFO`，
 > 但當時 `new Audio(url(...))` 仍逃逸（#159）；資料庫裡的 HTML（動作的 help）也不在 bundle 內（#158）。
 > #159 已由 shim 補上媒體來源包裝（2026-09-28），`/barcodes/` 維持 `INFO` 且不新增 Generated rewrite；
 > 但這條注意事項仍然成立：`INFO` 只表示 shim 攔得到，遇到新的消費點要先確認。
+
+> `project_todo` 的畫面於 2026-09-29 由 #163 補判（0.4.5）：改用爬蟲新增的 `open` 子指令，直接開那個
+> server action 回傳的 window action（`project_todo.project_task_action_todo`，不執行 server action），
+> 兩面各判三個畫面——待辦看板、待辦清單兩面 `PARITY`；**待辦表單是 `GAP`（blocker）**：待辦自己的說明 HTML
+> （`project.task.description`，由 `todo_user_onboarding` 複製而來）內的兩張圖在 Ingress 下向 HA 根網址要，
+> 404、`route_escape=2`。與 #158 同型但不是同一個修法：#158 的 Literal rewrite 只綁 `/web/action/load`，
+> 而待辦說明走 `/web/dataset/call_kw`，正是 ADR 0004 的 2026-09-28 附記拒絕改寫的紀錄內容。
+> 這一輪的證據在 `docs/testing/evidence/2026-09-29-issue-163/`。
 
 ---
 

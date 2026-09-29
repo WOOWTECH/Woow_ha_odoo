@@ -30,8 +30,8 @@ confirms both did.
 | File | What it is |
 |---|---|
 | `targets.jsonl` | the seven screens, as `open` reads them |
-| `public-open.jsonl` | the Public origin run, `WOOW-PARITY-20260929T071517Z` |
-| `ingress-open.jsonl` | the Ingress run, `WOOW-PARITY-20260929T071649Z` |
+| `public-open.jsonl` | the Public origin run, `WOOW-PARITY-20260929T072937Z` |
+| `ingress-open.jsonl` | the Ingress run, `WOOW-PARITY-20260929T073110Z` |
 | `open-diff.jsonl` | the two joined by `control_identity` and judged |
 
 ## P-Check
@@ -103,17 +103,18 @@ the run confirmed P-6 (`odoo_parity` on both surfaces) before judging.
 
 | Record | What changed | Why |
 |---|---|---|
-| `sale.order` id 2 (`S00002`, Administrator's website cart, state `draft`) | one line of `WOOW-PARITY-20260929T045315Z Service` per run: 11 -> 12 items on the Public run, 12 -> 13 on the Ingress run (the trial runs before them added the earlier units) | `/shop/payment` redirects to `/shop/cart` without a cart |
+| `sale.order` id 2 (`S00002`, Administrator's website cart, state `draft`) | the three lines earlier runs had left in it were removed over JSON-RPC before the run; then the **Public** run added one line of `WOOW-PARITY-20260929T045315Z Service` (0 -> 1 items). The **Ingress** run added nothing: `ensure_cart` leaves a cart that already holds something alone, so both surfaces judge the same cart | `/shop/payment` redirects to `/shop/cart` without a cart, and a cart of a different size on each surface would make the page's own content differ between them |
 | `res.partner` id 3 (Administrator) | `street`, `city`, `zip`, `country_id` (Taiwan) and `phone` set, over JSON-RPC before the run | website_sale's `_check_addresses` redirects `/shop/payment` to `/shop/address` until the delivery address has every mandatory field (`name`, `street`, `city`, `country_id`, `phone`, and `zip` for Taiwan). The partner had none of them |
 
 The cart write is **not** an `Operation` of the crawler's `OperationPolicy`, on
 purpose: `NON_MUTATING_OPERATIONS` is every member of `Operation`, so a WRITE
 member added there would be *permitted* by `READ_ONLY_POLICY` rather than
-refused. It lives in `SurfaceDriver.fill_cart`, named, bounded by
-`require_write_database`, and reported in the record's `writes` field. The
-driver checks the navbar cart badge before and after, so a click that did not
-reach `/shop/cart/update` fails the run instead of judging a checkout an older
-cart had already made reachable.
+refused. It lives in `SurfaceDriver.ensure_cart`, named, bounded by
+`require_write_database`, and reported in the record's `writes` field -- on both
+surfaces, including the one that added nothing. The driver reads the navbar cart
+badge on the cart page before and after, so a click that did not reach
+`/shop/cart/update` makes that one target unavailable with its reason instead of
+judging a checkout an older cart had already made reachable.
 
 No sale order was confirmed, no payment was made, no module setting and no
 group was changed.
@@ -159,7 +160,7 @@ reaches for the same hammer.
 ### Website checkout e-invoice step — important
 
 Every signal is zero on both surfaces and the e-invoice block rendered on both.
-The difference is one URL literal out of 45:
+The difference is one URL literal out of 43:
 
 ```
 public : /@/shop/payment
@@ -181,6 +182,8 @@ prefix escape), so acceptance criterion 4 of the issue lands on `GAP`, not on
 
 ## Host state left behind
 
-- `sale.order` `S00002` is still a draft cart with 13 items; nothing confirms it.
+- `sale.order` `S00002` is a draft cart holding one line (1 item) of
+  `WOOW-PARITY-20260929T045315Z Service`; nothing confirms it. The three lines
+  earlier website runs had left in it are gone.
 - `res.partner` 3 (Administrator) keeps the address and phone above.
 - Nothing was installed, restarted or reconfigured.

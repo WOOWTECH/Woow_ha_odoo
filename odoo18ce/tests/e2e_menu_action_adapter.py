@@ -15,9 +15,10 @@ with one GET and then navigates to each action's route; it never clicks, types
 into Odoo records or calls an RPC, and a menu whose action could write (a
 server action) is listed as skipped, never planned. The exception is an `open`
 target that asks for a cart: reaching the website checkout needs one, so
-`SurfaceDriver.fill_cart` adds a product to the logged-in user's cart and the
-record names the `sale.order` that made. That write is outside the crawler's
-`OperationPolicy` on purpose -- see `fill_cart` -- and `require_write_database`
+`SurfaceDriver.ensure_cart` adds a product to the logged-in user's cart when it
+is empty, and the record names the `sale.order` that made. That write is
+outside the crawler's `OperationPolicy` on purpose -- see `ensure_cart` -- and
+`require_write_database`
 keeps it on the one database ADR 0012 allows it on.
 
 Credentials come from the environment only:
@@ -276,6 +277,16 @@ def parse_targets(lines: Iterable[str]) -> tuple[OpenTarget, ...]:
                 raise ValueError("crawler configuration: target line %d: %s must be a string" % (number, name))
         if not entry.get("module") or not entry.get("target"):
             raise ValueError("crawler configuration: target line %d needs a module and a target" % number)
+        if not entry.get("expect_model") and not entry.get("expect_selector"):
+            # Without one of them nothing says the screen asked for is the
+            # screen that loaded, and a fallback that renders cleanly on both
+            # surfaces would be judged PARITY.
+            raise ValueError("crawler configuration: target line %d needs an expect_model or an expect_selector"
+                             % number)
+        if ";" in entry["target"]:
+            # `identity` writes a query after a `;`, so a `;` already in the
+            # target would make two different targets share one identity.
+            raise ValueError("crawler configuration: target line %d must not contain a ';'" % number)
         target = OpenTarget(**entry)
         if target.is_action:
             if not _XMLID.fullmatch(target.target):
@@ -936,15 +947,34 @@ class SurfaceDriver:
     def open_screen(self, target: OpenTarget) -> SurfaceObservation:
         """Open one named screen, the way `observe` opens a planned menu action."""
         READ_ONLY_POLICY.require(Operation.NAVIGATE)
-        writes = (self.fill_cart(target.cart),) if target.cart else ()
+        writes: tuple[Mapping[str, Any], ...] = ()
+        if target.cart:
+            try:
+                writes = (self.ensure_cart(target.cart),)
+            except Exception as error:  # noqa: BLE001 -- a failed cart is evidence too, not a crash
+                # Judging the screen now would judge whatever the cart happened
+                # to hold, so the target is unavailable on this surface and the
+                # record says why.
+                return SurfaceObservation(
+                    available=False,
+                    result=self.masker.text("cart not filled (%s): %s"
+                                            % (classify_failure(error).value, (str(error).splitlines() or [""])[0])),
+                    signals={name: 0 for name in SIGNALS}, route=None, model=None, view=None,
+                )
         observation = self._open(
             target.route, backend=target.backend,
             expect_model=target.expect_model, expect_selector=target.expect_selector,
         )
         return replace(observation, writes=writes)
 
-    def fill_cart(self, product_route: str) -> dict[str, Any]:
-        """Add one product to the logged-in user's cart, so the checkout has one.
+    def ensure_cart(self, product_route: str) -> dict[str, Any]:
+        """Make sure the logged-in user's cart holds something, so a checkout opens.
+
+        An empty cart gets one product; a cart that already holds something is
+        left exactly as it is. Both surfaces share the user, so the second run
+        must not add a second line: the two runs would then judge two carts of
+        different sizes, and a difference in the page's own content would read
+        as a difference between the surfaces.
 
         This writes, and is deliberately not an `Operation`:
         `NON_MUTATING_OPERATIONS` is every member of that enum, so a WRITE
@@ -955,37 +985,46 @@ class SurfaceDriver:
         """
         page = self.context.new_page()
         try:
+            # Both readings are taken on the cart page: the badge on another
+            # page can be a step behind, and a low reading there would let an
+            # add that never landed pass for one that did.
+            before, order = self._cart(page)
+            if before:
+                return {"model": "sale.order", "id": order,
+                        "how": "the cart already held %d item(s); nothing was added" % before}
             page.goto(self.base + product_route, wait_until="domcontentloaded", timeout=60000)
-            before = page.evaluate(_CART_QUANTITY_JS)
             page.locator("#add_to_cart, a[data-action='add_to_cart'], button:has-text('Add to cart')").first.click()
             try:
                 # The button posts to /shop/cart/update and the navbar badge
                 # rises when that answers. Some themes navigate to the cart
                 # first; the badge is on that page too. Leaving before it
-                # answers would cancel the write and leave the cart as it was.
-                page.wait_for_function(_CART_GREW_JS, arg=before, timeout=30000)
+                # answers would cancel the write and leave the cart empty.
+                page.wait_for_function(_CART_GREW_JS, arg=0, timeout=30000)
             except Exception:  # noqa: BLE001 -- the cart page below is the real check
                 pass
-            page.goto(self.base + "/shop/cart", wait_until="domcontentloaded", timeout=60000)
-            after = page.evaluate(_CART_QUANTITY_JS)
-            # website_sale puts the session's cart on every page's navbar badge.
-            order = page.evaluate(
-                "() => { const n = document.querySelector('.my_cart_quantity');"
-                " return (n && n.getAttribute('data-order-id')) || null; }"
-            )
-            if after <= before:
-                # Without this the run would judge a checkout reached by an
-                # older cart and the record would claim a write that never was.
-                raise RuntimeError("crawler configuration: the cart did not grow (%d items) after adding %s"
-                                   % (after, self.masker.text(product_route)))
+            after, order = self._cart(page)
+            if not after:
+                # Without this the run would judge a checkout the cart never
+                # made reachable, or record a write that never happened.
+                raise RuntimeError("the cart is still empty after adding %s" % self.masker.text(product_route))
             return {
                 "model": "sale.order",
-                "id": str(order) if order else None,
-                "how": "added the product on %s to the cart (%d -> %d items)"
-                       % (self.masker.text(product_route), before, after),
+                "id": order,
+                "how": "added the product on %s to the cart (0 -> %d items)"
+                       % (self.masker.text(product_route), after),
             }
         finally:
             page.close()
+
+    def _cart(self, page) -> tuple[int, str | None]:
+        """The number of items in the session's cart, and the order it is."""
+        page.goto(self.base + "/shop/cart", wait_until="domcontentloaded", timeout=60000)
+        # website_sale puts both on every page's navbar badge.
+        order = page.evaluate(
+            "() => { const n = document.querySelector('.my_cart_quantity');"
+            " return (n && n.getAttribute('data-order-id')) || null; }"
+        )
+        return page.evaluate(_CART_QUANTITY_JS), (str(order) if order else None)
 
     def _open(
         self, route: str, *, backend: bool, expect_action: str | None = None,

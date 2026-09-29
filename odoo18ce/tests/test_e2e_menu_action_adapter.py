@@ -416,17 +416,22 @@ class OpenTargetTests(unittest.TestCase):
         cases = {
             "not json": ["nope"],
             "not an object": ['["project_todo"]'],
-            "unknown field": ['{"module": "m", "target": "/shop", "surface": "public"}'],
-            "no target": ['{"module": "m"}'],
-            "no module": ['{"target": "/shop"}'],
-            "empty module": ['{"module": "", "target": "/shop"}'],
-            "not a string": ['{"module": "m", "target": 5}'],
-            "not an xmlid": ['{"module": "m", "target": "project_todo"}'],
-            "an origin": ['{"module": "m", "target": "https://odoo.example/shop"}'],
-            "traversal": ['{"module": "m", "target": "/shop/../../etc"}'],
-            "an ingress prefix": ['{"module": "m", "target": "%s/shop"}' % PREFIX],
-            "a cart that is not a route": ['{"module": "m", "target": "/shop", "cart": "sale.order"}'],
-            "duplicate": ['{"module": "m", "target": "/shop"}', '{"module": "other", "target": "/shop"}'],
+            "unknown field": ['{"module": "m", "target": "/shop", "expect_selector": "#x", "surface": "public"}'],
+            "no target": ['{"module": "m", "expect_selector": "#x"}'],
+            "no module": ['{"target": "/shop", "expect_selector": "#x"}'],
+            "empty module": ['{"module": "", "target": "/shop", "expect_selector": "#x"}'],
+            "not a string": ['{"module": "m", "target": 5, "expect_selector": "#x"}'],
+            "nothing to check the screen by": ['{"module": "m", "target": "/shop"}'],
+            "not an xmlid": ['{"module": "m", "target": "project_todo", "expect_model": "m.m"}'],
+            "an origin": ['{"module": "m", "target": "https://odoo.example/shop", "expect_selector": "#x"}'],
+            "traversal": ['{"module": "m", "target": "/shop/../../etc", "expect_selector": "#x"}'],
+            "an ingress prefix": ['{"module": "m", "target": "%s/shop", "expect_selector": "#x"}' % PREFIX],
+            "a semicolon, which the identity uses for a query":
+                ['{"module": "m", "target": "/shop;a=1", "expect_selector": "#x"}'],
+            "a cart that is not a route":
+                ['{"module": "m", "target": "/shop", "expect_selector": "#x", "cart": "sale.order"}'],
+            "duplicate": ['{"module": "m", "target": "/shop", "expect_selector": "#x"}',
+                          '{"module": "other", "target": "/shop", "expect_selector": "#y"}'],
         }
         for name, lines in cases.items():
             with self.subTest(name):
@@ -438,8 +443,9 @@ class OpenTargetTests(unittest.TestCase):
         # is every member of that enum, so a WRITE member would be permitted by
         # the read-only policy instead of refused. ADR 0012 bounds it instead.
         self.assertEqual(WRITE_DATABASE, "odoo_parity")
-        reading = parse_targets(['{"module": "m", "target": "/shop/checkout"}'])
-        writing = parse_targets(['{"module": "m", "target": "/shop/checkout", "cart": "/shop/product/desk-1"}'])
+        reading = parse_targets(['{"module": "m", "target": "/shop/checkout", "expect_selector": "#x"}'])
+        writing = parse_targets(['{"module": "m", "target": "/shop/checkout", "expect_selector": "#x",'
+                                 ' "cart": "/shop/product/desk-1"}'])
         require_write_database(reading, "odoo_test")
         require_write_database(writing, WRITE_DATABASE)
         with self.assertRaisesRegex(RuntimeError, "odoo_parity"):
