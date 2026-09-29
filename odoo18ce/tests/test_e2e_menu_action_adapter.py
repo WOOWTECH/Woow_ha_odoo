@@ -9,6 +9,7 @@ import unittest
 from e2e_menu_action_adapter import (
     EVIDENCE_SCHEMA,
     WRITE_DATABASE,
+    session_database,
     Masker,
     OpenTarget,
     RunInfo,
@@ -446,6 +447,14 @@ class OpenTargetTests(unittest.TestCase):
             with self.subTest(name):
                 with self.assertRaisesRegex(ValueError, "crawler configuration"):
                     parse_targets(lines)
+
+    def test_a_run_that_cannot_name_its_database_does_not_run(self) -> None:
+        # ODOO_DB is what the login asked for; only the session's answer is
+        # what the run was really on, and there is no third answer.
+        self.assertEqual(session_database("odoo_parity"), "odoo_parity")
+        for missing in (None, ""):
+            with self.assertRaisesRegex(RuntimeError, "did not report its database"):
+                session_database(missing)
 
     def test_the_cart_write_is_refused_outside_the_parity_database(self) -> None:
         # The cart write is not an Operation on purpose: NON_MUTATING_OPERATIONS

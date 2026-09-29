@@ -316,6 +316,18 @@ def parse_targets(lines: Iterable[str]) -> tuple[OpenTarget, ...]:
     return tuple(targets)
 
 
+def session_database(reported: str | None) -> str:
+    """The database a run records and is judged on: the one the session reported.
+
+    `ODOO_DB` is what the login asked for, which a mono-database deployment
+    ignores, so a run that could not read the answer names no database at all
+    rather than repeating the question.
+    """
+    if not reported:
+        raise RuntimeError("crawler configuration: the session did not report its database")
+    return reported
+
+
 def require_write_database(targets: Iterable[OpenTarget], database: str | None) -> None:
     """A cart target writes, so ADR 0012 allows it on one database only.
 
@@ -1175,11 +1187,8 @@ def crawl(surface: Surface, apps: Sequence[str], out, *, viewport: str = "1920x1
         try:
             driver = SurfaceDriver(surface, browser, ignore_https_errors=ignore_https, viewport=size)
             driver.log_in()
-            # The session's own database, as `open` records it: `diff` refuses
-            # two runs that name different ones, and ODOO_DB names what the
-            # login asked for, which a mono-database deployment ignores.
             run = RunInfo(new_run_id(), os.environ.get("PARITY_TARGET", "local"),
-                          driver.database or os.environ.get("ODOO_DB", "default"), client)
+                          session_database(driver.database), client)
             scope = scope_from_web_menus(driver.web_menus(), apps)
             visits = plan_visits(scope)
             for skipped in scope.skipped:
@@ -1207,8 +1216,12 @@ def crawl(surface: Surface, apps: Sequence[str], out, *, viewport: str = "1920x1
             browser.close()
 
 
-def open_screens(surface: Surface, targets: Sequence[OpenTarget], out, *, viewport: str = "1920x1080") -> int:
-    """Open each target on one surface and write the same records `crawl` writes."""
+def open_screens(surface: Surface, targets: Sequence[OpenTarget], out_path: str, *, viewport: str = "1920x1080") -> int:
+    """Open each target on one surface and write the same records `crawl` writes.
+
+    `out_path` is opened once the login and the write guard have passed, so a
+    run that is refused leaves the evidence of the last one where it was.
+    """
     from playwright.sync_api import sync_playwright
 
     size, client = parse_viewport(viewport)
@@ -1221,25 +1234,24 @@ def open_screens(surface: Surface, targets: Sequence[OpenTarget], out, *, viewpo
             driver.log_in()
             # The database the session is on, not the one ODOO_DB names: a
             # mono-database deployment ignores the `?db=` the login carries, so
-            # the environment can name one database while the writes land in
-            # another. The guard gets the session's answer and nothing else --
-            # a session that reported none may not write. Only the label a
-            # read-only run carries falls back to the environment.
-            require_write_database(targets, driver.database)
-            database = driver.database or os.environ.get("ODOO_DB", "default")
+            # the environment can name one database while the run reads and
+            # writes another.
+            database = session_database(driver.database)
+            require_write_database(targets, database)
             run = RunInfo(new_run_id(), os.environ.get("PARITY_TARGET", "local"), database, client)
             signalled = 0
-            for target in targets:
-                observation = driver.open_screen(target)
-                record = evidence_record(
-                    run, surface, module=target.module, identity=target.identity,
-                    observation=observation, label=target.label,
-                )
-                out.write(json.dumps(driver.masker.value(record), ensure_ascii=False, sort_keys=True) + "\n")
-                out.flush()
-                noisy = not observation.available or any(observation.signals.values()) or observation.url_violations
-                signalled += bool(noisy)
-                print("%s %s" % ("SIGNAL" if noisy else "CLEAN ", target.identity), file=sys.stderr)
+            with open(out_path, "w", encoding="utf-8") as out:
+                for target in targets:
+                    observation = driver.open_screen(target)
+                    record = evidence_record(
+                        run, surface, module=target.module, identity=target.identity,
+                        observation=observation, label=target.label,
+                    )
+                    out.write(json.dumps(driver.masker.value(record), ensure_ascii=False, sort_keys=True) + "\n")
+                    out.flush()
+                    noisy = not observation.available or any(observation.signals.values()) or observation.url_violations
+                    signalled += bool(noisy)
+                    print("%s %s" % ("SIGNAL" if noisy else "CLEAN ", target.identity), file=sys.stderr)
             print("%d targets, %d with signals; run %s" % (len(targets), signalled, run.run_id), file=sys.stderr)
             return 1 if signalled else 0
         finally:
@@ -1282,8 +1294,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "open":
             with open(args.targets, encoding="utf-8") as targets_file:
                 targets = parse_targets(targets_file)
-            with open(args.out, "w", encoding="utf-8") as out:
-                return open_screens(Surface(args.surface), targets, out, viewport=args.viewport)
+            return open_screens(Surface(args.surface), targets, args.out, viewport=args.viewport)
         apps = [app.strip() for app in args.apps.split(",") if app.strip()]
         with open(args.out, "w", encoding="utf-8") as out:
             return crawl(Surface(args.surface), apps, out, viewport=args.viewport)
