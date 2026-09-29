@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- A website page view opened through **Ingress** now records the page's
+  **Canonical URL** instead of the Home Assistant host. Odoo's visitor
+  tracking stored `request.httprequest.url`, whose host under Ingress is the
+  Home Assistant one -- the add-on runs Odoo with `proxy_mode` and the
+  Ingress listener forwards that host as `X-Forwarded-Host`. The Supervisor
+  had already removed the Ingress prefix, so the path was right and only the
+  scheme and host were wrong, and no Ingress token was ever stored; but
+  Website > Visitors listed addresses that cannot open the page (`U-C5`,
+  root cause `RC-9`), while the same screen's Public origin rows were
+  correct. The image now ships a second server-wide module,
+  `woow_visitor_url`, beside `woow_base_url_guard`: Odoo loads it in every
+  process, installs it in no database, and it rebuilds the stored URL on
+  what `website.get_base_url()` returns -- the website's `domain` when set,
+  otherwise the frozen `web.base.url` -- keeping the request's own path and
+  query. A visit that already arrives on the Canonical URL stores exactly
+  what it stored before, and a database with no Canonical URL yet stores the
+  path and query with no host at all. **Page views stored before this
+  version keep the Home Assistant host**: they are not rewritten and not
+  deleted. Every pull request now also starts Odoo in the image it builds
+  and fails when the patch is not applied, the in-image contract ADR 0010
+  established for the Canonical URL guard. Issue #160, parent #148.
+
 ## 0.4.5 — 2026-09-29
 
 ### Added
