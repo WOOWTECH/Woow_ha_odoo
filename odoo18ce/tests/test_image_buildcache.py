@@ -97,6 +97,17 @@ def test_buildkit_is_pinned_to_a_version() -> None:
         f"setup-buildx-action has to pin a BuildKit image version, got {driver_opts!r}")
 
 
+@pytest.mark.parametrize("arch", ARCHES)
+def test_ci_pins_the_same_buildkit(arch: str) -> None:
+    """CI writes the gha cache the Release build reads as its fallback."""
+    job = document(CI)["jobs"][f"build-{arch}"]
+    pins = [step.get("with", {}).get("driver-opts") for step in job["steps"]
+            if str(step.get("uses", "")).startswith("docker/setup-buildx-action")]
+    release_pin = publish_step("docker/setup-buildx-action")["driver-opts"]
+    assert pins == [release_pin], (
+        f"build-{arch} builds with a different BuildKit than the Release does")
+
+
 def test_the_pins_say_what_changing_them_costs() -> None:
     """Criterion 4: a comment, so nobody bumps either one by reflex."""
     comments = [line.strip().lstrip("#").strip()

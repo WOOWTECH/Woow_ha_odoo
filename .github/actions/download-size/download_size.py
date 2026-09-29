@@ -34,7 +34,8 @@ PLATFORMS = {
 MIB = 1024 * 1024
 DEFAULT_LIMIT = 3
 # Over this, updating from the previous Release gets a ::warning:: — never a
-# failure, because the Release is already published by the time this runs.
+# failure. The images are pushed by the time this runs, so there is nothing
+# left to stop; a number nobody likes is not a reason to withhold the tag.
 DEFAULT_WARN_MIB = 100.0
 # 0.3.x and older were released without images, so they are not bases.
 MIN_BASE_VERSION = (0, 4, 0)
@@ -203,10 +204,12 @@ def report(new_refs, bases, fetch, warn_mib=DEFAULT_WARN_MIB):
             cells[arch] = sum(size for digest, size in new[arch]
                               if digest not in carried) / MIB
         if len(missing) == len(arches):
-            notes.append(f"{version}: no published image; skipped.")
+            notes.append(f"{version}: no image could be read; skipped.")
             continue
         if missing:
-            notes.append(f"{version}: no image for {', '.join(missing)}; that column is blank.")
+            notes.append(
+                f"{version}: no image could be read for {', '.join(missing)}; "
+                "that column is blank.")
         rows.append((version, cells))
 
     if not rows:
@@ -227,7 +230,15 @@ def report(new_refs, bases, fetch, warn_mib=DEFAULT_WARN_MIB):
     else:
         previous, cells = rows[0]
         for arch in arches:
-            if cells[arch] is not None and cells[arch] > warn_mib:
+            if cells[arch] is None:
+                # `imagetools inspect` says the same thing about a tag that
+                # was never pushed and a registry having a bad minute, so
+                # this cannot be reported as a cost of nothing.
+                annotations.append(
+                    f"::notice::no image for {previous} on {arch}, so what this "
+                    "update costs a host on the previous Release was not checked there"
+                )
+            elif cells[arch] > warn_mib:
                 annotations.append(
                     f"::warning::updating from {previous} downloads "
                     f"{cells[arch]:.1f} MiB on {arch}, over {warn_mib:.0f} MiB"

@@ -115,16 +115,25 @@ def test_a_base_missing_everywhere_is_skipped_with_a_note() -> None:
     table, _ = size.report(
         new_refs("0.4.5"), ["0.4.4", "0.4.3"], fetcher(published("0.4.5", "0.4.4")))
     assert "| 0.4.3 |" not in table, table
-    assert "_0.4.3: no published image; skipped._" in table, table
+    assert "_0.4.3: no image could be read; skipped._" in table, table
 
 
 def test_a_base_missing_on_one_arch_keeps_its_row_blank_there() -> None:
+    """And the blank is announced: an unread manifest is not a cost of nothing.
+
+    `imagetools inspect` fails the same way for a tag that was never
+    pushed and for a registry having a bad minute, so a blank cell on the
+    previous Release is a check that did not happen -- which is exactly
+    where a 718 MiB update would otherwise pass unremarked.
+    """
     manifests = published("0.4.5", "0.4.4")
     del manifests[f"{IMAGE_BASE}-aarch64:0.4.4"]
-    table, _ = size.report(new_refs("0.4.5"), ["0.4.4"], fetcher(manifests))
+    table, annotations = size.report(new_refs("0.4.5"), ["0.4.4"], fetcher(manifests))
     assert cell(table, "0.4.4", 1) == "0.1 MiB", table
     assert cell(table, "0.4.4", 2) == size.MISSING_CELL, table
-    assert "_0.4.4: no image for aarch64; that column is blank._" in table, table
+    assert "_0.4.4: no image could be read for aarch64; that column is blank._" in table
+    assert len(annotations) == 1 and annotations[0].startswith("::notice::"), annotations
+    assert "on aarch64" in annotations[0], annotations
 
 
 def test_bases_that_cannot_be_read_are_not_read_as_no_earlier_image() -> None:

@@ -83,10 +83,13 @@ runs:
         # rebuild runs `apt-get update` and gets new bytes, so only a cache
         # hit keeps a layer's digest -- and only an unchanged digest spares
         # the host the download (issue #155).
-        # The gha cache stays behind it as a fallback read, for the build
-        # that finds no :buildcache yet -- the first one after this change
-        # -- and for any later miss. Nothing here writes it any more; CI's
-        # push-to-main builds are what fill it.
+        # The gha cache stays behind it as a best-effort fallback read, for
+        # the build that finds no :buildcache yet -- the first one after
+        # this change -- and for any later miss. Nothing here writes it any
+        # more: CI's push-to-main builds do, every time on amd64 and only
+        # on a version bump on aarch64, so aarch64's fallback is whatever
+        # the last bump left and may be nothing at all. The registry cache
+        # is the one to rely on; this is for the transition.
         cache-from: |
           type=registry,ref=${{ inputs.image_base }}-${{ inputs.arch }}:buildcache
           type=gha,scope=${{ inputs.arch }}
