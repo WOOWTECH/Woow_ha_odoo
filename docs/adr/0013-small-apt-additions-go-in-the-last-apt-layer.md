@@ -114,8 +114,8 @@ runs.
   costs every user 690 MiB was never a security policy.
 - **(c) is the last apt layer, not the last layer.** Under it sit the
   add-ons clone, the rootfs overlay and the chmod step, and they are
-  rebuilt when (c) changes: a small apt addition re-sends about 15 MiB of
-  those on top of (c) itself. They are above nothing that matters and below
+  rebuilt when (c) changes: a small apt addition re-sends about 15 MiB,
+  (c) and those three together. They are above nothing that matters and below
   everything expensive, which is the point of the order — a rootfs-only
   Release, the common one, re-sends only them and never re-runs apt.
 - **The saving is only as durable as the CI build cache.** Both build jobs
