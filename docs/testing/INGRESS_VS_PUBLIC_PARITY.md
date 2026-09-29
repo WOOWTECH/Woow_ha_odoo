@@ -482,7 +482,7 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 | Safari／非 Chromium | 第三方 cookie、SharedWorker、clipboard 限制不同 | 同上 |
 | 開發者模式差集 | 由 `docs/plans/2026-09-05-odoo-developer-mode-delta-tdd.md` 承接 | 交叉引用，不重複 |
 
-### 10.6 共用層實測結果（2026-09-25，2026-09-27／28／29 補跑，#143／#201）
+### 10.6 共用層實測結果（2026-09-25，2026-09-27／28／29 補跑，#143／#201／#203）
 
 F、A、B、C、D 群組在 `odoo_parity`（0.4.4）各跑一次，外加 10.1–10.3 指定的模組畫面；Ingress 端是 HA 前端
 面板裡的 iframe（plain-http LAN 入口），`U-C25` 走 https 入口。`U-D8` 拆成兩筆後共 76 項 = 54 `PARITY` + 7 `GAP`
@@ -505,6 +505,14 @@ POS 兩項在 #161 之後於 2026-09-27 補跑，收據列印（`U-F5`）與相�
 重算後 76 項 = **60 `PARITY` + 1 `GAP` + 2 `APPROVED-DIVERGENCE` + 6 `STRUCTURAL` + 7 `NOT-RUN`**；唯一剩下的 `GAP` 是 `U-C25`（報到台
 媒體來源，issue **#159**），不在 #201 範圍內，其 Live 補跑與 `U-A6` 媒體途徑探測仍待辦。這一輪記錄與守恆報告見
 `docs/testing/evidence/2026-09-29-issue-201/`。
+
+`U-C25` 於 2026-09-29 在 0.4.5 上補跑（#203，run `WOOW-PARITY-20260929T045315Z`，經 `HA_HTTPS_BASE_URL` 的 https 入口＋Chromium fake camera）。
+報到台這一畫面兩個 surface 都沒有相機控制項可按，故 verdict 記 `NOT-RUN`（非 Ingress 專屬，`no camera control` 兩面皆然）；但**使這筆成為 `GAP` 的訊號已消失**：
+#143 那次（run `WOOW-PARITY-20260925T043539Z`）Ingress 側於載入報到台時 `route_escape=1`、`console_error=1`（#159 修的 `new Audio(url("/barcodes/…"))` 錯誤音效逃逸），
+0.4.5 上兩面皆 `route_escape=0`、`console_error=0`——#159 的媒體來源包裝已生效。`U-C25` 的其餘畫面（generic、`hr_attendance`、POS）維持 `PARITY`，`mrp` 同報到台記
+`NOT-RUN`（無相機控制項）。重算後 76 項 = **60 `PARITY` + 0 `GAP` + 2 `APPROVED-DIVERGENCE` + 6 `STRUCTURAL` + 8 `NOT-RUN`**，`GAP` 清空。要讓 `U-A6` 也守住媒體
+來源（`RC-12` 附記的媒體途徑探測），仍是 #203 未完的另一半（探測會實際觸發失敗掃描的錯誤音效路徑，而非只在載入時觀察）。這一輪記錄與守恆報告見
+`docs/testing/evidence/2026-09-29-issue-203/`。
 `NOT-RUN`：`U-A9`（無 60 秒以上的動作）、`U-C22`（只有一種語言）、`/event` 與活動報名
 （未裝 `website_event`）、CE 沒有該控制項的三個模組畫面（MRP 工作中心與工單、出勤 kiosk 全螢幕）。證據與方法見 `docs/testing/evidence/2026-09-25-issue-143/`。
 
