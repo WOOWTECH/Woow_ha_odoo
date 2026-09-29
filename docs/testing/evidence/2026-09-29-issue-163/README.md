@@ -24,8 +24,10 @@ set -a; . /projects/Woow_ha_odoo/.env; set +a; export ODOO_DB=odoo_parity
 ```
 
 `ODOO_DB` is set in the shell because the `.env` of the main checkout points at
-`odoo_test`, and both surfaces of this run must read `odoo_parity`. P-6 below
-confirms both did.
+`odoo_test`, and both surfaces of this run must read `odoo_parity`. It is the
+`?db=` the login carries; what each record then says it ran against, and what
+the cart write is allowed against, is the database the session itself reported.
+P-6 below confirms both surfaces are on `odoo_parity`.
 
 | File | What it is |
 |---|---|
@@ -97,9 +99,11 @@ Per module: `project_todo` 2 `PARITY` + 1 `GAP`, `sale_management` 3 `PARITY`,
 
 ## Writes
 
-Writes were made on **`odoo_parity` only**. `open` refuses to fill a cart on any
-other database (`require_write_database`, `ODOO_DB` must be `odoo_parity`), and
-the run confirmed P-6 (`odoo_parity` on both surfaces) before judging.
+Writes were made on **`odoo_parity` only**. `open` refuses to fill a cart
+unless the session it has just logged into reports that database
+(`require_write_database`, reading `odoo.info.db` from the web client -- not
+`ODOO_DB`, which is a claim about the database and not the database itself),
+and P-6 confirms both surfaces are on it.
 
 | Record | What changed | Why |
 |---|---|---|

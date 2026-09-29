@@ -674,6 +674,11 @@ def _literal_differences(public: Mapping[str, Any], ingress: Mapping[str, Any]) 
     return reasons
 
 
+def _written(block: Mapping[str, Any]) -> list[str]:
+    """The records a surface's run created or reused, as `model:id`."""
+    return sorted("%s:%s" % (item.get("model"), item.get("id")) for item in block.get("writes") or ())
+
+
 def _judge(public: Mapping[str, Any], ingress: Mapping[str, Any]) -> tuple[str, list[str]]:
     reasons: list[str] = []
     blocker = False
@@ -692,6 +697,15 @@ def _judge(public: Mapping[str, Any], ingress: Mapping[str, Any]) -> tuple[str, 
         for violation in block.get("url_violations") or ():
             reasons.append("%s U-C5 %s: %s" % (name, violation.get("reason"), violation.get("literal")))
             blocker = True
+    left_writes, right_writes = _written(public), _written(ingress)
+    if left_writes != right_writes:
+        # Both surfaces share the logged-in user, so a cart target fills one
+        # cart and the other run reuses it. Two different records mean the two
+        # screens were rendered from different data, and nothing below them can
+        # be attributed to the surface.
+        reasons.append("records written: public=%s ingress=%s"
+                       % (", ".join(left_writes) or "none", ", ".join(right_writes) or "none"))
+        blocker = True
     if public.get("available") and ingress.get("available"):
         for part in ("route", "model", "view"):
             left, right = (public.get("screen") or {}).get(part), (ingress.get("screen") or {}).get(part)
@@ -706,6 +720,12 @@ def _judge(public: Mapping[str, Any], ingress: Mapping[str, Any]) -> tuple[str, 
 def diff_runs(public_run: Iterable[Mapping[str, Any]], ingress_run: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Join two single-surface runs by control identity and judge each action."""
     public, ingress = _index(public_run, "public"), _index(ingress_run, "ingress")
+    # Two databases are two sets of data, and every difference between them
+    # would be read here as a difference between the surfaces.
+    databases = {record.get("database") for record in (*public.values(), *ingress.values())}
+    if len(databases) > 1:
+        raise ValueError("the two runs are not on one database: %s"
+                         % ", ".join(sorted(repr(name) for name in databases)))
     merged: list[dict[str, Any]] = []
     for identity in sorted(public.keys() | ingress.keys()):
         left, right = public.get(identity), ingress.get(identity)
@@ -1228,8 +1248,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     open_parser = commands.add_parser(
         "open", help="open named screens the menu crawler cannot reach, on one surface")
     open_parser.add_argument("--surface", required=True, choices=[surface.value for surface in Surface])
-    open_parser.add_argument("--targets", required=True,
-                             help='JSONL file, one {"module": ..., "target": ...} per line')
+    open_parser.add_argument(
+        "--targets", required=True,
+        help='JSONL file, one target per line: {"module": ..., "target": ..., and an "expect_model" '
+             'or an "expect_selector" that says the right screen loaded}')
     open_parser.add_argument("--out", required=True, help="JSONL evidence file to write")
     open_parser.add_argument("--env-file", help="read unset credentials from this NAME=value file")
     open_parser.add_argument("--viewport", default="1920x1080",

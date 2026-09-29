@@ -516,6 +516,31 @@ class OpenEvidenceTests(unittest.TestCase):
         self.assertEqual(item["public"]["writes"], [write])
         json.dumps(item)
 
+    def test_two_surfaces_that_wrote_different_records_judged_different_screens(self) -> None:
+        cart = lambda order_id, how: {"model": "sale.order", "id": order_id, "how": how}
+        judge = lambda right: diff_runs(
+            [evidence_record(RUN, Surface.PUBLIC, module="m", identity="open:route:/shop/payment",
+                             observation=observation(writes=(cart("2", "added one"),)))],
+            [evidence_record(RUN, Surface.HA_INGRESS, module="m", identity="open:route:/shop/payment",
+                             observation=observation(writes=right))],
+        )[0]
+        # The same cart, however each run came by it, is the case that judges.
+        self.assertEqual(judge((cart("2", "the cart already held 1 item(s)"),))["verdict"], "PARITY")
+        different = judge((cart("3", "added one"),))
+        self.assertEqual((different["verdict"], different["severity"]), ("GAP", "blocker"))
+        self.assertIn("records written: public=sale.order:2 ingress=sale.order:3", different["notes"])
+        self.assertIn("records written: public=sale.order:2 ingress=none", judge(())["notes"])
+
+    def test_two_runs_of_different_databases_are_not_comparable(self) -> None:
+        other = RunInfo(run_id=RUN.run_id, target=RUN.target, database="odoo_test")
+        with self.assertRaisesRegex(ValueError, "not on one database"):
+            diff_runs(
+                [record(Surface.PUBLIC)],
+                [evidence_record(other, Surface.HA_INGRESS, module="contacts",
+                                 identity="menu:contacts.menu_contacts|ir.actions.act_window:100",
+                                 observation=observation())],
+            )
+
 
 class ViewportTests(unittest.TestCase):
     def test_the_default_client_is_the_desktop_baseline(self) -> None:
