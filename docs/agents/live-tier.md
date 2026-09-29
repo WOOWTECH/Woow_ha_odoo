@@ -116,7 +116,7 @@ is a different string from the approved prefix and prompts.
   knows every item, so `report` reconciles a partial run against it.
 
 `e2e_parity_outbound_live.py`, `e2e_pos_offline_live.py`,
-`e2e_menu_action_adapter.py` (`crawl` / `diff`) and `e2e_settings_ingress.py`
+`e2e_menu_action_adapter.py` (`crawl` / `open` / `diff`) and `e2e_settings_ingress.py`
 take the same `--env-file` and the same `--run-id` discipline.
 
 Browsers come from Playwright's shared install (`PLAYWRIGHT_BROWSERS_PATH` is

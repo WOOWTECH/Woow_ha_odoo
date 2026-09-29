@@ -4,13 +4,21 @@
 `crawl` opens every menu action of the chosen apps on one surface, up to
 `MAX_TRAVERSAL_DEPTH`, and writes one `odoo-parity-evidence/v1` JSONL record
 per action: the five signals of the parity plan section 7 step 5 and every URL
-literal on the screen (`U-C5`). `diff` joins a Public origin run and an Ingress
-run by control identity and gives each action `PARITY` or `GAP`.
+literal on the screen (`U-C5`). `open` writes the same record for screens
+`crawl` cannot reach -- a module with no menu of its own, or one whose only
+menu runs a server action -- named one by one in a target file. `diff` joins a
+Public origin run and an Ingress run by control identity and gives each
+`PARITY` or `GAP`; it judges an `open` run exactly as it judges a crawl.
 
-The adapter only reads. It fetches the menu tree with one GET and then
-navigates to each action's route; it never clicks, types into Odoo records or
-calls an RPC, and a menu whose action could write (a server action) is listed
-as skipped, never planned.
+The adapter only reads, with one named exception. It fetches the menu tree
+with one GET and then navigates to each action's route; it never clicks, types
+into Odoo records or calls an RPC, and a menu whose action could write (a
+server action) is listed as skipped, never planned. The exception is an `open`
+target that asks for a cart: reaching the website checkout needs one, so
+`SurfaceDriver.fill_cart` adds a product to the logged-in user's cart and the
+record names the `sale.order` that made. That write is outside the crawler's
+`OperationPolicy` on purpose -- see `fill_cart` -- and `require_write_database`
+keeps it on the one database ADR 0012 allows it on.
 
 Credentials come from the environment only:
 
@@ -40,7 +48,7 @@ import os
 import re
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping, NamedTuple, Sequence
 from urllib.parse import urlsplit
 
@@ -74,6 +82,8 @@ _SKIP_REASONS = {
     "ir.actions.act_url": "URL action leaves the web client",
 }
 _SURFACE_KEY = {Surface.PUBLIC: "public", Surface.HA_INGRESS: "ingress"}
+# The one database of the test host an `open` target may write on (ADR 0012).
+WRITE_DATABASE = "odoo_parity"
 
 
 # --- Scope and plan -------------------------------------------------------
@@ -178,6 +188,114 @@ def plan_visits(scope: CrawlScope, *, max_depth: int = MAX_TRAVERSAL_DEPTH) -> l
         for operation in visit.operations:
             READ_ONLY_POLICY.require(operation)
     return visits
+
+
+# --- Open targets ---------------------------------------------------------
+
+
+_XMLID = re.compile(r"[a-z0-9_]+\.[A-Za-z0-9_][A-Za-z0-9_.]*")
+_OPEN_FIELDS = ("module", "target", "label", "expect_model", "expect_selector", "cart")
+
+
+@dataclass(frozen=True)
+class OpenTarget:
+    """One screen `open` judges: a window action or a route, and what it owns.
+
+    `target` is a window-action xmlid (`project_todo.project_task_action_todo`)
+    or a route relative to the surface's Odoo root (`/shop/checkout`). It names
+    the same screen on both surfaces -- no origin, no Ingress prefix -- so it is
+    also the control identity `diff` joins the two runs on.
+
+    `expect_model` (a back-office screen) and `expect_selector` (a website one)
+    are the `open` form of the crawler's U-C12 check: without them a fallback
+    screen that loads cleanly on both surfaces would read as `PARITY`.
+    `cart` names a product page to add to the cart before opening the target;
+    it is the only field that writes.
+    """
+
+    module: str
+    target: str
+    label: str = ""
+    expect_model: str | None = None
+    expect_selector: str | None = None
+    cart: str | None = None
+
+    @property
+    def is_action(self) -> bool:
+        return not self.target.startswith("/")
+
+    @property
+    def route(self) -> str:
+        return "/odoo/action-%s" % self.target if self.is_action else self.target
+
+    @property
+    def identity(self) -> str:
+        return "open:%s:%s" % ("action" if self.is_action else "route", self.target)
+
+    @property
+    def backend(self) -> bool:
+        """A web-client screen, as opposed to a website page: it has an action manager."""
+        return self.is_action or urlsplit(self.route).path.split("/")[1:2] == ["odoo"]
+
+
+def _check_route(route: Any, what: str) -> None:
+    if not isinstance(route, str) or not route.startswith("/"):
+        raise ValueError("crawler configuration: %s must be a route or an action xmlid" % what)
+    try:
+        # Refuses an origin, credentials, traversal and an Ingress prefix; the
+        # target itself keeps its query, which chooses a view (`?view_type=list`).
+        normalize_route(route, Surface.PUBLIC)
+    except ValueError as error:
+        raise ValueError("crawler configuration: %s is not a usable route (%s)" % (what, error)) from None
+
+
+def parse_targets(lines: Iterable[str]) -> tuple[OpenTarget, ...]:
+    """Read a target file: one JSON object per line, blank lines and `#` skipped."""
+    targets: list[OpenTarget] = []
+    seen: dict[str, int] = {}
+    for number, line in enumerate(lines, start=1):
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        try:
+            entry = json.loads(text)
+        except ValueError as error:
+            raise ValueError("crawler configuration: target line %d is not JSON (%s)" % (number, error)) from None
+        if not isinstance(entry, dict):
+            raise ValueError("crawler configuration: target line %d is not an object" % number)
+        unknown = sorted(set(entry) - set(_OPEN_FIELDS))
+        if unknown:
+            raise ValueError("crawler configuration: target line %d has unknown field(s): %s"
+                             % (number, ", ".join(unknown)))
+        for name, value in entry.items():
+            if value is not None and not isinstance(value, str):
+                raise ValueError("crawler configuration: target line %d: %s must be a string" % (number, name))
+        if not entry.get("module") or not entry.get("target"):
+            raise ValueError("crawler configuration: target line %d needs a module and a target" % number)
+        target = OpenTarget(**entry)
+        if target.is_action:
+            if not _XMLID.fullmatch(target.target):
+                raise ValueError("crawler configuration: target line %d: %r is neither an xmlid nor a route"
+                                 % (number, target.target))
+        else:
+            _check_route(target.target, "target line %d" % number)
+        if target.cart is not None:
+            _check_route(target.cart, "the cart of target line %d" % number)
+        if target.identity in seen:
+            raise ValueError("crawler configuration: target line %d repeats the target of line %d"
+                             % (number, seen[target.identity]))
+        seen[target.identity] = number
+        targets.append(target)
+    if not targets:
+        raise ValueError("crawler configuration: the target file has no target")
+    return tuple(targets)
+
+
+def require_write_database(targets: Iterable[OpenTarget], database: str) -> None:
+    """A cart target writes, so ADR 0012 allows it on one database only."""
+    if any(target.cart for target in targets) and database != WRITE_DATABASE:
+        raise RuntimeError("crawler configuration: a target fills a cart, which writes; "
+                           "database %r is not %s" % (database, WRITE_DATABASE))
 
 
 # --- Home Assistant websocket messages -----------------------------------
@@ -395,6 +513,8 @@ class SurfaceObservation:
     url_literals: Sequence[str] = ()
     url_violations: Sequence[Mapping[str, str]] = ()
     http_5xx: int = 0
+    # The records an `open` target created to reach its screen; empty for a read.
+    writes: Sequence[Mapping[str, Any]] = ()
 
 
 # Odoo 18 switches to its small-screen layout below this width.
@@ -436,11 +556,14 @@ def _base_record(run: RunInfo, module: str, identity: str, screen: Mapping[str, 
 
 
 def evidence_record(
-    run: RunInfo, surface: Surface, *, module: str, identity: str, observation: SurfaceObservation
+    run: RunInfo, surface: Surface, *, module: str, identity: str, observation: SurfaceObservation,
+    label: str = "",
 ) -> dict[str, Any]:
     """One surface's record; `verdict` stays empty until `diff` joins two runs."""
     screen = {"route": observation.route, "model": observation.model, "view": observation.view}
     record = _base_record(run, module, identity, screen)
+    if label:
+        record["label"] = label
     record[_SURFACE_KEY[surface]] = {
         "available": observation.available,
         "result": observation.result,
@@ -450,6 +573,8 @@ def evidence_record(
         "url_violations": [dict(item) for item in observation.url_violations],
         "http_5xx": int(observation.http_5xx),
     }
+    if observation.writes:
+        record[_SURFACE_KEY[surface]]["writes"] = [dict(item) for item in observation.writes]
     if observation.url_violations:
         record["root_cause"] = ["RC-1", "RC-9"]
     record.update({"verdict": None, "severity": None, "artifacts": [], "notes": ""})
@@ -788,6 +913,50 @@ class SurfaceDriver:
 
     def observe(self, visit: PlannedVisit) -> SurfaceObservation:
         READ_ONLY_POLICY.require(Operation.NAVIGATE)
+        return self._open(visit.route, backend=True, expect_action=visit.action_id)
+
+    def open_screen(self, target: OpenTarget) -> SurfaceObservation:
+        """Open one named screen, the way `observe` opens a planned menu action."""
+        READ_ONLY_POLICY.require(Operation.NAVIGATE)
+        writes = (self.fill_cart(target.cart),) if target.cart else ()
+        observation = self._open(
+            target.route, backend=target.backend,
+            expect_model=target.expect_model, expect_selector=target.expect_selector,
+        )
+        return replace(observation, writes=writes)
+
+    def fill_cart(self, product_route: str) -> dict[str, Any]:
+        """Add one product to the logged-in user's cart, so the checkout has one.
+
+        This writes, and is deliberately not an `Operation`:
+        `NON_MUTATING_OPERATIONS` is every member of that enum, so a WRITE
+        member added there would be *permitted* by `READ_ONLY_POLICY` rather
+        than refused, and the read-only guarantee would quietly weaken. The
+        write lives here instead, named, only on the database
+        `require_write_database` allows, and reported in the record.
+        """
+        page = self.context.new_page()
+        try:
+            page.goto(self.base + product_route, wait_until="domcontentloaded", timeout=60000)
+            page.locator("#add_to_cart, a[data-action='add_to_cart'], button:has-text('Add to cart')").first.click()
+            page.goto(self.base + "/shop/cart", wait_until="domcontentloaded", timeout=60000)
+            # website_sale puts the session's cart on every page's navbar badge.
+            order = page.evaluate(
+                "() => { const n = document.querySelector('.my_cart_quantity');"
+                " return (n && n.getAttribute('data-order-id')) || null; }"
+            )
+            return {
+                "model": "sale.order",
+                "id": str(order) if order else None,
+                "how": "added the product on %s to the cart" % self.masker.text(product_route),
+            }
+        finally:
+            page.close()
+
+    def _open(
+        self, route: str, *, backend: bool, expect_action: str | None = None,
+        expect_model: str | None = None, expect_selector: str | None = None,
+    ) -> SurfaceObservation:
         if self.ingress:
             self.ingress.keep_alive()
         page = self.context.new_page()
@@ -805,10 +974,11 @@ class SurfaceDriver:
         page.on("websocket", lambda socket: urls.append(socket.url))
         available, result, screen, literals = True, "loaded", {}, []
         try:
-            page.goto(self.base + visit.route, wait_until="load", timeout=60000)
-            # An action with target "new" (a wizard) opens in a dialog and
-            # leaves the action manager empty.
-            page.locator(".o_action_manager > *, .o_dialog .modal-content").first.wait_for(timeout=30000)
+            page.goto(self.base + route, wait_until="load", timeout=60000)
+            if backend:
+                # An action with target "new" (a wizard) opens in a dialog and
+                # leaves the action manager empty.
+                page.locator(".o_action_manager > *, .o_dialog .modal-content").first.wait_for(timeout=30000)
             try:
                 page.wait_for_load_state("networkidle", timeout=10000)
             except Exception:  # Odoo can keep a request open; the settle below still applies.
@@ -817,10 +987,16 @@ class SurfaceDriver:
             screen = page.evaluate(_SCREEN_JS) or {}
             literals = page.evaluate(_URL_LITERALS_JS)
             loaded = screen.get("action")
-            if loaded is not None and str(loaded) != visit.action_id:
+            if expect_action is not None and loaded is not None and str(loaded) != expect_action:
                 # U-C12: the menu's action must load, not a fallback such as Discuss.
                 available = False
-                result = "loaded action %s instead of %s" % (loaded, visit.action_id)
+                result = "loaded action %s instead of %s" % (loaded, expect_action)
+            elif expect_model is not None and screen.get("model") != expect_model:
+                available = False
+                result = "loaded model %s instead of %s" % (screen.get("model"), expect_model)
+            elif expect_selector is not None and not page.locator(expect_selector).count():
+                available = False
+                result = "the screen has no %s" % expect_selector
         except Exception as error:  # noqa: BLE001 -- every failure is evidence, not a crash
             available = False
             result = "error (%s): %s" % (classify_failure(error).value, (str(error).splitlines() or [""])[0])
@@ -828,7 +1004,7 @@ class SurfaceDriver:
             page_errors=page_errors, console=console, failed_requests=failed, responses=responses,
             urls=urls, surface=self.surface, origin=self.origin, ingress_prefix=self.prefix,
         )
-        route = self._route(page.url)
+        final_route = self._route(page.url)
         page.close()
         violations = []
         for literal in literals:
@@ -837,7 +1013,7 @@ class SurfaceDriver:
                 violations.append({"literal": self.masker.text(literal), "reason": reason})
         return SurfaceObservation(
             available=available, result=self.masker.text(result), signals=signals,
-            route=route, model=screen.get("model"), view=screen.get("view"),
+            route=final_route, model=screen.get("model"), view=screen.get("view"),
             url_literals=tuple(self.masker.text(literal) for literal in literals),
             url_violations=tuple(violations),
             http_5xx=sum(1 for status, _ in responses if status >= 500),
@@ -888,6 +1064,41 @@ def crawl(surface: Surface, apps: Sequence[str], out, *, viewport: str = "1920x1
             browser.close()
 
 
+def open_screens(surface: Surface, targets: Sequence[OpenTarget], out, *, viewport: str = "1920x1080") -> int:
+    """Open each target on one surface and write the same records `crawl` writes."""
+    from playwright.sync_api import sync_playwright
+
+    size, client = parse_viewport(viewport)
+    database = os.environ.get("ODOO_DB", "default")
+    require_write_database(targets, database)
+    run = RunInfo(new_run_id(), os.environ.get("PARITY_TARGET", "local"), database, client)
+    ignore_https = os.environ.get("IGNORE_HTTPS_ERRORS", "0") == "1"
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        driver = None
+        try:
+            driver = SurfaceDriver(surface, browser, ignore_https_errors=ignore_https, viewport=size)
+            driver.log_in()
+            signalled = 0
+            for target in targets:
+                observation = driver.open_screen(target)
+                record = evidence_record(
+                    run, surface, module=target.module, identity=target.identity,
+                    observation=observation, label=target.label,
+                )
+                out.write(json.dumps(driver.masker.value(record), ensure_ascii=False, sort_keys=True) + "\n")
+                out.flush()
+                noisy = not observation.available or any(observation.signals.values()) or observation.url_violations
+                signalled += bool(noisy)
+                print("%s %s" % ("SIGNAL" if noisy else "CLEAN ", target.identity), file=sys.stderr)
+            print("%d targets, %d with signals; run %s" % (len(targets), signalled, run.run_id), file=sys.stderr)
+            return 1 if signalled else 0
+        finally:
+            if driver:
+                driver.close()
+            browser.close()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -898,16 +1109,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     crawl_parser.add_argument("--env-file", help="read unset credentials from this NAME=value file")
     crawl_parser.add_argument("--viewport", default="1920x1080",
                               help="WIDTHxHEIGHT; below 768 wide Odoo uses its mobile layout (default 1920x1080)")
+    open_parser = commands.add_parser(
+        "open", help="open named screens the menu crawler cannot reach, on one surface")
+    open_parser.add_argument("--surface", required=True, choices=[surface.value for surface in Surface])
+    open_parser.add_argument("--targets", required=True,
+                             help='JSONL file, one {"module": ..., "target": ...} per line')
+    open_parser.add_argument("--out", required=True, help="JSONL evidence file to write")
+    open_parser.add_argument("--env-file", help="read unset credentials from this NAME=value file")
+    open_parser.add_argument("--viewport", default="1920x1080",
+                             help="WIDTHxHEIGHT; below 768 wide Odoo uses its mobile layout (default 1920x1080)")
     diff_parser = commands.add_parser("diff", help="judge a Public origin run against an Ingress run")
     diff_parser.add_argument("public_run")
     diff_parser.add_argument("ingress_run")
     diff_parser.add_argument("--out", help="JSONL file for the joined records")
     args = parser.parse_args(argv)
 
-    if args.command == "crawl":
+    if args.command in ("crawl", "open"):
         if args.env_file:
             with open(args.env_file, encoding="utf-8") as env_file:
                 parse_env_file(env_file, os.environ)
+        if args.command == "open":
+            with open(args.targets, encoding="utf-8") as targets_file:
+                targets = parse_targets(targets_file)
+            with open(args.out, "w", encoding="utf-8") as out:
+                return open_screens(Surface(args.surface), targets, out, viewport=args.viewport)
         apps = [app.strip() for app in args.apps.split(",") if app.strip()]
         with open(args.out, "w", encoding="utf-8") as out:
             return crawl(Surface(args.surface), apps, out, viewport=args.viewport)

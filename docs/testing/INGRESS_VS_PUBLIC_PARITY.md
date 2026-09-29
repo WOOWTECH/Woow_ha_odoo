@@ -654,6 +654,10 @@ ODOO_BASE_URL=<INGRESS_BASE> ... python3 odoo18ce/tests/e2e_adversarial.py
 python3 odoo18ce/tests/e2e_menu_action_adapter.py crawl --surface public     --apps contacts,project --env-file .env --out public.jsonl
 python3 odoo18ce/tests/e2e_menu_action_adapter.py crawl --surface ha_ingress --apps contacts,project --env-file .env --out ingress.jsonl
 python3 odoo18ce/tests/e2e_menu_action_adapter.py diff public.jsonl ingress.jsonl --out diff.jsonl
+# 爬蟲搆不到的畫面（沒有自有選單，或唯一選單是 server action）：用 open 逐一指名，再用同一個 diff 比對（#163）
+python3 odoo18ce/tests/e2e_menu_action_adapter.py open --surface public     --targets targets.jsonl --env-file .env --out public-open.jsonl
+python3 odoo18ce/tests/e2e_menu_action_adapter.py open --surface ha_ingress --targets targets.jsonl --env-file .env --out ingress-open.jsonl
+# targets.jsonl：每行一個 {"module": ..., "target": ...}；target 是 window action 的 xmlid 或路由
 # 行動版模擬：crawl 加 --viewport 390x844
 # 共用層 F/A/B/C/D（#143）：先 P-Check、建 P-7 fixture，再跑全部 check，最後守恆檢查
 python3 odoo18ce/tests/e2e_parity_shared_layers_live.py pcheck --env-file .env --db <DB>
