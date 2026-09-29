@@ -148,6 +148,41 @@ jobs:
           addon_dir: ${{ env.ADDON_DIR }}
           registry_token: ${{ secrets.GITHUB_TOKEN }}
 
+  # An images-only run has no Release notes to put the table in, so it goes
+  # to the step summary -- the same table, from the same action.
+  images-only-size:
+    name: download size (images only)
+    needs: [prepare, build-amd64, build-aarch64]
+    if: >-
+      always()
+      && needs.prepare.result == 'success'
+      && needs.prepare.outputs.is_release != 'true'
+      && needs.build-amd64.result != 'failure' && needs.build-amd64.result != 'cancelled'
+      && needs.build-aarch64.result != 'failure' && needs.build-aarch64.result != 'cancelled'
+    runs-on: ubuntu-latest
+    # Informational only; an images-only run is not a Release to protect,
+    # and a failure here says nothing about the images that were pushed.
+    continue-on-error: true
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: ./.github/actions/download-size
+        with:
+          image_base: ${{ env.IMAGE_BASE }}
+          version: ${{ needs.prepare.outputs.version }}
+          output: download-size.md
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
   release:
     name: tag, GitHub Release, store sync
     needs: [prepare, build-amd64, build-aarch64]
@@ -185,6 +220,21 @@ jobs:
             echo "${IMAGE_BASE}-${arch}:${VERSION} ok"
           done
 
+      # Reads manifests from the registry rather than anything the build
+      # left behind, so it works when a build was skipped because the image
+      # already existed. It never blocks a Release: on any failure the
+      # notes carry the placeholder line below and the tag, the GitHub
+      # Release and the store sync happen anyway (issue #155).
+      - name: What a host downloads for this version
+        id: size
+        continue-on-error: true
+        uses: ./.github/actions/download-size
+        with:
+          image_base: ${{ env.IMAGE_BASE }}
+          version: ${{ env.VERSION }}
+          output: download-size.md
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Release notes from the CHANGELOG
         run: |
           set -euo pipefail
@@ -205,6 +255,11 @@ jobs:
           images = ", ".join("`%s-%s:%s`" % (base, arch, version) for arch in ("amd64", "aarch64"))
           print("Images: " + images)
           PY
+          if [ -s download-size.md ]; then
+            { echo; cat download-size.md; } >> release-notes.md
+          else
+            { echo; echo "Download size: not computed"; } >> release-notes.md
+          fi
           echo "--- release notes ---"; cat release-notes.md
 
       - name: Tag and GitHub Release
