@@ -472,6 +472,9 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 
 第 9 節的 13 個 app 同一輪已比對的選單全為 `PARITY`（`project_todo` 只有一個跳過的 server action），唯一例外是 `website` 的訪客清單：經 Ingress 瀏覽網站時，
 訪客紀錄把 HA 根網址存成頁面 URL（`U-C5`，#160）。
+> #160 已在 add-on 修好：server-wide module `woow_visitor_url` 把訪客追蹤存下的網址改建在 **Canonical URL** 上（`website.get_base_url()`），
+> 路徑與查詢字串照舊。這是 0.4.5 之後的變更，測試主機上的重跑（經 Ingress 瀏覽一次網站後看最新一筆 `website.track`，
+> 並確認動作 596 的爬蟲比對回到 `PARITY`）要等下一個 Release 部署後補做。既有紀錄不回填，仍帶 HA 根網址。
 
 ### 10.5 本輪未覆蓋的已知風險（明列，不假裝測過）
 

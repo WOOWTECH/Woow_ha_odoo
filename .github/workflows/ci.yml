@@ -274,6 +274,83 @@ jobs:
           fi
           echo "mutation: --load=${without_guard} reports the guard not applied, as it must"
 
+      # woow_visitor_url patches website.visitor._handle_webpage_dispatch so
+      # that a page view opened through Ingress records the Canonical URL
+      # instead of the Home Assistant host (issue #160). Nothing stops Odoo
+      # when it does not apply: the server-wide loader logs a module it
+      # cannot import and serves on, and the Static tier tests the patch
+      # against a stand-in that never moves. So Odoo in this image loads the
+      # server-wide modules the add-on renders, and the probe asks it whether
+      # the last _handle_webpage_dispatch declared in its website_visitor
+      # module (the one the registry runs) carries the flag and whether the
+      # wrapper still fits upstream's parameters. The second run leaves the
+      # module out of --load and has to come back unpatched, which shows the
+      # check can go red. No database, Supervisor or credential is used.
+      - name: In-image contract (visitor tracking URL)
+        run: |
+          set -euo pipefail
+          config="${ADDON_DIR}/rootfs/etc/cont-init.d/10-odoo-config.sh"
+          modules="$(sed -nE 's/^server_wide_modules = (.+)$/\1/p' "${config}")"
+          if [[ ",${modules}," != *,woow_visitor_url,* ]]; then
+            echo "::error::server_wide_modules in ${config} does not name woow_visitor_url"
+            exit 1
+          fi
+          without_patch="$(tr ',' '\n' <<< "${modules}" | grep -vx woow_visitor_url | paste -sd,)"
+
+          # Prints the probe's output; the exit status is the container's
+          # (124 when the 300 s timeout cut it), for the caller to read. The
+          # patched class lives in `website`, so Odoo's own addons directory
+          # is on the path beside the add-on's.
+          check_visitor_url() {
+            timeout -k 30 300 docker run --rm -i --user odoo --entrypoint /usr/bin/odoo woow-ha-odoo-amd64:ci \
+              shell --addons-path=/opt/woow-server-addons,/usr/lib/python3/dist-packages/odoo/addons \
+              --load="$1" \
+              < "${ADDON_DIR}/tests/in_image/visitor_url_applied.py" 2>&1
+          }
+
+          # The probe always prints a `visitor-url:` line when it ran at all.
+          # None means odoo shell never reached it: that is a container
+          # failure, reported as one, not the patch.
+          probe_reported() {
+            if ! grep -q '^visitor-url: ' <<< "$1"; then
+              echo "::error::odoo shell in the built image exited ${2} before the visitor-url probe" \
+                "reported (124 is the 300 s timeout); this is a container failure, not the patch." \
+                "Its output is above."
+              exit 1
+            fi
+          }
+
+          status=0
+          out="$(check_visitor_url "${modules}")" || status=$?
+          echo "${out}"
+          probe_reported "${out}" "${status}"
+          if grep -q '^visitor-url: signature mismatch' <<< "${out}"; then
+            echo "::error::woow_visitor_url forwards parameters that upstream's" \
+              "website.visitor._handle_webpage_dispatch does not take that way; the patch installs," \
+              "and a tracked page view would raise TypeError. The difference is named in the probe" \
+              "line above."
+            exit 1
+          fi
+          if ! grep -qx 'visitor-url: applied' <<< "${out}"; then
+            echo "::error::woow_visitor_url is not applied to the last _handle_webpage_dispatch" \
+              "declared in Odoo's website_visitor module, so a page view opened through Ingress" \
+              "records the Home Assistant host. A moved seam, or a website that cannot be" \
+              "imported, shows above as 'Failed to load server-wide module'; a later" \
+              "website.visitor class redefining the method shows nothing."
+            exit 1
+          fi
+
+          status=0
+          out="$(check_visitor_url "${without_patch}")" || status=$?
+          echo "${out}"
+          probe_reported "${out}" "${status}"
+          if ! grep -qx 'visitor-url: not applied' <<< "${out}"; then
+            echo "::error::the visitor-url check did not report 'not applied' with" \
+              "woow_visitor_url left out of --load=${without_patch}; it cannot go red"
+            exit 1
+          fi
+          echo "mutation: --load=${without_patch} reports the patch not applied, as it must"
+
   build-aarch64:
     name: build (aarch64)
     needs: static
