@@ -311,6 +311,9 @@ def parse_targets(lines: Iterable[str]) -> tuple[OpenTarget, ...]:
                                  % (number, target.target))
         else:
             _check_route(target.target, "target line %d" % number)
+        if target.expect_model and not target.backend:
+            raise ValueError("crawler configuration: target line %d is a website route, which has no action "
+                             "model; judge it with an expect_selector" % number)
         if target.cart is not None:
             _check_route(target.cart, "the cart of target line %d" % number, query=False)
         if target.identity in seen:
@@ -906,16 +909,31 @@ _SCREEN_JS = r"""() => {
 
 # The website's navbar cart badge: the number of items in the session's cart,
 # and the sale order it belongs to (`data-order-id`).
+# null, not 0: an unreadable badge is not an empty cart, and a write this run
+# made must never be denied by a reading that failed.
 _CART_QUANTITY_JS = """() => {
   const node = document.querySelector('.my_cart_quantity');
-  if (!node) return 0;
+  if (!node) return null;
   const value = Number((node.textContent || '').trim());
-  return Number.isFinite(value) ? value : 0;
+  return Number.isFinite(value) ? value : null;
 }"""
 _CART_GREW_JS = """(before) => {
   const node = document.querySelector('.my_cart_quantity');
   return !!node && Number((node.textContent || '').trim()) > before;
 }"""
+
+
+def _shows(page, selector: str) -> bool:
+    """Whether the screen shows `selector`, giving it the time a screen takes.
+
+    `is_visible` answers at once, and the settle before it is best effort, so
+    a screen still mounting would be recorded as the wrong screen.
+    """
+    try:
+        page.locator(selector).first.wait_for(state="visible", timeout=15000)
+        return True
+    except Exception:  # noqa: BLE001 -- not shown is the answer, whatever the reason
+        return False
 
 
 class SurfaceDriver:
@@ -1058,6 +1076,8 @@ class SurfaceDriver:
             # page can be a step behind, and a low reading there would let an
             # add that never landed pass for one that did.
             before, order = self._cart(page)
+            if before is None:
+                raise RuntimeError("the cart page did not show how many items the cart holds")
             if before:
                 return {"model": "sale.order", "id": order,
                         "how": "the cart already held %d item(s); nothing was added" % before}
@@ -1072,6 +1092,9 @@ class SurfaceDriver:
             except Exception:  # noqa: BLE001 -- the cart page below is the real check
                 pass
             after, order = self._cart(page)
+            if after is None:
+                raise RuntimeError("the cart page did not show its item count after adding %s"
+                                   % self.masker.text(product_route))
             if not after:
                 # Without this the run would judge a checkout the cart never
                 # made reachable, or record a write that never happened.
@@ -1091,6 +1114,9 @@ class SurfaceDriver:
         try:
             page = self.context.new_page()
             items, order = self._cart(page)
+            if items is None:
+                return {"model": "sale.order", "id": order,
+                        "how": "the cart could not be read after the cart step failed"}
             return {"model": "sale.order", "id": order,
                     "how": "the cart holds %d item(s) after the cart step failed" % items}
         except Exception:  # noqa: BLE001 -- the failure that brought us here is the story
@@ -1101,8 +1127,11 @@ class SurfaceDriver:
                 with contextlib.suppress(Exception):
                     page.close()
 
-    def _cart(self, page) -> tuple[int, str | None]:
-        """The number of items in the session's cart, and the order it is."""
+    def _cart(self, page) -> tuple[int | None, str | None]:
+        """The number of items in the session's cart, and the order it is.
+
+        The count is None when the cart page did not show one.
+        """
         page.goto(self.base + "/shop/cart", wait_until="domcontentloaded", timeout=60000)
         # website_sale puts both on every page's navbar badge.
         order = page.evaluate(
@@ -1149,10 +1178,13 @@ class SurfaceDriver:
                 # U-C12: the menu's action must load, not a fallback such as Discuss.
                 available = False
                 result = "loaded action %s instead of %s" % (loaded, expect_action)
-            elif expect_model is not None and screen.get("model") != expect_model:
+            elif expect_model is not None and screen.get("model") not in (None, expect_model):
+                # As above: a null model is the web client not saying, not the
+                # wrong screen. `expect_selector` is what judges a screen the
+                # web client does not describe.
                 available = False
                 result = "loaded model %s instead of %s" % (screen.get("model"), expect_model)
-            elif expect_selector is not None and not page.locator(expect_selector).first.is_visible():
+            elif expect_selector is not None and not _shows(page, expect_selector):
                 # Shown, not merely present: a block the page renders and then
                 # hides is not the screen the target asked to judge.
                 available = False

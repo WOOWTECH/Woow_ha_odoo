@@ -437,6 +437,8 @@ class OpenTargetTests(unittest.TestCase):
                 ['{"module": "m", "target": "/shop", "expect_selector": ""}'],
             "an empty second expectation":
                 ['{"module": "m", "target": "/shop", "expect_selector": "#x", "expect_model": ""}'],
+            "an expect_model on a website route":
+                ['{"module": "m", "target": "/shop/payment", "expect_model": "sale.order"}'],
             "a query that does not choose a view":
                 ['{"module": "m", "target": "/odoo/action-1?db=other", "expect_model": "m.m"}'],
             "a cart with a query":
