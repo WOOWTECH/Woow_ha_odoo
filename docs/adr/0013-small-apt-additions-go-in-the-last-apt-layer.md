@@ -51,10 +51,19 @@ Anything bigger is not a small addition and is decided on its own.
 from the list above, which rebuilds those layers anyway. Tidying (c) on its
 own costs every user a full download and buys nothing.
 
-**Refresh:** after a PostgreSQL or OpenSSL security notice, a person changes
-the `LAYER_A_REFRESH` date in a pull request. That is the one deliberate way
-to rebuild (a), and the CHANGELOG entry says that the next update is a full
-download.
+**Refresh:** after a security notice for something layer (a) installs — pgdg
+PostgreSQL, or one of the fifty-odd Debian packages Odoo depends on — a
+person changes the `LAYER_A_REFRESH` date in a pull request. That is the one
+deliberate way to rebuild (a), and the CHANGELOG entry says that the next
+update is a full download.
+
+A refresh reaches only what (a)'s own `RUN` installs. `apt-get install`
+leaves a transitive dependency alone while the version already there still
+satisfies the constraint, so a fix for the base image, or for `curl`,
+`gnupg2`, `ca-certificates` and the libraries they bring in above (a) —
+`libssl3` among them — does **not** arrive with a refresh. It arrives with a
+base-image bump, which is its own line on the list above. Both are on the
+list for that reason; neither substitutes for the other.
 
 The Dockerfile's order is frozen by a Static-tier guard test,
 `odoo18ce/tests/test_dockerfile_layers.py`, which compares the normalized

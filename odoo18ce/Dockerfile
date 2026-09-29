@@ -40,9 +40,12 @@ RUN apt-get update \
 #
 #    Nothing that changes often belongs here, and nothing small: a small apt
 #    addition goes in layer (c) below. LAYER_A_REFRESH is the one deliberate
-#    way to rebuild this layer -- after a PostgreSQL or OpenSSL security
-#    notice, change the date in a pull request and say in the CHANGELOG that
-#    the next update is a full download. BuildKit puts every declared ARG
+#    way to rebuild this layer -- after a security notice for PostgreSQL or
+#    for anything else named below, change the date in a pull request and
+#    say in the CHANGELOG that the next update is a full download. It
+#    reaches only what this RUN installs: a fix for the base image, or for
+#    curl, gnupg2 and the libraries they bring in above (libssl3 among
+#    them), arrives with a base-image bump instead. BuildKit puts every declared ARG
 #    into the environment of the RUN steps below it, so the declaration
 #    alone would do it; the echo spends one line to make that true of any
 #    builder, and puts the date in the build log.

@@ -22,8 +22,9 @@
   holds layer (a): a build that finds it gone rebuilds the layer and the
   update is a full download again, which is why a cache that does not
   expire is being chosen separately (#153). `ARG LAYER_A_REFRESH` above (a) is the one deliberate
-  way to rebuild the big layer, for a PostgreSQL or OpenSSL security
-  notice. The rule is written down in
+  way to rebuild the big layer, for a security notice about something it
+  installs; a fix that lives below it, in the base image or beside
+  `curl`, still arrives with a base-image bump. The rule is written down in
   `docs/adr/0013-small-apt-additions-go-in-the-last-apt-layer.md`, and a
   new Static-tier test freezes the Dockerfile's instruction order and keeps
   layer (a)'s package list equal to the dependency file. **The next update
