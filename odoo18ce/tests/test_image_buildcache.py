@@ -61,14 +61,16 @@ def lines(value: str) -> list:
 # --- the Release build ----------------------------------------------------
 
 @pytest.mark.parametrize("arch", ARCHES)
-def test_the_release_build_reads_the_registry_cache(arch: str) -> None:
-    cache_from = publish_step("docker/build-push-action")["cache-from"]
-    assert lines(cache_from) == [
-        "type=registry,ref=${{ inputs.image_base }}-${{ inputs.arch }}:buildcache"
-    ], "the Release build's layer cache is the registry one, not the gha one"
-    # The expression above resolves to the package the version images live on.
-    resolved = (str(cache_from).replace("${{ inputs.image_base }}", IMAGE_BASE)
-                .replace("${{ inputs.arch }}", arch).strip())
+def test_the_release_build_reads_the_registry_cache_first(arch: str) -> None:
+    """The gha cache stays behind it, for the build that finds no :buildcache."""
+    cache_from = lines(publish_step("docker/build-push-action")["cache-from"])
+    assert cache_from == [
+        "type=registry,ref=${{ inputs.image_base }}-${{ inputs.arch }}:buildcache",
+        "type=gha,scope=${{ inputs.arch }}",
+    ], "the registry cache is the Release build's own; gha is only the fallback"
+    # The first line resolves to the package the version images live on.
+    resolved = (cache_from[0].replace("${{ inputs.image_base }}", IMAGE_BASE)
+                .replace("${{ inputs.arch }}", arch))
     assert resolved == f"type=registry,ref={IMAGE_BASE}-{arch}:buildcache"
 
 

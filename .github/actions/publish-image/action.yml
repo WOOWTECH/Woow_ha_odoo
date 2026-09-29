@@ -83,7 +83,13 @@ runs:
         # rebuild runs `apt-get update` and gets new bytes, so only a cache
         # hit keeps a layer's digest -- and only an unchanged digest spares
         # the host the download (issue #155).
-        cache-from: type=registry,ref=${{ inputs.image_base }}-${{ inputs.arch }}:buildcache
+        # The gha cache stays behind it as a fallback read, for the build
+        # that finds no :buildcache yet -- the first one after this change
+        # -- and for any later miss. Nothing here writes it any more; CI's
+        # push-to-main builds are what fill it.
+        cache-from: |
+          type=registry,ref=${{ inputs.image_base }}-${{ inputs.arch }}:buildcache
+          type=gha,scope=${{ inputs.arch }}
         # Written only from main. A manual images-only run on another ref
         # reads the cache but must not publish its own layers as the cache
         # every later Release starts from -- so a version published that

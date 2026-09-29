@@ -17,7 +17,8 @@
   images-only run on another ref cannot become the cache the next Release
   starts from. CI reads the same cache -- the package is public, so with
   no ghcr login and no new permission -- and still writes only to the
-  Actions cache. The image's compression (`gzip`) and the BuildKit
+  Actions cache, which both sides keep reading behind the registry one so
+  that the first build after this change does not start cold. The image's compression (`gzip`) and the BuildKit
   version are pinned as well, because both decide what a layer's bytes
   are: changing either is a deliberate change that rebuilds every layer,
   and the workflow says so where the pins are. Every Release also carries

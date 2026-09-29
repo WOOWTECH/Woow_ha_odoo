@@ -169,9 +169,10 @@ def report(new_refs, bases, fetch, warn_mib=DEFAULT_WARN_MIB):
     """(markdown table, workflow annotations) for these images and bases.
 
     `bases` are versions, newest first; the first is the previous Release,
-    the one the warning is about. A base whose image is missing everywhere
-    is skipped with a note; one missing on a single architecture keeps its
-    row with that cell blank.
+    and the warning is about that hop and no other -- if its image cannot
+    be read the run says so instead of judging an older base in its place.
+    A base whose image is missing everywhere is skipped with a note; one
+    missing on a single architecture keeps its row with that cell blank.
 
     With no bases at all -- nothing published yet that had images -- the
     table shows the full download. Bases that were named and then could
@@ -216,6 +217,13 @@ def report(new_refs, bases, fetch, warn_mib=DEFAULT_WARN_MIB):
         notes.insert(0, "No earlier image to compare against; this is the full download.")
         rows.append((NO_EARLIER,
                      {arch: sum(size for _, size in new[arch]) / MIB for arch in arches}))
+    elif rows[0][0] != bases[0]:
+        # The budget is about the hop every host takes, and that row is not
+        # in the table; an older base is a different question, not a stand-in.
+        annotations.append(
+            f"::notice::no image for {bases[0]}, the previous Release, so what "
+            "this update costs a host on it was not checked"
+        )
     else:
         previous, cells = rows[0]
         for arch in arches:

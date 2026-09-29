@@ -193,6 +193,17 @@ def test_only_the_previous_release_is_warned_about() -> None:
     assert annotations == [], annotations
 
 
+def test_an_unreadable_previous_release_is_said_out_loud_not_replaced() -> None:
+    """The budget is about the hop every host takes, not about an older one."""
+    manifests = published("0.4.5")
+    manifests[f"{IMAGE_BASE}-amd64:0.4.3"] = recorded("woow-ha-odoo-aarch64-0.4.4")
+    table, annotations = size.report(
+        [AMD64_LATEST], ["0.4.4", "0.4.3"], fetcher(manifests))
+    assert "| 0.4.3 |" in table and "| 0.4.4 |" not in table, table
+    assert len(annotations) == 1 and annotations[0].startswith("::notice::"), annotations
+    assert "0.4.4, the previous Release" in annotations[0], annotations
+
+
 # --- choosing the bases ---------------------------------------------------
 
 def test_the_last_three_releases_by_semver_become_the_bases() -> None:
