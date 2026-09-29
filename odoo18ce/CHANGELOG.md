@@ -18,7 +18,10 @@
   re-sends about 235 MiB instead of about 690 MiB, and a small package
   re-sends (c) plus the small layers under it -- the add-ons clone, the
   rootfs overlay and the permissions step, about 15 MiB together --
-  instead of the big two. `ARG LAYER_A_REFRESH` above (a) is the one deliberate
+  instead of the big two. Those savings hold while CI's build cache still
+  holds layer (a): a build that finds it gone rebuilds the layer and the
+  update is a full download again, which is why a cache that does not
+  expire is being chosen separately (#153). `ARG LAYER_A_REFRESH` above (a) is the one deliberate
   way to rebuild the big layer, for a PostgreSQL or OpenSSL security
   notice. The rule is written down in
   `docs/adr/0013-small-apt-additions-go-in-the-last-apt-layer.md`, and a
