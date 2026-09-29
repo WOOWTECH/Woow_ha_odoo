@@ -433,6 +433,10 @@ class OpenTargetTests(unittest.TestCase):
             "an ingress prefix": ['{"module": "m", "target": "%s/shop", "expect_selector": "#x"}' % PREFIX],
             "a semicolon, which the identity uses for a query":
                 ['{"module": "m", "target": "/shop;a=1", "expect_selector": "#x"}'],
+            "an expectation that says nothing":
+                ['{"module": "m", "target": "/shop", "expect_selector": ""}'],
+            "an empty second expectation":
+                ['{"module": "m", "target": "/shop", "expect_selector": "#x", "expect_model": ""}'],
             "a query that does not choose a view":
                 ['{"module": "m", "target": "/odoo/action-1?db=other", "expect_model": "m.m"}'],
             "a cart with a query":

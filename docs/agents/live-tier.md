@@ -117,7 +117,9 @@ is a different string from the approved prefix and prompts.
 
 `e2e_parity_outbound_live.py`, `e2e_pos_offline_live.py`,
 `e2e_menu_action_adapter.py` (`crawl` / `open` / `diff`) and `e2e_settings_ingress.py`
-take the same `--env-file` and the same `--run-id` discipline.
+take the same `--env-file`, and the same `--run-id` discipline where they take
+a marker at all — the menu/action adapter mints its own run id and prints it,
+so the id goes in the evidence README rather than on the command line.
 
 Browsers come from Playwright's shared install (`PLAYWRIGHT_BROWSERS_PATH` is
 set in the image). Run headless; `--headed` needs a display nobody has.

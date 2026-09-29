@@ -83,7 +83,9 @@ _SKIP_REASONS = {
     "ir.actions.act_url": "URL action leaves the web client",
 }
 _SURFACE_KEY = {Surface.PUBLIC: "public", Surface.HA_INGRESS: "ingress"}
-# The one database of the test host an `open` target may write on (ADR 0012).
+# The one database an `open` target may write on. ADR 0012 allows the test
+# host's databases, `odoo_test` included; #163 is narrower on purpose -- the
+# Public origin serves `odoo_parity`, so that is the one both surfaces judge.
 WRITE_DATABASE = "odoo_parity"
 
 
@@ -285,6 +287,11 @@ def parse_targets(lines: Iterable[str]) -> tuple[OpenTarget, ...]:
         for name, value in entry.items():
             if value is not None and not isinstance(value, str):
                 raise ValueError("crawler configuration: target line %d: %s must be a string" % (number, name))
+            # An empty string is a field that was meant to say something: as an
+            # expectation it would fail every screen, and as a cart it would
+            # ask for a write of nothing.
+            if value == "":
+                raise ValueError("crawler configuration: target line %d: %s is empty" % (number, name))
         if not entry.get("module") or not entry.get("target"):
             raise ValueError("crawler configuration: target line %d needs a module and a target" % number)
         if not entry.get("expect_model") and not entry.get("expect_selector"):
@@ -1029,8 +1036,8 @@ class SurfaceDriver:
         different sizes, and a difference in the page's own content would read
         as a difference between the surfaces.
 
-        Refuses to write unless the session is on `WRITE_DATABASE`, which is
-        the bound ADR 0012 puts on this write, whoever the caller is.
+        Refuses to write unless the session is on `WRITE_DATABASE`, the bound
+        on this write, whoever the caller is.
 
         This writes, and is deliberately not an `Operation`:
         `NON_MUTATING_OPERATIONS` is every member of that enum, so a WRITE
@@ -1145,9 +1152,11 @@ class SurfaceDriver:
             elif expect_model is not None and screen.get("model") != expect_model:
                 available = False
                 result = "loaded model %s instead of %s" % (screen.get("model"), expect_model)
-            elif expect_selector is not None and not page.locator(expect_selector).count():
+            elif expect_selector is not None and not page.locator(expect_selector).first.is_visible():
+                # Shown, not merely present: a block the page renders and then
+                # hides is not the screen the target asked to judge.
                 available = False
-                result = "the screen has no %s" % expect_selector
+                result = "the screen does not show %s" % expect_selector
         except Exception as error:  # noqa: BLE001 -- every failure is evidence, not a crash
             available = False
             result = "error (%s): %s" % (classify_failure(error).value, (str(error).splitlines() or [""])[0])
@@ -1176,7 +1185,12 @@ class SurfaceDriver:
             self.ingress.close()
 
 
-def crawl(surface: Surface, apps: Sequence[str], out, *, viewport: str = "1920x1080") -> int:
+def crawl(surface: Surface, apps: Sequence[str], out_path: str, *, viewport: str = "1920x1080") -> int:
+    """Open every menu action of the chosen apps on one surface.
+
+    `out_path` is opened once the login has passed, so a run that cannot even
+    name its database leaves the evidence of the last one where it was.
+    """
     from playwright.sync_api import sync_playwright
 
     size, client = parse_viewport(viewport)
@@ -1191,22 +1205,23 @@ def crawl(surface: Surface, apps: Sequence[str], out, *, viewport: str = "1920x1
                           session_database(driver.database), client)
             scope = scope_from_web_menus(driver.web_menus(), apps)
             visits = plan_visits(scope)
-            for skipped in scope.skipped:
-                identity = control_identity(skipped.menu_id, *skipped.action_ref.split(","))
-                record = skipped_record(run, surface, module=skipped.app, identity=identity, reason=skipped.reason)
-                out.write(json.dumps(driver.masker.value(record), ensure_ascii=False, sort_keys=True) + "\n")
             signalled = 0
-            for visit in visits:
-                observation = driver.observe(visit)
-                record = evidence_record(
-                    run, surface, module=scope.menu_apps[visit.menu_id],
-                    identity=scope.identity(visit), observation=observation,
-                )
-                out.write(json.dumps(driver.masker.value(record), ensure_ascii=False, sort_keys=True) + "\n")
-                out.flush()
-                noisy = not observation.available or any(observation.signals.values()) or observation.url_violations
-                signalled += bool(noisy)
-                print("%s %s" % ("SIGNAL" if noisy else "CLEAN ", scope.identity(visit)), file=sys.stderr)
+            with open(out_path, "w", encoding="utf-8") as out:
+                for skipped in scope.skipped:
+                    identity = control_identity(skipped.menu_id, *skipped.action_ref.split(","))
+                    record = skipped_record(run, surface, module=skipped.app, identity=identity, reason=skipped.reason)
+                    out.write(json.dumps(driver.masker.value(record), ensure_ascii=False, sort_keys=True) + "\n")
+                for visit in visits:
+                    observation = driver.observe(visit)
+                    record = evidence_record(
+                        run, surface, module=scope.menu_apps[visit.menu_id],
+                        identity=scope.identity(visit), observation=observation,
+                    )
+                    out.write(json.dumps(driver.masker.value(record), ensure_ascii=False, sort_keys=True) + "\n")
+                    out.flush()
+                    noisy = not observation.available or any(observation.signals.values()) or observation.url_violations
+                    signalled += bool(noisy)
+                    print("%s %s" % ("SIGNAL" if noisy else "CLEAN ", scope.identity(visit)), file=sys.stderr)
             print("%d actions, %d with signals, %d skipped; run %s"
                   % (len(visits), signalled, len(scope.skipped), run.run_id), file=sys.stderr)
             return 1 if signalled else 0
@@ -1296,8 +1311,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 targets = parse_targets(targets_file)
             return open_screens(Surface(args.surface), targets, args.out, viewport=args.viewport)
         apps = [app.strip() for app in args.apps.split(",") if app.strip()]
-        with open(args.out, "w", encoding="utf-8") as out:
-            return crawl(Surface(args.surface), apps, out, viewport=args.viewport)
+        return crawl(Surface(args.surface), apps, args.out, viewport=args.viewport)
 
     with open(args.public_run, encoding="utf-8") as public, open(args.ingress_run, encoding="utf-8") as ingress:
         merged = diff_runs(read_records(public), read_records(ingress))
