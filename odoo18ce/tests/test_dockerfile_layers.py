@@ -238,8 +238,11 @@ def guard_failures(dockerfile: str, depends: str) -> list[str]:
              if i > b[0] and one.startswith("RUN ") and "apt-get install" in one]
     if not after:
         problems.append(
-            "layer (c) is missing: there is no apt-get install RUN after "
-            "layer (b). " + HOW_TO_CHANGE)
+            "layer (c) is gone: there is no apt-get install RUN after layer "
+            "(b). ADR 0013 allows folding (c) into (a) or (b), but only "
+            "together with an event that rebuilds them anyway. If that is "
+            "what happened, drop this check with the same edit that updates "
+            "EXPECTED_SEQUENCE, and note the full download in the CHANGELOG.")
         c = None
     else:
         c = after[0]
@@ -304,7 +307,10 @@ def guard_failures(dockerfile: str, depends: str) -> list[str]:
         missing = sorted(wanted - set(installed))
         problems.append(
             "layer (a) and odoo-deb-depends.txt disagree: (a) installs %s "
-            "that the list does not ask for, and is missing %s. %s"
+            "that the list does not ask for, and is missing %s. A package "
+            "the add-on needs for itself belongs in LAYER_A_OWN in this "
+            "file, not in odoo-deb-depends.txt, which records only what the "
+            "pinned .deb depends on. %s"
             % (extra or "nothing", missing or "nothing", HOW_TO_CHANGE))
 
     # (c) comes after (b) and before the clone and the rootfs overlay.
@@ -398,12 +404,17 @@ def test_an_adr_records_the_rule_and_the_numbers_it_rests_on() -> None:
     assert adrs, "issue #154 lands ADR 0013"
     text = adrs[0].read_text(encoding="utf-8")
     assert "status: accepted" in text
+    # Collapsed, so a figure that happens to wrap still counts.
+    flat = " ".join(text.split())
     # The measurements the split was decided on, and the refresh rule that
     # pays for the security fixes (a) stops picking up by accident.
-    for token in ("759", "724", "693", "120", "200 KiB/s", "75",
-                  "207 MiB", "235 MiB", "271 MiB", "20 MiB",
-                  "LAYER_A_REFRESH", "#153"):
-        assert token in text, "the ADR must record %r" % token
+    # Whole phrases, not bare numbers: "75" alone would be satisfied by the
+    # "759 MiB" two tokens above it and would prove nothing.
+    for token in ("759 MiB", "724 MiB was new", "693.3 MiB",
+                  "689.1 MiB", "120\u2013200 KiB/s",
+                  "75 unbroken minutes", "207 MiB", "235 MiB", "271 MiB",
+                  "20 MiB", "LAYER_A_REFRESH", "#153"):
+        assert token in flat, "the ADR must record %r" % token
 
 
 def test_a_dependency_may_be_deferred_to_layer_b_but_not_dropped() -> None:
