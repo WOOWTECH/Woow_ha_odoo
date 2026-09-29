@@ -1,0 +1,16 @@
+# The screens the menu crawler cannot reach (#163). One JSON object per line;
+# `target` is a window-action xmlid or a route, and it is the control identity
+# `diff` joins the two surfaces on.
+# project_todo: its only menu runs a server action, which the read-only crawler
+# skips. Open the window action that server action returns instead.
+{"module": "project_todo", "target": "project_todo.project_task_action_todo", "label": "To-do kanban", "expect_model": "project.task"}
+{"module": "project_todo", "target": "/odoo/action-project_todo.project_task_action_todo?view_type=list", "label": "To-do list", "expect_model": "project.task"}
+{"module": "project_todo", "target": "/odoo/action-project_todo.project_task_action_todo/5", "label": "To-do form (task 5)", "expect_model": "project.task"}
+# sale_management: no menu of its own in the menu tree (its Quotation Templates
+# menu needs a group the test user does not have), so open its screens directly.
+{"module": "sale_management", "target": "/odoo/action-sale.action_quotations_with_onboarding/new", "label": "Quotation form with the Optional Products tab", "expect_model": "sale.order", "expect_selector": ".o_notebook .nav-link[name='optional_products']"}
+{"module": "sale_management", "target": "sale_management.sale_order_template_action", "label": "Quotation Templates list", "expect_model": "sale.order.template"}
+{"module": "sale_management", "target": "/odoo/action-sale_management.sale_order_template_action/new", "label": "Quotation Template form", "expect_model": "sale.order.template"}
+# ecpay_invoice_website: it adds the e-invoice block to the website checkout's
+# payment step (it inherits website_sale.payment), which needs a cart.
+{"module": "ecpay_invoice_website", "target": "/shop/payment", "label": "Website checkout e-invoice step", "expect_selector": ".ecpay-invoice-info-form", "cart": "/shop/woow-parity-20260929t045315z-service-58"}

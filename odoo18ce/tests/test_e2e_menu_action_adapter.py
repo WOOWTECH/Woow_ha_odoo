@@ -386,9 +386,12 @@ class OpenTargetTests(unittest.TestCase):
             OpenTarget(module="project_todo", target="project_todo.project_task_action_todo").identity,
             "open:action:project_todo.project_task_action_todo",
         )
+        # A query survives into the identity, but not as a query: masking
+        # redacts everything after a `?`, and two targets that differ only
+        # there would collapse into one ambiguous identity.
         self.assertEqual(
             OpenTarget(module="sale_management", target="/odoo/action-x?view_type=list").identity,
-            "open:route:/odoo/action-x?view_type=list",
+            "open:route:/odoo/action-x;view_type=list",
         )
 
     def test_parse_targets_reads_one_object_per_line(self) -> None:
@@ -478,6 +481,14 @@ class OpenEvidenceTests(unittest.TestCase):
         self.assertEqual(merged[0]["verdict"], "GAP")
         self.assertEqual(merged[0]["severity"], "blocker")
         self.assertIn("ingress unavailable: the screen has no .o_kanban_view", merged[0]["notes"])
+
+    def test_masking_a_record_leaves_an_identity_diff_can_join_on(self) -> None:
+        masker = Masker(bases={"<PUBLIC_BASE>": "https://odoo.example", "<HA_BASE>": HA},
+                        ingress_prefix=PREFIX, secrets=("hunter2",))
+        target = OpenTarget(module="project_todo", target="/odoo/action-454?view_type=list")
+        item = masker.value(evidence_record(RUN, Surface.HA_INGRESS, module=target.module,
+                                            identity=target.identity, observation=observation()))
+        self.assertEqual(item["control_identity"], "open:route:/odoo/action-454;view_type=list")
 
     def test_an_open_record_names_the_records_the_run_created(self) -> None:
         write = {"model": "sale.order", "id": "42", "how": "added the product on /shop/product/desk-1 to the cart"}

@@ -230,7 +230,11 @@ class OpenTarget:
 
     @property
     def identity(self) -> str:
-        return "open:%s:%s" % ("action" if self.is_action else "route", self.target)
+        # A query chooses the view (`?view_type=list`), so it tells two targets
+        # apart and belongs in the identity -- but masking redacts everything
+        # after a `?`, because a query can carry credentials. Keep it after a
+        # `;`, so the masked record still holds an identity `diff` can join on.
+        return "open:%s:%s" % ("action" if self.is_action else "route", self.target.replace("?", ";"))
 
     @property
     def backend(self) -> bool:
@@ -835,6 +839,20 @@ _SCREEN_JS = r"""() => {
 }"""
 
 
+# The website's navbar cart badge: the number of items in the session's cart,
+# and the sale order it belongs to (`data-order-id`).
+_CART_QUANTITY_JS = """() => {
+  const node = document.querySelector('.my_cart_quantity');
+  if (!node) return 0;
+  const value = Number((node.textContent || '').trim());
+  return Number.isFinite(value) ? value : 0;
+}"""
+_CART_GREW_JS = """(before) => {
+  const node = document.querySelector('.my_cart_quantity');
+  return !!node && Number((node.textContent || '').trim()) > before;
+}"""
+
+
 class SurfaceDriver:
     """Logs in on one surface and opens planned visits, reading only."""
 
@@ -938,17 +956,33 @@ class SurfaceDriver:
         page = self.context.new_page()
         try:
             page.goto(self.base + product_route, wait_until="domcontentloaded", timeout=60000)
+            before = page.evaluate(_CART_QUANTITY_JS)
             page.locator("#add_to_cart, a[data-action='add_to_cart'], button:has-text('Add to cart')").first.click()
+            try:
+                # The button posts to /shop/cart/update and the navbar badge
+                # rises when that answers. Some themes navigate to the cart
+                # first; the badge is on that page too. Leaving before it
+                # answers would cancel the write and leave the cart as it was.
+                page.wait_for_function(_CART_GREW_JS, arg=before, timeout=30000)
+            except Exception:  # noqa: BLE001 -- the cart page below is the real check
+                pass
             page.goto(self.base + "/shop/cart", wait_until="domcontentloaded", timeout=60000)
+            after = page.evaluate(_CART_QUANTITY_JS)
             # website_sale puts the session's cart on every page's navbar badge.
             order = page.evaluate(
                 "() => { const n = document.querySelector('.my_cart_quantity');"
                 " return (n && n.getAttribute('data-order-id')) || null; }"
             )
+            if after <= before:
+                # Without this the run would judge a checkout reached by an
+                # older cart and the record would claim a write that never was.
+                raise RuntimeError("crawler configuration: the cart did not grow (%d items) after adding %s"
+                                   % (after, self.masker.text(product_route)))
             return {
                 "model": "sale.order",
                 "id": str(order) if order else None,
-                "how": "added the product on %s to the cart" % self.masker.text(product_route),
+                "how": "added the product on %s to the cart (%d -> %d items)"
+                       % (self.masker.text(product_route), before, after),
             }
         finally:
             page.close()
