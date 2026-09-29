@@ -1253,6 +1253,12 @@ class SurfaceDriver:
             page.wait_for_timeout(500)
             screen = _screen_of(page, expect_model=expect_model)
             literals = page.evaluate(_URL_LITERALS_JS)
+            if shown and expect_selector is not None:
+                # Still shown once the screen has settled: waiting for it above
+                # is what says the screen has arrived, and this is what says it
+                # stayed. A block that renders and is then hidden is not on the
+                # screen the target asked to judge.
+                shown = page.locator(expect_selector).first.is_visible()
             loaded = screen.get("action")
             if expect_action is not None and loaded is not None and str(loaded) != expect_action:
                 # U-C12: the menu's action must load, not a fallback such as Discuss.
@@ -1430,7 +1436,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return crawl(Surface(args.surface), apps, args.out, viewport=args.viewport)
 
     with open(args.public_run, encoding="utf-8") as public, open(args.ingress_run, encoding="utf-8") as ingress:
-        merged = diff_runs(read_records(public), read_records(ingress))
+        public_records, ingress_records = read_records(public), read_records(ingress)
+    merged = diff_runs(public_records, ingress_records)
+    # Which runs these are, so a file left by an earlier run -- a run that
+    # failed leaves the last one where it was -- is seen rather than joined.
+    for name, records in (("public", public_records), ("ingress", ingress_records)):
+        print("%s run(s): %s" % (name, ", ".join(sorted({record["run_id"] for record in records}))))
     if args.out:
         with open(args.out, "w", encoding="utf-8") as out:
             for record in merged:
