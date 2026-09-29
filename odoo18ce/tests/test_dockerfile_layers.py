@@ -146,11 +146,17 @@ def instructions(text: str) -> list[str]:
 
 
 def apt_packages(run: str) -> list[str]:
-    """The package names one normalized apt `RUN` installs, flags dropped."""
-    found = re.search(r"apt-get install (.*?)(?: &&|$)", run)
-    if not found:
-        return []
-    return [word for word in found.group(1).split() if not word.startswith("-")]
+    """The package names one normalized apt `RUN` installs, flags dropped.
+
+    Every `apt-get install` in the RUN, not only the first: a RUN that
+    installs twice must not be able to hide a second `postgresql-16` from
+    the "exactly one RUN" check.
+    """
+    words: list[str] = []
+    for found in re.finditer(r"apt-get install (.*?)(?: &&|$)", run):
+        words += [word for word in found.group(1).split()
+                  if not word.startswith("-")]
+    return words
 
 
 # A note is `<kind>: <value>`, and several are separated by `; `. `deferred`
@@ -223,11 +229,11 @@ def guard_failures(dockerfile: str, depends: str) -> list[str]:
     # exactly one RUN.
     a = _runs_installing(instrs, "postgresql-16")
     b = _runs_containing(instrs, DEB_URL)
-    for label, hits, what in (("(a)", a, "postgresql-16"),
-                              ("(b)", b, "the Odoo .deb download")):
+    for label, hits, what in (("(a)", a, "installing postgresql-16"),
+                              ("(b)", b, "downloading the Odoo .deb")):
         if len(hits) != 1:
             problems.append(
-                "layer %s must be exactly one RUN containing %s; found %d. %s"
+                "layer %s must be exactly one RUN %s; found %d. %s"
                 % (label, what, len(hits), HOW_TO_CHANGE))
     if not a or not b:
         return problems
