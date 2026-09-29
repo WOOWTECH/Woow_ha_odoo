@@ -934,9 +934,10 @@ def _shows(page, selector: str) -> bool:
 
     `is_visible` answers at once, and the settle before it is best effort, so
     a screen still mounting would be recorded as the wrong screen. Only a
-    timeout means not shown: a selector Playwright cannot read is a mistake in
-    the target file, and it says so rather than failing both surfaces alike
-    and reading as a `GAP` on a healthy screen.
+    timeout means not shown; anything else -- a page that died under the wait
+    -- is a failure of the screen and is recorded as one. A selector that
+    cannot be read at all never gets here: `check_selectors` refuses it before
+    the first target.
     """
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -945,9 +946,6 @@ def _shows(page, selector: str) -> bool:
         return True
     except PlaywrightTimeoutError:
         return False
-    except Exception as error:  # noqa: BLE001 -- turned into the harness error it is
-        raise ValueError("crawler configuration: expect_selector %r cannot be read (%s)"
-                         % (selector, (str(error).splitlines() or [""])[0])) from None
 
 
 class SurfaceDriver:
@@ -1071,6 +1069,12 @@ class SurfaceDriver:
         Refuses to write unless the session is on `WRITE_DATABASE`, the bound
         on this write, whoever the caller is.
 
+        The line it adds carries no run marker, unlike the fixtures the Live
+        scripts create: the cart is the logged-in user's own draft order and
+        both surfaces have to judge the same one, so naming it after the run
+        would edit the very screen under judgement. The record names the
+        order and its size instead, and it carries the run id.
+
         This writes, and is deliberately not an `Operation`:
         `NON_MUTATING_OPERATIONS` is every member of that enum, so a WRITE
         member added there would be *permitted* by `READ_ONLY_POLICY` rather
@@ -1121,6 +1125,27 @@ class SurfaceDriver:
                 "how": "added the product on %s to the cart (0 -> %d items)"
                        % (self.masker.text(product_route), after),
             }
+        finally:
+            page.close()
+
+    def check_selectors(self, targets: Iterable[OpenTarget]) -> None:
+        """Refuse an `expect_selector` Playwright cannot read, before judging.
+
+        It is a mistake in the target file, like the ones `parse_targets`
+        refuses; without a browser it cannot be caught there. Left to the run
+        it would fail every surface alike and read as a `GAP` on screens that
+        are fine.
+        """
+        page = self.context.new_page()
+        try:
+            for target in targets:
+                if not target.expect_selector:
+                    continue
+                try:
+                    page.locator(target.expect_selector).count()
+                except Exception as error:  # noqa: BLE001 -- turned into the harness error it is
+                    raise ValueError("crawler configuration: expect_selector %r cannot be read (%s)"
+                                     % (target.expect_selector, (str(error).splitlines() or [""])[0])) from None
         finally:
             page.close()
 
@@ -1175,13 +1200,18 @@ class SurfaceDriver:
         page.on("request", lambda request: urls.append(request.url))
         page.on("framenavigated", lambda frame: urls.append(frame.url) if frame == page.main_frame else None)
         page.on("websocket", lambda socket: urls.append(socket.url))
-        available, result, screen, literals = True, "loaded", {}, []
+        available, result, screen, literals, shown = True, "loaded", {}, [], True
         try:
             page.goto(self.base + route, wait_until="load", timeout=60000)
             if backend:
                 # An action with target "new" (a wizard) opens in a dialog and
                 # leaves the action manager empty.
                 page.locator(".o_action_manager > *, .o_dialog .modal-content").first.wait_for(timeout=30000)
+            # Before the settle and the readings below, not after them: what
+            # the target expects is also what says the screen has finished
+            # arriving, and a screen read half-built would be recorded that way
+            # on the slower surface and judged a difference.
+            shown = expect_selector is None or _shows(page, expect_selector)
             try:
                 page.wait_for_load_state("networkidle", timeout=10000)
             except Exception:  # Odoo can keep a request open; the settle below still applies.
@@ -1200,12 +1230,17 @@ class SurfaceDriver:
                 # web client does not describe.
                 available = False
                 result = "loaded model %s instead of %s" % (screen.get("model"), expect_model)
-            elif expect_selector is not None and not _shows(page, expect_selector):
+            elif not shown:
                 # Shown, not merely present: a block the page renders and then
                 # hides is not the screen the target asked to judge.
                 available = False
                 result = "the screen does not show %s" % expect_selector
         except Exception as error:  # noqa: BLE001 -- every failure is evidence, not a crash
+            if isinstance(error, ValueError) and str(error).startswith("crawler configuration:"):
+                # Except a mistake in the target file: that is not evidence
+                # about the product, and it would fail both surfaces alike.
+                page.close()
+                raise
             available = False
             result = "error (%s): %s" % (classify_failure(error).value, (str(error).splitlines() or [""])[0])
         signals = count_signals(
@@ -1301,6 +1336,7 @@ def open_screens(surface: Surface, targets: Sequence[OpenTarget], out_path: str,
             # writes another.
             database = session_database(driver.database)
             require_write_database(targets, database)
+            driver.check_selectors(targets)
             run = RunInfo(new_run_id(), os.environ.get("PARITY_TARGET", "local"), database, client)
             signalled = 0
             with open(out_path, "w", encoding="utf-8") as out:

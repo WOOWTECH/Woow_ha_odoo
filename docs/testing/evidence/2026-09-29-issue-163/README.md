@@ -120,6 +120,12 @@ badge on the cart page before and after, so a click that did not reach
 `/shop/cart/update` makes that one target unavailable with its reason instead of
 judging a checkout an older cart had already made reachable.
 
+The cart line carries no run marker, unlike the fixtures the Live scripts
+create. The cart is the logged-in user's own draft order and both surfaces have
+to judge the same one, so naming it after the run would edit the screen under
+judgement. What ties it to this run is the record: the run id, the order id and
+the size the cart had when the screen was opened.
+
 No sale order was confirmed, no payment was made, no module setting and no
 group was changed.
 
