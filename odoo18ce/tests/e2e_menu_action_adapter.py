@@ -963,20 +963,22 @@ def _screen_of(page, *, expect_model: str | None) -> dict[str, Any]:
 def _shows(page, selector: str, *, timeout: int = 15000) -> bool:
     """Whether the screen shows `selector`, giving it the time a screen takes.
 
-    `is_visible` answers at once, and the settle before it is best effort, so
-    a screen still mounting would be recorded as the wrong screen. Only a
-    timeout means not shown; anything else -- a page that died under the wait
-    -- is a failure of the screen and is recorded as one. A selector that
-    cannot be read at all never gets here: `check_selectors` refuses it before
-    the first target.
+    A single reading answers at once, and the settle around it is best effort,
+    so a screen still mounting would be recorded as the wrong screen: this
+    keeps looking until the deadline. Any match counts, not the first in the
+    DOM -- Odoo ships responsive pairs of the same block, one of which is
+    always hidden, and judging on whichever came first in the document would
+    fail both surfaces alike. A selector that cannot be read at all never gets
+    here: `check_selectors` refuses it before the first target.
     """
-    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-
-    try:
-        page.locator(selector).first.wait_for(state="visible", timeout=timeout)
-        return True
-    except PlaywrightTimeoutError:
-        return False
+    deadline = time.monotonic() + timeout / 1000
+    while True:
+        matches = page.locator(selector)
+        if any(matches.nth(index).is_visible() for index in range(matches.count())):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        page.wait_for_timeout(250)
 
 
 class SurfaceDriver:
