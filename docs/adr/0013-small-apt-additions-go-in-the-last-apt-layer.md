@@ -142,6 +142,12 @@ runs.
   and `python3-lxml-html-clean` is absent on both, so the alternative
   resolves to `python3-lxml` either way. CI builds aarch64 only when the
   version changes, so a future addition to (a) is worth the same check.
+  Regenerating the list is part of pinning a new `.deb`, and the static
+  tier does not enforce that: `build-amd64` and `build-aarch64` need the
+  static job, so failing it would cost every weekly bump the image build
+  that proves the new SHA256 and the new package — the gate
+  [ADR 0002](0002-odoo-nightly-bumps-are-human-merged.md) rests on — to
+  catch a staleness that costs layer (b) size and nothing else.
 - **The exact compressed size of each layer** is measured by this pull
   request's CI build, for amd64, and recorded in the pull request
   description. The agent container that wrote this ADR has no Docker and

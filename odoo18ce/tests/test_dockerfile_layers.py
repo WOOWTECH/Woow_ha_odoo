@@ -16,10 +16,9 @@ pull never converged, because Docker cannot resume a partial layer
 This module freezes that order as text, the way the other Dockerfile and
 workflow tests read their files -- no Dockerfile-parser dependency. It also
 self-tests: seven mutations of the Dockerfile that must turn it red, and a
-bot-style rewrite of the four pinned values that must leave the layout
-green. A bump is not green on its own, though: `odoo-deb-depends.txt`
-records which `.deb` it was generated from, and a bump that leaves it
-behind fails until the list is regenerated.
+bot-style rewrite of the four pinned values that must leave it green --
+including the weekly odoo-bump, which must reach the image build that
+proves the new package.
 """
 import difflib
 import re
@@ -357,36 +356,30 @@ def test_the_dockerfile_builds_the_three_layers_in_order() -> None:
     assert problems == [], "\n\n".join(problems)
 
 
-def stale_list(dockerfile: str, depends: str) -> str | None:
-    """The message for a list generated from a `.deb` that is no longer
-    pinned, or None when the two agree.
+def source_deb(depends: str) -> str | None:
+    """The `.deb` version the list says it was generated from, or None.
 
-    The only static handle on "generated from the pinned `.deb`". It is
-    deliberately a failure and not a warning: a bump that keeps the old
-    list loses that bump's saving, because the packages the new `.deb`
-    moved are resolved into layer (b) unseen. Until the bump workflow
-    regenerates the file itself -- #153's sibling issue, out of scope on
-    #154 -- the human who merges the weekly bump regenerates it, and this
-    is what tells them to.
+    This is provenance, not a pin. The list is regenerated when the `.deb`
+    is pinned, and until the bump workflow does that itself -- #153's
+    sibling issue, out of scope on #154 -- a bump can leave it behind. The
+    static tier does **not** fail on that: `build-amd64` and
+    `build-aarch64` declare `needs: static`, so a red static tier would
+    cost the weekly bump PR the image build that proves the new SHA256,
+    the nightly URL and the new package's dependency resolution -- the
+    gate ADR 0002 rests on -- to catch a staleness whose whole cost is
+    that a moved dependency is resolved into layer (b) instead of (a).
+    A list behind the pin makes (b) bigger and nothing else.
     """
-    source = re.search(r"^# source: odoo_(18\.0\.\d{8})_all\.deb$", depends,
-                       re.M)
-    if not source:
-        return "odoo-deb-depends.txt does not say which .deb it came from"
-    pinned = re.search(r'^ARG ODOO_DEB_VERSION="([^"]*)"$', dockerfile, re.M)
-    if not pinned or source.group(1) == pinned.group(1):
-        return None
-    return ("odoo-deb-depends.txt was generated from odoo_%s_all.deb but the "
-            "Dockerfile pins %s. Regenerate the list from the pinned package "
-            "-- the recipe is in the file's own header, `dpkg-deb -f ... "
-            "Depends` and the normalization rules -- and update the "
-            "`# source:` line with it." % (source.group(1), pinned.group(1)))
+    found = re.search(r"^# source: odoo_(18\.0\.\d{8})_all\.deb$", depends,
+                      re.M)
+    return found.group(1) if found else None
 
 
-def test_the_dependency_list_records_the_pinned_deb() -> None:
+def test_the_dependency_list_records_the_deb_it_came_from() -> None:
     text = DEPENDS.read_text(encoding="utf-8")
-    stale = stale_list(DOCKERFILE.read_text(encoding="utf-8"), text)
-    assert stale is None, stale
+    assert source_deb(text), \
+        "the file says which .deb it was generated from, in the shape the " \
+        "bump workflow will one day rewrite"
     entries = read_depends(text)
     assert len(entries) > 40, "the Odoo .deb has dozens of Depends"
     # The two normalizations the pinned .deb actually needs, spelled out so
@@ -554,7 +547,7 @@ def test_every_mutation_of_the_layout_turns_the_guard_red() -> None:
         assert problems, "%s left the guard green" % what
 
 
-def test_a_bot_style_rewrite_leaves_the_layout_green_and_the_list_stale() -> None:
+def test_a_bot_style_rewrite_of_the_pinned_values_stays_green() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
     rewritten = text
     for name, value in (("BASE_IMAGE_TAG", "bookworm-2026.12.1"),
@@ -568,7 +561,10 @@ def test_a_bot_style_rewrite_leaves_the_layout_green_and_the_list_stale() -> Non
     problems = guard_failures(rewritten, depends)
     assert problems == [], "\n\n".join(problems)
     # The layout survives a bump untouched, which is the point of where the
-    # ODOO_DEB_* ARGs sit. The dependency list does not: it still names the
-    # old package, and the bump is not finished until it is regenerated.
-    assert stale_list(rewritten, depends) is not None, \
-        "a bump that leaves the dependency list behind must be a failure"
+    # ODOO_DEB_* ARGs sit, and so does the whole static tier: a bump PR
+    # reaches the image build that proves it. The dependency list is the
+    # one thing the bump leaves behind -- it still names the old package
+    # until it is regenerated, and that costs layer (b) size, not a gate.
+    pinned = re.search(r'^ARG ODOO_DEB_VERSION="([^"]*)"$', rewritten, re.M)
+    assert source_deb(depends) != pinned.group(1), \
+        "the rewrite must move the pin away from the recorded source"
