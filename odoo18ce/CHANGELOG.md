@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Changed
+- The image is built as three layers instead of one, so that a small
+  package or an Odoo bump no longer re-sends the whole thing. One `RUN`
+  used to install PostgreSQL 16, the pinned Odoo nightly `.deb`, the fonts
+  and every tool together, in one ~690 MiB compressed layer; adding
+  `python3-yaml` in 0.4.3 and `python3-pycryptodome` in 0.4.4 changed that
+  layer, so both updates downloaded all of it again, and on a slow link the
+  Supervisor's pull failed twice with `unexpected EOF`. The Dockerfile now
+  installs **(a)** the stable packages — PostgreSQL 16, the fonts, the
+  tools, and the pinned `.deb`'s own dependencies, listed in the new
+  `odoo18ce/odoo-deb-depends.txt` — then **(b)** the Odoo `.deb` alone,
+  with `ARG ODOO_DEB_VERSION` and `ARG ODOO_DEB_SHA256` declared between
+  the two, then **(c)** the small apt additions. A weekly Odoo bump now
+  re-sends about 235 MiB instead of about 690 MiB, and a small package
+  re-sends only (c). `ARG LAYER_A_REFRESH` above (a) is the one deliberate
+  way to rebuild the big layer, for a PostgreSQL or OpenSSL security
+  notice. The rule is written down in
+  `docs/adr/0013-small-apt-additions-go-in-the-images-last-layer.md`, and a
+  new Static-tier test freezes the Dockerfile's instruction order and keeps
+  layer (a)'s package list equal to the dependency file. **The next update
+  downloads the full image once**, because every layer below the split is
+  built anew; the one after it is small again. The set of packages in the image is
+  unchanged; what changes is which layer each one lands in. No version
+  bump. Issue #154, parent #153.
+
 ### Fixed
 - A website page view opened through **Ingress** now records the page's
   **Canonical URL** instead of the Home Assistant host. Odoo's visitor
