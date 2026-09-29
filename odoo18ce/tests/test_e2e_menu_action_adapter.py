@@ -407,6 +407,10 @@ class OpenTargetTests(unittest.TestCase):
             ("project_todo", "project_todo.project_task_action_todo"),
             ("ecpay_invoice_website", "/shop/checkout"),
         ])
+        self.assertEqual(
+            [item.target for item in parse_targets([
+                '{"module": "m", "target": "/odoo/action-1?view_type=list", "expect_model": "m.m"}'])],
+            ["/odoo/action-1?view_type=list"], "the view chooser is the one query a target may carry")
         self.assertEqual(targets[0].label, "To-do kanban")
         self.assertEqual(targets[0].expect_model, "project.task")
         self.assertIsNone(targets[0].cart)
@@ -428,6 +432,11 @@ class OpenTargetTests(unittest.TestCase):
             "an ingress prefix": ['{"module": "m", "target": "%s/shop", "expect_selector": "#x"}' % PREFIX],
             "a semicolon, which the identity uses for a query":
                 ['{"module": "m", "target": "/shop;a=1", "expect_selector": "#x"}'],
+            "a query that does not choose a view":
+                ['{"module": "m", "target": "/odoo/action-1?db=other", "expect_model": "m.m"}'],
+            "a cart with a query":
+                ['{"module": "m", "target": "/shop", "expect_selector": "#x",'
+                 ' "cart": "/shop/desk-1?add_qty=99"}'],
             "a cart that is not a route":
                 ['{"module": "m", "target": "/shop", "expect_selector": "#x", "cart": "sale.order"}'],
             "duplicate": ['{"module": "m", "target": "/shop", "expect_selector": "#x"}',
@@ -447,9 +456,13 @@ class OpenTargetTests(unittest.TestCase):
         writing = parse_targets(['{"module": "m", "target": "/shop/checkout", "expect_selector": "#x",'
                                  ' "cart": "/shop/product/desk-1"}'])
         require_write_database(reading, "odoo_test")
+        require_write_database(reading, None)
         require_write_database(writing, WRITE_DATABASE)
-        with self.assertRaisesRegex(RuntimeError, "odoo_parity"):
-            require_write_database(writing, "odoo_test")
+        for unknown in ("odoo_test", None):
+            # None is a session that did not say which database it is on; a run
+            # that cannot say where it would write may not write.
+            with self.assertRaisesRegex(RuntimeError, "odoo_parity"):
+                require_write_database(writing, unknown)
 
 
 TODO_TARGET = OpenTarget(module="project_todo", target="project_todo.project_task_action_todo",

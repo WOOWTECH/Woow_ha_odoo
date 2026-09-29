@@ -195,6 +195,11 @@ def plan_visits(scope: CrawlScope, *, max_depth: int = MAX_TRAVERSAL_DEPTH) -> l
 
 
 _XMLID = re.compile(r"[a-z0-9_]+\.[A-Za-z0-9_][A-Za-z0-9_.]*")
+# The only query a target may carry. Odoo's view chooser is the reason a target
+# has a query at all, and everything else is refused: a query is opened as
+# written (`?db=` would move the session off the database the run authorised),
+# and it is kept in the identity, which the record holds in the clear.
+_TARGET_QUERY = re.compile(r"view_type=[a-z_]+")
 _OPEN_FIELDS = ("module", "target", "label", "expect_model", "expect_selector", "cart")
 
 
@@ -243,15 +248,20 @@ class OpenTarget:
         return self.is_action or urlsplit(self.route).path.split("/")[1:2] == ["odoo"]
 
 
-def _check_route(route: Any, what: str) -> None:
+def _check_route(route: Any, what: str, *, query: bool = True) -> None:
     if not isinstance(route, str) or not route.startswith("/"):
         raise ValueError("crawler configuration: %s must be a route or an action xmlid" % what)
     try:
-        # Refuses an origin, credentials, traversal and an Ingress prefix; the
-        # target itself keeps its query, which chooses a view (`?view_type=list`).
+        # Refuses an origin, credentials, traversal and an Ingress prefix. The
+        # query is dropped here but kept by the target, which is opened as
+        # written, so it is checked separately.
         normalize_route(route, Surface.PUBLIC)
     except ValueError as error:
         raise ValueError("crawler configuration: %s is not a usable route (%s)" % (what, error)) from None
+    found = urlsplit(route).query
+    if found and not (query and _TARGET_QUERY.fullmatch(found)):
+        raise ValueError("crawler configuration: %s may not carry the query %r; a target's query "
+                         "can only choose a view (view_type=...)" % (what, found))
 
 
 def parse_targets(lines: Iterable[str]) -> tuple[OpenTarget, ...]:
@@ -295,7 +305,7 @@ def parse_targets(lines: Iterable[str]) -> tuple[OpenTarget, ...]:
         else:
             _check_route(target.target, "target line %d" % number)
         if target.cart is not None:
-            _check_route(target.cart, "the cart of target line %d" % number)
+            _check_route(target.cart, "the cart of target line %d" % number, query=False)
         if target.identity in seen:
             raise ValueError("crawler configuration: target line %d repeats the target of line %d"
                              % (number, seen[target.identity]))
@@ -306,11 +316,16 @@ def parse_targets(lines: Iterable[str]) -> tuple[OpenTarget, ...]:
     return tuple(targets)
 
 
-def require_write_database(targets: Iterable[OpenTarget], database: str) -> None:
-    """A cart target writes, so ADR 0012 allows it on one database only."""
+def require_write_database(targets: Iterable[OpenTarget], database: str | None) -> None:
+    """A cart target writes, so ADR 0012 allows it on one database only.
+
+    `database` is what the session reported it is on. `None` -- it reported
+    nothing -- refuses the write like any other wrong answer: a run that cannot
+    say where it would write may not write.
+    """
     if any(target.cart for target in targets) and database != WRITE_DATABASE:
         raise RuntimeError("crawler configuration: a target fills a cart, which writes; "
-                           "database %r is not %s" % (database, WRITE_DATABASE))
+                           "the session's database is %r, not %s" % (database, WRITE_DATABASE))
 
 
 # --- Home Assistant websocket messages -----------------------------------
@@ -1024,8 +1039,9 @@ class SurfaceDriver:
 
     def _cart_after_failure(self) -> dict[str, Any]:
         """What the cart holds after a cart step that failed part-way."""
-        page = self.context.new_page()
+        page = None
         try:
+            page = self.context.new_page()
             items, order = self._cart(page)
             return {"model": "sale.order", "id": order,
                     "how": "the cart holds %d item(s) after the cart step failed" % items}
@@ -1033,7 +1049,9 @@ class SurfaceDriver:
             return {"model": "sale.order", "id": None,
                     "how": "the cart could not be read after the cart step failed"}
         finally:
-            page.close()
+            if page is not None:
+                with contextlib.suppress(Exception):
+                    page.close()
 
     def _cart(self, page) -> tuple[int, str | None]:
         """The number of items in the session's cart, and the order it is."""
@@ -1171,10 +1189,11 @@ def open_screens(surface: Surface, targets: Sequence[OpenTarget], out, *, viewpo
             # The database the session is on, not the one ODOO_DB names: a
             # mono-database deployment ignores the `?db=` the login carries, so
             # the environment can name one database while the writes land in
-            # another. What the records say, and what the cart write is allowed
-            # against, is the one the session reported.
+            # another. The guard gets the session's answer and nothing else --
+            # a session that reported none may not write. Only the label a
+            # read-only run carries falls back to the environment.
+            require_write_database(targets, driver.database)
             database = driver.database or os.environ.get("ODOO_DB", "default")
-            require_write_database(targets, database)
             run = RunInfo(new_run_id(), os.environ.get("PARITY_TARGET", "local"), database, client)
             signalled = 0
             for target in targets:
