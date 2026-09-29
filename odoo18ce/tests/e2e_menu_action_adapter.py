@@ -872,6 +872,8 @@ class SurfaceDriver:
     ) -> None:
         self.surface = surface
         self.ingress: IngressSession | None = None
+        # The database the session ends up on; read at login, not assumed.
+        self.database: str | None = None
         self.login = _require_env("ODOO_TEST_LOGIN")
         self.password = _require_env("ODOO_TEST_PASSWORD")
         public_base = os.environ.get("ODOO_PUBLIC_URL", "").rstrip("/")
@@ -921,6 +923,7 @@ class SurfaceDriver:
                 # page header has a search form whose submit button comes first.
                 page.locator('input[name="password"]').press("Enter")
             page.locator(".o_main_navbar").wait_for(timeout=60000)
+            self.database = page.evaluate("() => (odoo.info && odoo.info.db) || null")
         finally:
             page.close()
 
@@ -954,12 +957,15 @@ class SurfaceDriver:
             except Exception as error:  # noqa: BLE001 -- a failed cart is evidence too, not a crash
                 # Judging the screen now would judge whatever the cart happened
                 # to hold, so the target is unavailable on this surface and the
-                # record says why.
+                # record says why. The click may have landed before whatever
+                # failed, so the cart is read once more: a line this run created
+                # is named even then, and the other surface will reuse it.
                 return SurfaceObservation(
                     available=False,
                     result=self.masker.text("cart not filled (%s): %s"
                                             % (classify_failure(error).value, (str(error).splitlines() or [""])[0])),
                     signals={name: 0 for name in SIGNALS}, route=None, model=None, view=None,
+                    writes=(self._cart_after_failure(),),
                 )
         observation = self._open(
             target.route, backend=target.backend,
@@ -1013,6 +1019,19 @@ class SurfaceDriver:
                 "how": "added the product on %s to the cart (0 -> %d items)"
                        % (self.masker.text(product_route), after),
             }
+        finally:
+            page.close()
+
+    def _cart_after_failure(self) -> dict[str, Any]:
+        """What the cart holds after a cart step that failed part-way."""
+        page = self.context.new_page()
+        try:
+            items, order = self._cart(page)
+            return {"model": "sale.order", "id": order,
+                    "how": "the cart holds %d item(s) after the cart step failed" % items}
+        except Exception:  # noqa: BLE001 -- the failure that brought us here is the story
+            return {"model": "sale.order", "id": None,
+                    "how": "the cart could not be read after the cart step failed"}
         finally:
             page.close()
 
@@ -1142,9 +1161,6 @@ def open_screens(surface: Surface, targets: Sequence[OpenTarget], out, *, viewpo
     from playwright.sync_api import sync_playwright
 
     size, client = parse_viewport(viewport)
-    database = os.environ.get("ODOO_DB", "default")
-    require_write_database(targets, database)
-    run = RunInfo(new_run_id(), os.environ.get("PARITY_TARGET", "local"), database, client)
     ignore_https = os.environ.get("IGNORE_HTTPS_ERRORS", "0") == "1"
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
@@ -1152,6 +1168,14 @@ def open_screens(surface: Surface, targets: Sequence[OpenTarget], out, *, viewpo
         try:
             driver = SurfaceDriver(surface, browser, ignore_https_errors=ignore_https, viewport=size)
             driver.log_in()
+            # The database the session is on, not the one ODOO_DB names: a
+            # mono-database deployment ignores the `?db=` the login carries, so
+            # the environment can name one database while the writes land in
+            # another. What the records say, and what the cart write is allowed
+            # against, is the one the session reported.
+            database = driver.database or os.environ.get("ODOO_DB", "default")
+            require_write_database(targets, database)
+            run = RunInfo(new_run_id(), os.environ.get("PARITY_TARGET", "local"), database, client)
             signalled = 0
             for target in targets:
                 observation = driver.open_screen(target)
