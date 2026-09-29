@@ -957,7 +957,7 @@ def _screen_of(page, *, expect_model: str | None) -> dict[str, Any]:
     return screen
 
 
-def _shows(page, selector: str) -> bool:
+def _shows(page, selector: str, *, timeout: int = 15000) -> bool:
     """Whether the screen shows `selector`, giving it the time a screen takes.
 
     `is_visible` answers at once, and the settle before it is best effort, so
@@ -970,7 +970,7 @@ def _shows(page, selector: str) -> bool:
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
     try:
-        page.locator(selector).first.wait_for(state="visible", timeout=15000)
+        page.locator(selector).first.wait_for(state="visible", timeout=timeout)
         return True
     except PlaywrightTimeoutError:
         return False
@@ -1257,8 +1257,10 @@ class SurfaceDriver:
                 # Still shown once the screen has settled: waiting for it above
                 # is what says the screen has arrived, and this is what says it
                 # stayed. A block that renders and is then hidden is not on the
-                # screen the target asked to judge.
-                shown = page.locator(expect_selector).first.is_visible()
+                # screen the target asked to judge -- but a re-render that
+                # detaches the node for a moment is not that, so this waits too,
+                # for long enough to tell the two apart.
+                shown = _shows(page, expect_selector, timeout=5000)
             loaded = screen.get("action")
             if expect_action is not None and loaded is not None and str(loaded) != expect_action:
                 # U-C12: the menu's action must load, not a fallback such as Discuss.
