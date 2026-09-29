@@ -933,13 +933,21 @@ def _shows(page, selector: str) -> bool:
     """Whether the screen shows `selector`, giving it the time a screen takes.
 
     `is_visible` answers at once, and the settle before it is best effort, so
-    a screen still mounting would be recorded as the wrong screen.
+    a screen still mounting would be recorded as the wrong screen. Only a
+    timeout means not shown: a selector Playwright cannot read is a mistake in
+    the target file, and it says so rather than failing both surfaces alike
+    and reading as a `GAP` on a healthy screen.
     """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
     try:
         page.locator(selector).first.wait_for(state="visible", timeout=15000)
         return True
-    except Exception:  # noqa: BLE001 -- not shown is the answer, whatever the reason
+    except PlaywrightTimeoutError:
         return False
+    except Exception as error:  # noqa: BLE001 -- turned into the harness error it is
+        raise ValueError("crawler configuration: expect_selector %r cannot be read (%s)"
+                         % (selector, (str(error).splitlines() or [""])[0])) from None
 
 
 class SurfaceDriver:
@@ -1073,7 +1081,8 @@ class SurfaceDriver:
         if self.database != WRITE_DATABASE:
             # `open_screens` checks this before the first target so a misaimed
             # run stops at once; this is the check for every other caller of
-            # this driver, and for a session that has moved database since.
+            # this driver. Both read the answer the session gave at login,
+            # which is the only answer this driver has.
             raise RuntimeError("crawler configuration: the cart write is allowed on %s only; "
                                "the session's database is %r" % (WRITE_DATABASE, self.database))
         page = self.context.new_page()
