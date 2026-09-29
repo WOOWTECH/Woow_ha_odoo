@@ -43,11 +43,13 @@ runs:
       run: |
         set -euo pipefail
         # Every published Release; the script keeps the last few that are
-        # below this version and had images (0.4.0 onwards).
-        : > release-tags.txt
+        # below this version and had images (0.4.0 onwards). A failure here
+        # fails the step, and the caller falls back to the placeholder
+        # line: an empty list would otherwise be read as "there is nothing
+        # earlier to compare against" and the notes would claim the whole
+        # image as the download.
         gh release list --repo "${REPOSITORY}" --limit 100 \
-          --json tagName --jq '.[].tagName' > release-tags.txt \
-          || echo "::notice::could not list Releases; comparing against nothing"
+          --json tagName --jq '.[].tagName' > release-tags.txt
         size_command=(
           python3 "${SCRIPT}"
           "${IMAGE_BASE}-amd64:${VERSION}"

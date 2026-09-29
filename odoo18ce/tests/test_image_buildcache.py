@@ -177,3 +177,22 @@ def test_an_images_only_run_gets_the_table_in_its_step_summary() -> None:
     assert "needs.prepare.outputs.is_release != 'true'" in job["if"]
     assert any(step.get("uses") == SIZE_ACTION for step in job["steps"]), (
         "the images-only path uses the same action, so the table is the same table")
+
+
+def test_a_release_listing_that_fails_fails_the_size_step() -> None:
+    """An empty list of Releases means there is no earlier image at all.
+
+    So the listing must not be allowed to fail quietly: the table would
+    then tell every host it has the whole image to download, and the
+    warning about the previous Release would never be reached.
+    """
+    action = yaml.safe_load(
+        (ROOT / ".github/actions/download-size/action.yml").read_text(encoding="utf-8"))
+    run = action["runs"]["steps"][0]["run"]
+    assert "set -euo pipefail" in run
+    # Join the backslash continuations so the whole command is one string.
+    statements = run.replace("\\\n", " ").splitlines()
+    listing = [line for line in statements if "gh release list" in line]
+    assert len(listing) == 1, statements
+    assert "||" not in listing[0], (
+        "a listing that failed must fail the step, not compare against nothing")

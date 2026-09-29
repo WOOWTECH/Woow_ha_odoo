@@ -226,7 +226,6 @@ jobs:
       # notes carry the placeholder line below and the tag, the GitHub
       # Release and the store sync happen anyway (issue #155).
       - name: What a host downloads for this version
-        id: size
         continue-on-error: true
         uses: ./.github/actions/download-size
         with:

@@ -167,12 +167,12 @@ jobs:
             BUILD_ARCH=amd64
           tags: woow-ha-odoo-amd64:ci
           # The Release build's own registry cache first: it is the one
-          # that does not expire, and it is what the next Release will
-          # start from, so a PR build that hits it proves the layers the
-          # Release will reuse. The package is public, so this is an
-          # anonymous read -- no ghcr login, no extra permission. The gha
-          # cache stays as the fallback and as the only thing CI writes;
-          # a PR must not publish layers to the Release cache (issue #155).
+          # that does not expire and the one the next Release starts from,
+          # so a PR build starts from the layers the last Release actually
+          # published. The package is public, so this is an anonymous read
+          # -- no ghcr login, no extra permission. The gha cache stays as
+          # the fallback and as the only thing CI writes; a PR must not
+          # publish layers to the Release cache (issue #155).
           cache-from: |
             type=registry,ref=${{ env.IMAGE_BASE }}-amd64:buildcache
             type=gha,scope=amd64
@@ -380,12 +380,12 @@ jobs:
             BUILD_ARCH=aarch64
           tags: woow-ha-odoo-aarch64:ci
           # The Release build's own registry cache first: it is the one
-          # that does not expire, and it is what the next Release will
-          # start from, so a PR build that hits it proves the layers the
-          # Release will reuse. The package is public, so this is an
-          # anonymous read -- no ghcr login, no extra permission. The gha
-          # cache stays as the fallback and as the only thing CI writes;
-          # a PR must not publish layers to the Release cache (issue #155).
+          # that does not expire and the one the next Release starts from,
+          # so a PR build starts from the layers the last Release actually
+          # published. The package is public, so this is an anonymous read
+          # -- no ghcr login, no extra permission. The gha cache stays as
+          # the fallback and as the only thing CI writes; a PR must not
+          # publish layers to the Release cache (issue #155).
           cache-from: |
             type=registry,ref=${{ env.IMAGE_BASE }}-aarch64:buildcache
             type=gha,scope=aarch64
