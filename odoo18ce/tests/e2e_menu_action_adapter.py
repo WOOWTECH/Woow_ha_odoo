@@ -697,8 +697,14 @@ def _literal_differences(public: Mapping[str, Any], ingress: Mapping[str, Any]) 
 
 
 def _written(block: Mapping[str, Any]) -> list[str]:
-    """The records a surface's run created or reused, as `model:id`."""
-    return sorted("%s:%s" % (item.get("model"), item.get("id")) for item in block.get("writes") or ())
+    """The records a surface's run created or reused, and how much each holds.
+
+    The size matters as much as the identity: the same cart with another line
+    in it renders another screen, and one run adding a line the other did not
+    see is exactly what this comparison is for.
+    """
+    return sorted("%s:%s holding %s" % (item.get("model"), item.get("id"), item.get("items"))
+                  for item in block.get("writes") or ())
 
 
 def _judge(public: Mapping[str, Any], ingress: Mapping[str, Any]) -> tuple[str, list[str]]:
@@ -1079,7 +1085,7 @@ class SurfaceDriver:
             if before is None:
                 raise RuntimeError("the cart page did not show how many items the cart holds")
             if before:
-                return {"model": "sale.order", "id": order,
+                return {"model": "sale.order", "id": order, "items": before,
                         "how": "the cart already held %d item(s); nothing was added" % before}
             page.goto(self.base + product_route, wait_until="domcontentloaded", timeout=60000)
             page.locator("#add_to_cart, a[data-action='add_to_cart'], button:has-text('Add to cart')").first.click()
@@ -1102,6 +1108,7 @@ class SurfaceDriver:
             return {
                 "model": "sale.order",
                 "id": order,
+                "items": after,
                 "how": "added the product on %s to the cart (0 -> %d items)"
                        % (self.masker.text(product_route), after),
             }
@@ -1115,9 +1122,9 @@ class SurfaceDriver:
             page = self.context.new_page()
             items, order = self._cart(page)
             if items is None:
-                return {"model": "sale.order", "id": order,
+                return {"model": "sale.order", "id": order, "items": None,
                         "how": "the cart could not be read after the cart step failed"}
-            return {"model": "sale.order", "id": order,
+            return {"model": "sale.order", "id": order, "items": items,
                     "how": "the cart holds %d item(s) after the cart step failed" % items}
         except Exception:  # noqa: BLE001 -- the failure that brought us here is the story
             return {"model": "sale.order", "id": None,

@@ -532,7 +532,7 @@ class OpenEvidenceTests(unittest.TestCase):
         json.dumps(item)
 
     def test_two_surfaces_that_wrote_different_records_judged_different_screens(self) -> None:
-        cart = lambda order_id, how: {"model": "sale.order", "id": order_id, "how": how}
+        cart = lambda order_id, how, items=1: {"model": "sale.order", "id": order_id, "items": items, "how": how}
         judge = lambda right: diff_runs(
             [evidence_record(RUN, Surface.PUBLIC, module="m", identity="open:route:/shop/payment",
                              observation=observation(writes=(cart("2", "added one"),)))],
@@ -543,8 +543,13 @@ class OpenEvidenceTests(unittest.TestCase):
         self.assertEqual(judge((cart("2", "the cart already held 1 item(s)"),))["verdict"], "PARITY")
         different = judge((cart("3", "added one"),))
         self.assertEqual((different["verdict"], different["severity"]), ("GAP", "blocker"))
-        self.assertIn("records written: public=sale.order:2 ingress=sale.order:3", different["notes"])
-        self.assertIn("records written: public=sale.order:2 ingress=none", judge(())["notes"])
+        self.assertIn("records written: public=sale.order:2 holding 1 ingress=sale.order:3 holding 1",
+                      different["notes"])
+        self.assertIn("records written: public=sale.order:2 holding 1 ingress=none", judge(())["notes"])
+        # The same cart is not the same screen once something else adds to it.
+        grew = judge((cart("2", "the cart already held 2 item(s)", items=2),))
+        self.assertEqual((grew["verdict"], grew["severity"]), ("GAP", "blocker"))
+        self.assertIn("ingress=sale.order:2 holding 2", grew["notes"])
 
     def test_two_runs_of_different_databases_are_not_comparable(self) -> None:
         other = RunInfo(run_id=RUN.run_id, target=RUN.target, database="odoo_test")

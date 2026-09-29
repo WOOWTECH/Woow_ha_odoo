@@ -32,8 +32,8 @@ P-6 below confirms both surfaces are on `odoo_parity`.
 | File | What it is |
 |---|---|
 | `targets.jsonl` | the seven screens, as `open` reads them |
-| `public-open.jsonl` | the Public origin run, `WOOW-PARITY-20260929T072937Z` |
-| `ingress-open.jsonl` | the Ingress run, `WOOW-PARITY-20260929T073110Z` |
+| `public-open.jsonl` | the Public origin run, `WOOW-PARITY-20260929T091109Z` |
+| `ingress-open.jsonl` | the Ingress run, `WOOW-PARITY-20260929T091244Z` |
 | `open-diff.jsonl` | the two joined by `control_identity` and judged |
 
 ## P-Check
@@ -107,7 +107,7 @@ and P-6 confirms both surfaces are on it.
 
 | Record | What changed | Why |
 |---|---|---|
-| `sale.order` id 2 (`S00002`, Administrator's website cart, state `draft`) | the three lines earlier runs had left in it were removed over JSON-RPC before the run; then the **Public** run added one line of `WOOW-PARITY-20260929T045315Z Service` (0 -> 1 items). The **Ingress** run added nothing: `ensure_cart` leaves a cart that already holds something alone, so both surfaces judge the same cart | `/shop/payment` redirects to `/shop/cart` without a cart, and a cart of a different size on each surface would make the page's own content differ between them |
+| `sale.order` id 2 (`S00002`, Administrator's website cart, state `draft`) | the lines earlier website runs had left in it were removed over JSON-RPC before the run, so both surfaces judge a cart of one known size; then the **Public** run added one line of `WOOW-PARITY-20260929T045315Z Service` (0 -> 1 items). The **Ingress** run added nothing: `ensure_cart` leaves a cart that already holds something alone, so both surfaces judge the same cart | `/shop/payment` redirects to `/shop/cart` without a cart, and a cart of a different size on each surface would make the page's own content differ between them |
 | `res.partner` id 3 (Administrator) | `street`, `city`, `zip`, `country_id` (Taiwan) and `phone` set, over JSON-RPC before the run | website_sale's `_check_addresses` redirects `/shop/payment` to `/shop/address` until the delivery address has every mandatory field (`name`, `street`, `city`, `country_id`, `phone`, and `zip` for Taiwan). The partner had none of them |
 
 The cart write is **not** an `Operation` of the crawler's `OperationPolicy`, on
@@ -187,7 +187,7 @@ prefix escape), so acceptance criterion 4 of the issue lands on `GAP`, not on
 ## Host state left behind
 
 - `sale.order` `S00002` is a draft cart holding one line (1 item) of
-  `WOOW-PARITY-20260929T045315Z Service`; nothing confirms it. The three lines
+  `WOOW-PARITY-20260929T045315Z Service`; nothing confirms it. The lines
   earlier website runs had left in it are gone.
 - `res.partner` 3 (Administrator) keeps the address and phone above.
 - Nothing was installed, restarted or reconfigured.
