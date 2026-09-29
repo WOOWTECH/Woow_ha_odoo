@@ -9,6 +9,7 @@ import unittest
 from e2e_menu_action_adapter import (
     EVIDENCE_SCHEMA,
     WRITE_DATABASE,
+    is_configuration_error,
     session_database,
     Masker,
     OpenTarget,
@@ -453,6 +454,20 @@ class OpenTargetTests(unittest.TestCase):
             with self.subTest(name):
                 with self.assertRaisesRegex(ValueError, "crawler configuration"):
                     parse_targets(lines)
+
+    def test_a_configuration_error_is_told_apart_from_evidence(self) -> None:
+        # The run stops on a mistake of its own; a failure of the screen is
+        # recorded instead, and the two must never be confused.
+        self.assertTrue(is_configuration_error(ValueError("crawler configuration: target line 1 is empty")))
+        self.assertTrue(is_configuration_error(RuntimeError("crawler configuration: a target fills a cart")))
+        self.assertFalse(is_configuration_error(RuntimeError("the cart is still empty after adding /shop/x")))
+
+    def test_a_cart_route_is_told_its_own_rule(self) -> None:
+        with self.assertRaisesRegex(ValueError, "no query at all"):
+            parse_targets(['{"module": "m", "target": "/shop", "expect_selector": "#x",'
+                           ' "cart": "/shop/desk?add_qty=2"}'])
+        with self.assertRaisesRegex(ValueError, "view_type"):
+            parse_targets(['{"module": "m", "target": "/shop?add_qty=2", "expect_selector": "#x"}'])
 
     def test_a_run_that_cannot_name_its_database_does_not_run(self) -> None:
         # ODOO_DB is what the login asked for; only the session's answer is

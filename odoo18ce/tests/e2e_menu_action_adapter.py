@@ -262,8 +262,9 @@ def _check_route(route: Any, what: str, *, query: bool = True) -> None:
         raise ValueError("crawler configuration: %s is not a usable route (%s)" % (what, error)) from None
     found = urlsplit(route).query
     if found and not (query and _TARGET_QUERY.fullmatch(found)):
-        raise ValueError("crawler configuration: %s may not carry the query %r; a target's query "
-                         "can only choose a view (view_type=...)" % (what, found))
+        rule = ("a target's query can only choose a view (view_type=...)" if query
+                else "a cart route may carry no query at all")
+        raise ValueError("crawler configuration: %s may not carry the query %r; %s" % (what, found, rule))
 
 
 def parse_targets(lines: Iterable[str]) -> tuple[OpenTarget, ...]:
@@ -929,6 +930,16 @@ _CART_GREW_JS = """(before) => {
 }"""
 
 
+def is_configuration_error(error: BaseException) -> bool:
+    """Whether a failure is a mistake in the target file or the environment.
+
+    Those are not evidence about the product: they fail both surfaces alike,
+    and a record of one would read as a `GAP` on a screen nobody has judged.
+    The run stops on them instead.
+    """
+    return str(error).startswith("crawler configuration:")
+
+
 def _shows(page, selector: str) -> bool:
     """Whether the screen shows `selector`, giving it the time a screen takes.
 
@@ -1039,17 +1050,20 @@ class SurfaceDriver:
             try:
                 writes = (self.ensure_cart(target.cart),)
             except Exception as error:  # noqa: BLE001 -- a failed cart is evidence too, not a crash
+                if is_configuration_error(error):
+                    raise
                 # Judging the screen now would judge whatever the cart happened
                 # to hold, so the target is unavailable on this surface and the
                 # record says why. The click may have landed before whatever
                 # failed, so the cart is read once more: a line this run created
                 # is named even then, and the other surface will reuse it.
+                cart = self._cart_after_failure()
                 return SurfaceObservation(
                     available=False,
                     result=self.masker.text("cart not filled (%s): %s"
                                             % (classify_failure(error).value, (str(error).splitlines() or [""])[0])),
                     signals={name: 0 for name in SIGNALS}, route=None, model=None, view=None,
-                    writes=(self._cart_after_failure(),),
+                    writes=(cart,) if cart else (),
                 )
         observation = self._open(
             target.route, backend=target.backend,
@@ -1149,20 +1163,23 @@ class SurfaceDriver:
         finally:
             page.close()
 
-    def _cart_after_failure(self) -> dict[str, Any]:
-        """What the cart holds after a cart step that failed part-way."""
+    def _cart_after_failure(self) -> dict[str, Any] | None:
+        """What the cart holds after a cart step that failed part-way.
+
+        None when the cart could not be read: `writes` names the records a run
+        created or reused, and a cart nobody could read is neither. The reason
+        the step failed is on the observation itself.
+        """
         page = None
         try:
             page = self.context.new_page()
             items, order = self._cart(page)
-            if items is None:
-                return {"model": "sale.order", "id": order, "items": None,
-                        "how": "the cart could not be read after the cart step failed"}
+            if items is None or order is None:
+                return None
             return {"model": "sale.order", "id": order, "items": items,
                     "how": "the cart holds %d item(s) after the cart step failed" % items}
         except Exception:  # noqa: BLE001 -- the failure that brought us here is the story
-            return {"model": "sale.order", "id": None,
-                    "how": "the cart could not be read after the cart step failed"}
+            return None
         finally:
             if page is not None:
                 with contextlib.suppress(Exception):
@@ -1236,9 +1253,7 @@ class SurfaceDriver:
                 available = False
                 result = "the screen does not show %s" % expect_selector
         except Exception as error:  # noqa: BLE001 -- every failure is evidence, not a crash
-            if isinstance(error, ValueError) and str(error).startswith("crawler configuration:"):
-                # Except a mistake in the target file: that is not evidence
-                # about the product, and it would fail both surfaces alike.
+            if is_configuration_error(error):
                 page.close()
                 raise
             available = False
