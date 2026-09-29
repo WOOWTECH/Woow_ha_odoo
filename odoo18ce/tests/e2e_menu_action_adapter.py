@@ -1017,13 +1017,22 @@ class SurfaceDriver:
         different sizes, and a difference in the page's own content would read
         as a difference between the surfaces.
 
+        Refuses to write unless the session is on `WRITE_DATABASE`, which is
+        the bound ADR 0012 puts on this write, whoever the caller is.
+
         This writes, and is deliberately not an `Operation`:
         `NON_MUTATING_OPERATIONS` is every member of that enum, so a WRITE
         member added there would be *permitted* by `READ_ONLY_POLICY` rather
         than refused, and the read-only guarantee would quietly weaken. The
-        write lives here instead, named, only on the database
-        `require_write_database` allows, and reported in the record.
+        write lives here instead, named, bounded by the check above, and
+        reported in the record.
         """
+        if self.database != WRITE_DATABASE:
+            # `open_screens` checks this before the first target so a misaimed
+            # run stops at once; this is the check for every other caller of
+            # this driver, and for a session that has moved database since.
+            raise RuntimeError("crawler configuration: the cart write is allowed on %s only; "
+                               "the session's database is %r" % (WRITE_DATABASE, self.database))
         page = self.context.new_page()
         try:
             # Both readings are taken on the cart page: the badge on another
@@ -1159,7 +1168,6 @@ def crawl(surface: Surface, apps: Sequence[str], out, *, viewport: str = "1920x1
     from playwright.sync_api import sync_playwright
 
     size, client = parse_viewport(viewport)
-    run = RunInfo(new_run_id(), os.environ.get("PARITY_TARGET", "local"), os.environ.get("ODOO_DB", "default"), client)
     ignore_https = os.environ.get("IGNORE_HTTPS_ERRORS", "0") == "1"
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
@@ -1167,6 +1175,11 @@ def crawl(surface: Surface, apps: Sequence[str], out, *, viewport: str = "1920x1
         try:
             driver = SurfaceDriver(surface, browser, ignore_https_errors=ignore_https, viewport=size)
             driver.log_in()
+            # The session's own database, as `open` records it: `diff` refuses
+            # two runs that name different ones, and ODOO_DB names what the
+            # login asked for, which a mono-database deployment ignores.
+            run = RunInfo(new_run_id(), os.environ.get("PARITY_TARGET", "local"),
+                          driver.database or os.environ.get("ODOO_DB", "default"), client)
             scope = scope_from_web_menus(driver.web_menus(), apps)
             visits = plan_visits(scope)
             for skipped in scope.skipped:
