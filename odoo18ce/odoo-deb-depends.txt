@@ -15,9 +15,10 @@
 #   * A line whose first non-blank character is `#` is a comment, and a
 #     blank line is ignored.
 #   * Everything after `  # ` on a package line is notes, separated by
-#     `; `. A note is `<kind>: <value>`; a value is prose and may itself
-#     contain a semicolon, which is read as part of the note it follows.
-#     A note is one of:
+#     `; `. A note is `<kind>: <value>`. A value is prose and may contain a
+#     semicolon, as long as what follows the semicolon does not itself
+#     start with `word:` -- that opens a new note, so that a misspelled
+#     kind is reported rather than swallowed as prose. A note is one of:
 #       - `alternatives: a | b | c` -- the entry was an alternatives group,
 #         written here exactly as the `.deb` wrote it. The name on the left
 #         is the alternative apt resolves on the pinned base image, which is
