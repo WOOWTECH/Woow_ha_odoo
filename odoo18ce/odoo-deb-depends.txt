@@ -31,6 +31,12 @@
 #         newest PostgreSQL in the pgdg repository: installing it by name
 #         would add a second client beside the pinned `postgresql-client-16`.
 #
+#   * The `# source:` line below names the `.deb` this file was generated
+#     from. The guard test holds it equal to `ARG ODOO_DEB_VERSION` in the
+#     Dockerfile, so a bump that rewrites the pin and leaves this file
+#     behind fails the static tier instead of quietly describing a package
+#     that is no longer installed.
+#
 #   * A dependency this file misses is not a broken build. Layer (b)
 #     installs the `.deb` with apt, which pulls whatever is still absent --
 #     into (b), where it makes the Odoo layer bigger and nothing else.

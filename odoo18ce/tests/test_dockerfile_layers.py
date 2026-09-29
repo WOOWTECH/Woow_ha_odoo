@@ -267,6 +267,8 @@ def guard_failures(dockerfile: str, depends: str) -> list[str]:
             % (extra or "nothing", missing or "nothing", HOW_TO_CHANGE))
 
     # (c) comes after (b) and before the clone and the rootfs overlay.
+    # Those change on nearly every Release; keeping them below (c) is what
+    # lets an ordinary Release re-send them alone and never re-run apt.
     if c is not None:
         clone = next((i for i, one in enumerate(instrs)
                       if one.startswith("RUN ") and "woow-addons" in one), None)
@@ -278,8 +280,9 @@ def guard_failures(dockerfile: str, depends: str) -> list[str]:
                 problems.append("%s is gone from the Dockerfile" % label)
             elif c > where:
                 problems.append(
-                    "layer (c) must come before %s, so that a small apt "
-                    "addition does not re-send it. %s" % (label, HOW_TO_CHANGE))
+                    "layer (c) must come before %s: that changes on nearly "
+                    "every Release, and apt must not run again when it does. "
+                    "%s" % (label, HOW_TO_CHANGE))
 
     # Nothing whose value changes on every build may sit above the last RUN:
     # it would miss the cache of every layer under it. ARG BUILD_ARCH above
@@ -305,8 +308,18 @@ def test_the_dockerfile_builds_the_three_layers_in_order() -> None:
 
 def test_the_dependency_list_records_the_pinned_deb() -> None:
     text = DEPENDS.read_text(encoding="utf-8")
-    assert re.search(r"^# source: odoo_18\.0\.\d{8}_all\.deb$", text, re.M), \
-        "the file says which .deb it was generated from"
+    source = re.search(r"^# source: odoo_(18\.0\.\d{8})_all\.deb$", text, re.M)
+    assert source, "the file says which .deb it was generated from"
+    # The only static handle on "generated from the pinned .deb". When a
+    # bump rewrites ARG ODOO_DEB_VERSION and leaves this file behind, the
+    # list describes a package that is no longer installed: regenerate it
+    # from the new .deb's Depends field and update the line. The bump
+    # workflow will do this itself once #153's sibling issue lands.
+    pinned = re.search(r'^ARG ODOO_DEB_VERSION="([^"]*)"$',
+                       DOCKERFILE.read_text(encoding="utf-8"), re.M)
+    assert source.group(1) == pinned.group(1), (
+        "odoo-deb-depends.txt was generated from odoo_%s_all.deb but the "
+        "Dockerfile pins %s" % (source.group(1), pinned.group(1)))
     entries = read_depends(text)
     assert len(entries) > 40, "the Odoo .deb has dozens of Depends"
     # The two normalizations the pinned .deb actually needs, spelled out so

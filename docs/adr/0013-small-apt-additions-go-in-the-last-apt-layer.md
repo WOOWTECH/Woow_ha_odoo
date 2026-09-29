@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-29
 ---
 
-# Small apt additions go in the image's last layer, and the big layers change only on a named event
+# Small apt additions go in the image's last apt layer, and the big layers change only on a named event
 
 Through 0.4.5 one `RUN` installed PostgreSQL 16, the pinned Odoo nightly
 `.deb`, the fonts, `wkhtmltopdf`, `jq`, `git`, `nginx` and whatever small
@@ -99,6 +99,21 @@ runs.
   touched the big `RUN` happened to pick them up. This is accepted: the
   refresh rule is the deliberate replacement, and an unplanned pickup that
   costs every user 690 MiB was never a security policy.
+- **(c) is the last apt layer, not the last layer.** Under it sit the
+  add-ons clone, the rootfs overlay and the chmod step, and they are
+  rebuilt when (c) changes: a small apt addition re-sends about 15 MiB of
+  those on top of (c) itself. They are above nothing that matters and below
+  everything expensive, which is the point of the order — a rootfs-only
+  Release, the common one, re-sends only them and never re-runs apt.
+- **The saving is only as durable as the CI build cache.** Both build jobs
+  use `type=gha` with a scope per architecture, and GitHub evicts a cache
+  entry that has not been read for seven days. `build-aarch64` runs only
+  when the version changes (`ci.yml`), so an aarch64 Release more than a
+  week after the previous one finds no cache, rebuilds layer (a) and
+  re-sends all of it — the #153 failure, in the one place this ADR is
+  supposed to prevent it. A cache that does not expire is the sibling
+  issue's to choose; this ADR only records that the layout does not help
+  without one.
 - **Base-image bumps are split from Odoo bumps.** The weekly `odoo-bump`
   opens one pull request that can carry both (ADR 0002); a base bump is
   merged quarterly or when a security notice needs it, and an Odoo bump on

@@ -16,10 +16,12 @@
   with `ARG ODOO_DEB_VERSION` and `ARG ODOO_DEB_SHA256` declared between
   the two, then **(c)** the small apt additions. A weekly Odoo bump now
   re-sends about 235 MiB instead of about 690 MiB, and a small package
-  re-sends only (c). `ARG LAYER_A_REFRESH` above (a) is the one deliberate
+  re-sends (c) plus the small layers under it -- the add-ons clone, the
+  rootfs overlay and the permissions step, about 15 MiB together --
+  instead of the big two. `ARG LAYER_A_REFRESH` above (a) is the one deliberate
   way to rebuild the big layer, for a PostgreSQL or OpenSSL security
   notice. The rule is written down in
-  `docs/adr/0013-small-apt-additions-go-in-the-images-last-layer.md`, and a
+  `docs/adr/0013-small-apt-additions-go-in-the-last-apt-layer.md`, and a
   new Static-tier test freezes the Dockerfile's instruction order and keeps
   layer (a)'s package list equal to the dependency file. **The next update
   downloads the full image once**, because every layer below the split is
