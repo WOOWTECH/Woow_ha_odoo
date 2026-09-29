@@ -80,15 +80,16 @@ EXPECTED_SEQUENCE = [
     ),
     'ARG LAYER_A_REFRESH="<LAYER_A_REFRESH>"',
     (
-        'RUN apt-get update && apt-get install -y --no-install-recommends '
-        'adduser fonts-dejavu-core fonts-font-awesome fonts-inconsolata '
-        'fonts-noto-cjk fonts-roboto-unhinted git gsfonts jq libjs-underscore'
-        ' lsb-base nginx postgresql-16 postgresql-client-16 python3 '
-        'python3-asn1crypto python3-babel python3-cbor2 python3-chardet '
-        'python3-cryptography python3-dateutil python3-decorator '
-        'python3-docutils python3-freezegun python3-geoip2 python3-gevent '
-        'python3-greenlet python3-idna python3-jinja2 python3-libsass '
-        'python3-lxml python3-markupsafe python3-num2words python3-ofxparse '
+        'RUN echo "layer (a) refreshed ${LAYER_A_REFRESH}" && apt-get update '
+        '&& apt-get install -y --no-install-recommends adduser fonts-dejavu-'
+        'core fonts-font-awesome fonts-inconsolata fonts-noto-cjk fonts-'
+        'roboto-unhinted git gsfonts jq libjs-underscore lsb-base nginx '
+        'postgresql-16 postgresql-client-16 python3 python3-asn1crypto '
+        'python3-babel python3-cbor2 python3-chardet python3-cryptography '
+        'python3-dateutil python3-decorator python3-docutils '
+        'python3-freezegun python3-geoip2 python3-gevent python3-greenlet '
+        'python3-idna python3-jinja2 python3-libsass python3-lxml '
+        'python3-markupsafe python3-num2words python3-ofxparse '
         'python3-openpyxl python3-openssl python3-passlib python3-pil '
         'python3-polib python3-psutil python3-psycopg2 python3-pypdf2 '
         'python3-qrcode python3-renderpm python3-reportlab python3-requests '
@@ -167,7 +168,8 @@ def read_depends(text: str) -> list[tuple[str, dict[str, str]]]:
     return entries
 
 
-NOTE_KINDS = {"alternatives", "version", "qualifier", "satisfied-by"}
+NOTE_KINDS = {"alternatives", "version", "qualifier", "satisfied-by",
+              "deferred"}
 
 
 # ── the guard itself ───────────────────────────────────────────────────
@@ -256,8 +258,17 @@ def guard_failures(dockerfile: str, depends: str) -> list[str]:
             problems.append(
                 "odoo-deb-depends.txt: %s carries a note this file does not "
                 "document: %s" % (name, unknown))
+    for name, notes in entries:
+        if "deferred" in notes and not notes["deferred"]:
+            problems.append(
+                "odoo-deb-depends.txt: %s is deferred to layer (b) without "
+                "saying why or until when" % name)
+    # A `deferred` line is recorded but not installed in (a): apt pulls it
+    # into (b) instead. That is how a nightly that gains a dependency stays
+    # a 235 MiB bump rather than a 480 MiB one (ADR 0013).
     wanted = LAYER_A_OWN | {notes.get("satisfied-by") or name
-                            for name, notes in entries}
+                            for name, notes in entries
+                            if "deferred" not in notes}
     if set(installed) != wanted:
         extra = sorted(set(installed) - wanted)
         missing = sorted(wanted - set(installed))
@@ -347,6 +358,22 @@ def test_an_adr_records_the_rule_and_the_numbers_it_rests_on() -> None:
                   "207 MiB", "235 MiB", "271 MiB", "20 MiB",
                   "LAYER_A_REFRESH", "#153"):
         assert token in text, "the ADR must record %r" % token
+
+
+def test_a_dependency_may_be_deferred_to_layer_b_but_not_dropped() -> None:
+    # What a bump does when the nightly gains a dependency: record it,
+    # mark it deferred, and let apt install it into (b) until an event
+    # rebuilds (a) anyway. Without the note the same line must turn red.
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    depends = DEPENDS.read_text(encoding="utf-8")
+    added = depends.replace("python3-cbor2\n", "python3-brand-new  # deferred: "
+                            "folded into (a) at the next base bump\n"
+                            "python3-cbor2\n", 1)
+    assert guard_failures(dockerfile, added) == []
+    plain = depends.replace("python3-cbor2\n",
+                            "python3-brand-new\npython3-cbor2\n", 1)
+    problems = guard_failures(dockerfile, plain)
+    assert any("python3-brand-new" in one for one in problems), problems
 
 
 # ── self-tests: the mutations that must turn the guard red ─────────────

@@ -25,6 +25,11 @@
 #         version, and a constraint it cannot satisfy fails the build in (b).
 #       - `qualifier: :any` -- an architecture qualifier the name dropped.
 #         The image is single-arch per build, so the plain name installs.
+#       - `deferred: <why, and until when>` -- layer (a) does not install
+#         this name at all. A nightly that gains a dependency would
+#         otherwise rebuild the ~480 MiB layer (a) on a routine bump; the
+#         entry is recorded here, apt installs it into (b), and it is folded
+#         into (a) at the next event that rebuilds (a) anyway (ADR 0013).
 #       - `satisfied-by: <package>` -- layer (a) installs `<package>` instead
 #         of this name, because `<package>` provides it. Used for
 #         `postgresql-client`, which is a real metapackage tracking the

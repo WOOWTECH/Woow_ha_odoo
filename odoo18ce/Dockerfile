@@ -42,10 +42,14 @@ RUN apt-get update \
 #    addition goes in layer (c) below. LAYER_A_REFRESH is the one deliberate
 #    way to rebuild this layer -- after a PostgreSQL or OpenSSL security
 #    notice, change the date in a pull request and say in the CHANGELOG that
-#    the next update is a full download.
+#    the next update is a full download. BuildKit puts every declared ARG
+#    into the environment of the RUN steps below it, so the declaration
+#    alone would do it; the echo spends one line to make that true of any
+#    builder, and puts the date in the build log.
 # ──────────────────────────────────────────────
 ARG LAYER_A_REFRESH="2026-09-29"
-RUN apt-get update \
+RUN echo "layer (a) refreshed ${LAYER_A_REFRESH}" \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         adduser \
         fonts-dejavu-core \

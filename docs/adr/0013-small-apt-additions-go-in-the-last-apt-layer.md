@@ -121,6 +121,12 @@ runs.
 - **The Release notes report the download size** so that a person on a slow
   link knows before starting whether this is a 5 MiB update or a 700 MiB
   one. The line itself is added by the sibling issue of #153.
+- **A nightly that gains a dependency is still only a (b) bump.** Adding
+  the new package to layer (a) would re-send 480 MiB on a routine weekly
+  bump, which is the event list's first line turned inside out. The
+  dependency list records it with a `deferred` note instead: apt installs
+  it into (b), where it costs a few MiB, and it is folded into (a) at the
+  next event that rebuilds (a) anyway.
 - **The pinned `.deb`'s `Depends` becomes a tracked file.**
   `odoo18ce/odoo-deb-depends.txt` is regenerated whenever the `.deb` is
   pinned; its format is a contract with the bump workflow. A dependency the
