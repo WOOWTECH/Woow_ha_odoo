@@ -171,8 +171,13 @@ def report(new_refs, bases, fetch, warn_mib=DEFAULT_WARN_MIB):
     `bases` are versions, newest first; the first is the previous Release,
     the one the warning is about. A base whose image is missing everywhere
     is skipped with a note; one missing on a single architecture keeps its
-    row with that cell blank. With no usable base at all the table shows
-    the full download instead.
+    row with that cell blank.
+
+    With no bases at all -- nothing published yet that had images -- the
+    table shows the full download. Bases that were named and then could
+    not be read are a different thing: what the update costs is unknown,
+    not the whole image, so that raises rather than publishing a number
+    nobody measured.
     """
     arches = []
     for ref in new_refs:
@@ -204,6 +209,10 @@ def report(new_refs, bases, fetch, warn_mib=DEFAULT_WARN_MIB):
         rows.append((version, cells))
 
     if not rows:
+        if bases:
+            raise ManifestUnavailable(
+                "none of the images to compare against (" + ", ".join(bases)
+                + ") could be read")
         notes.insert(0, "No earlier image to compare against; this is the full download.")
         rows.append((NO_EARLIER,
                      {arch: sum(size for _, size in new[arch]) / MIB for arch in arches}))

@@ -86,7 +86,9 @@ runs:
         cache-from: type=registry,ref=${{ inputs.image_base }}-${{ inputs.arch }}:buildcache
         # Written only from main. A manual images-only run on another ref
         # reads the cache but must not publish its own layers as the cache
-        # every later Release starts from.
+        # every later Release starts from -- so a version published that
+        # way leaves the cache where the last main build put it, and the
+        # next build on main refills it.
         cache-to: >-
           ${{ github.ref_name == 'main' && format(
           'type=registry,ref={0}-{1}:buildcache,mode=max,compression=gzip,image-manifest=true,oci-mediatypes=true',

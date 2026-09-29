@@ -8,9 +8,10 @@ the tests never reach a registry:
 
 * `woow-ha-odoo-{amd64,aarch64}-0.4.{4,5}.json` are the real published
   manifests. Between 0.4.4 and 0.4.5 amd64 shared every big layer and
-  aarch64 shared none, which is the evidence that opened the issue — so
-  the shared-layer case, the all-new case and the >100 MiB warning are all
-  real data rather than invented numbers.
+  aarch64 shared almost none — the same split the issue reports one
+  Release earlier, where 0.4.1 to 0.4.2 cost aarch64 718 MiB and amd64
+  nothing. So the shared-layer case, the all-new case and the >100 MiB
+  warning are measured rather than invented.
 * `buildkit-v0.33.0-index.json` is a real OCI index, attestation entries
   and all, for the manifest-list case.
 """
@@ -124,6 +125,16 @@ def test_a_base_missing_on_one_arch_keeps_its_row_blank_there() -> None:
     assert cell(table, "0.4.4", 1) == "0.1 MiB", table
     assert cell(table, "0.4.4", 2) == size.MISSING_CELL, table
     assert "_0.4.4: no image for aarch64; that column is blank._" in table, table
+
+
+def test_bases_that_cannot_be_read_are_not_read_as_no_earlier_image() -> None:
+    """A registry that would not answer leaves the cost unknown, not full.
+
+    Saying "no earlier image" there would publish the whole image as the
+    download and, on that branch, never reach the warning either.
+    """
+    with pytest.raises(size.ManifestUnavailable, match="0.4.4, 0.4.3"):
+        size.report(new_refs("0.4.5"), ["0.4.4", "0.4.3"], fetcher(published("0.4.5")))
 
 
 def test_with_no_earlier_image_it_prints_the_full_size() -> None:
