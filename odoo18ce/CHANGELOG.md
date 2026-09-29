@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.5 — 2026-09-29
 
 ### Added
 - Documentation only: what to do when an update fails on a slow link, for
