@@ -15,10 +15,10 @@
   listed in the new `odoo18ce/odoo-deb-depends.txt` — then **(b)** the
   Odoo `.deb` alone, with `ARG ODOO_DEB_VERSION` and `ARG
   ODOO_DEB_SHA256` declared between the two, then **(c)** the small apt
-  additions. A weekly Odoo bump now re-sends about 250 MiB instead of
-  about 690 MiB -- the 235 MiB package and the small layers below it --
-  and a small package re-sends only those small layers, about 15 MiB:
-  (c) itself, the add-ons clone, the rootfs overlay and the permissions
+  additions. A weekly Odoo bump now re-sends about 270 MiB instead of
+  about 690 MiB -- the 235 MiB package and the layers below it -- and a
+  small package re-sends only those, about 33 MiB: (c) itself, the
+  add-ons clone at 30.8 MiB, the rootfs overlay and the permissions
   step. Those savings hold while CI's build cache still holds layer (a):
   a build that finds it gone rebuilds the layer and the update is a full
   download again, which is why a cache that does not expire is being

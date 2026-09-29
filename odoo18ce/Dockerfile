@@ -150,9 +150,11 @@ RUN apt-get update \
 #    Everything added after this layout was settled goes here, so that one
 #    small package does not re-send (a) or (b) to every host (ADR 0013).
 #    It is the last apt layer, not the last layer: the add-ons clone, the
-#    rootfs overlay and the chmod step sit below it and are rebuilt with it,
-#    about 15 MiB. They belong below because they change on nearly every
-#    Release, and such a Release must not re-run apt.
+#    rootfs overlay and the chmod step sit below it and are rebuilt with
+#    it, about 33 MiB, almost all of it the clone. They belong below
+#    because the rootfs changes on nearly every Release, and such a Release
+#    must not re-run apt. The clone is down here with them by the layout
+#    #154 settled, not because its ref moves.
 #
 #    python3-yaml is here for the Rewrite scan: the exception list shipped
 #    in the image is YAML and still applies to Generated rewrites (ADR

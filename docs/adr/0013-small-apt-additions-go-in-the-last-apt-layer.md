@@ -37,10 +37,11 @@ packages including the Odoo `.deb`'s own `Depends`, (b) the `.deb` alone,
 (c) small apt additions — and a small apt addition goes in (c).** The two
 big layers change only for a named event:
 
-- an Odoo bump — (b), and the small layers under it: the two `ODOO_DEB_*`
-  ARGs sit above (c), so a bump re-sends (c), the add-ons clone, the
-  rootfs overlay and the chmod step as well, about 15 MiB on top of the
-  235 MiB package. Layer (a) is what it does not touch.
+- an Odoo bump — (b), and the layers under it: the two `ODOO_DEB_*` ARGs
+  sit above (c), so a bump re-sends (c), the add-ons clone, the rootfs
+  overlay and the chmod step as well — about 33 MiB on top of the 235 MiB
+  package, almost all of it the clone. Layer (a) is what it does not
+  touch.
 - a base-image bump
 - a PostgreSQL major version change
 - a change to the pgdg repository setup
@@ -50,6 +51,13 @@ big layers change only for a named event:
 **What "small" means:** a Release whose download-size line — the one the
 cache/size issue adds to the Release notes — is under about 20 MiB.
 Anything bigger is not a small addition and is decided on its own.
+
+Today's layout does not reach that figure, and the measurement says why:
+the add-ons clone below (c) is **30.8 MiB** compressed (a 37.9 MiB tree at
+the pinned ref), against 0.15 MiB for the rootfs overlay and about as much
+again for the chmod step. So a (c) addition costs about 33 MiB whatever is
+in it. The threshold stands as the target; moving the clone above (c) is
+what would meet it, and it is under "When to revisit" below.
 
 **Consolidation:** (c) is folded into (a) or (b) only together with an event
 from the list above, which rebuilds those layers anyway. Tidying (c) on its
@@ -114,10 +122,13 @@ runs.
   costs every user 690 MiB was never a security policy.
 - **(c) is the last apt layer, not the last layer.** Under it sit the
   add-ons clone, the rootfs overlay and the chmod step, and they are
-  rebuilt when (c) changes: a small apt addition re-sends about 15 MiB,
-  (c) and those three together. They are above nothing that matters and below
-  everything expensive, which is the point of the order — a rootfs-only
-  Release, the common one, re-sends only them and never re-runs apt.
+  rebuilt when (c) changes: a small apt addition re-sends about 33 MiB,
+  (c) and those three together, of which 30.8 MiB is the clone. They are
+  below everything expensive, which is the point of the order — a
+  rootfs-only Release, the common one, re-sends only them and never
+  re-runs apt. The rootfs is what changes on nearly every Release;
+  `WOOW_ADDONS_REF` has moved once, and the clone is below (c) because
+  that is the order #154 settled, not because it moves.
 - **The saving is only as durable as the CI build cache.** Both build jobs
   use `type=gha` with a scope per architecture, and GitHub evicts a cache
   entry that has not been read for seven days. `build-aarch64` runs only
@@ -175,6 +186,13 @@ runs.
 - (c) stops being small — it collects enough packages that a "small
   addition" is no longer under 20 MiB. Fold it into (a) at the next
   base-image bump and start a new (c).
+- Small additions become frequent enough to pay for reordering. Moving the
+  add-ons clone and its `ARG WOOW_ADDONS_REF` up between (b) and (c) would
+  take a (c) Release from about 33 MiB to about 2 MiB, at the cost of
+  re-sending (c) on the rare `WOOW_ADDONS_REF` bump. The clone needs only
+  `git`, which layer (a) installs, so nothing else stands in the way. It
+  is not done here because #154 settled this order and froze it in the
+  guard test; changing it is a decision of its own.
 - Odoo's `.deb` stops carrying its dependencies as Debian packages. The
   split of (a) from (b) rests on apt resolving `Depends` the same way twice.
 

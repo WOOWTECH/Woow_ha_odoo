@@ -313,8 +313,9 @@ def guard_failures(dockerfile: str, depends: str) -> list[str]:
             % (extra or "nothing", missing or "nothing", HOW_TO_CHANGE))
 
     # (c) comes after (b) and before the clone and the rootfs overlay.
-    # Those change on nearly every Release; keeping them below (c) is what
-    # lets an ordinary Release re-send them alone and never re-run apt.
+    # The rootfs changes on nearly every Release; keeping it and the two
+    # steps beside it below (c) is what lets an ordinary Release re-send
+    # them alone and never re-run apt.
     # Every apt RUN after (b), not just the first: a fourth one added below
     # the overlay would be as wrong as (c) itself sitting there.
     if c is not None:
@@ -329,8 +330,8 @@ def guard_failures(dockerfile: str, depends: str) -> list[str]:
                 continue
             for i in sorted(one for one in after if one > where):
                 problems.append(
-                    "%s must come before %s: that changes on nearly every "
-                    "Release, and apt must not run again when it does. %s"
+                    "%s must come before %s: a Release that changes only "
+                    "what is below (c) must not re-run apt. %s"
                     % ("layer (c)" if i == c else "the apt RUN after (c)",
                        label, HOW_TO_CHANGE))
 
