@@ -15,7 +15,9 @@
 #   * A line whose first non-blank character is `#` is a comment, and a
 #     blank line is ignored.
 #   * Everything after `  # ` on a package line is notes, separated by
-#     `; `. A note is one of:
+#     `; `. A note is `<kind>: <value>`; a value is prose and may itself
+#     contain a semicolon, which is read as part of the note it follows.
+#     A note is one of:
 #       - `alternatives: a | b | c` -- the entry was an alternatives group,
 #         written here exactly as the `.deb` wrote it. The name on the left
 #         is the alternative apt resolves on the pinned base image, which is
@@ -30,6 +32,10 @@
 #         otherwise rebuild the ~480 MiB layer (a) on a routine bump; the
 #         entry is recorded here, apt installs it into (b), and it is folded
 #         into (a) at the next event that rebuilds (a) anyway (ADR 0013).
+#       - `dropped: <why, and until when>` -- the mirror of `deferred`: the
+#         `.deb` no longer depends on this name, and layer (a) still
+#         installs it. Removing it would rebuild (a) on a routine bump, so
+#         the line stays until the next event that rebuilds (a) anyway.
 #       - `satisfied-by: <package>` -- layer (a) installs `<package>` instead
 #         of this name, because `<package>` provides it. Used for
 #         `postgresql-client`, which is a real metapackage tracking the
@@ -49,6 +55,10 @@
 #         odoo_${ODOO_DEB_VERSION}_all.deb" -o /tmp/odoo.deb
 #         dpkg-deb -f /tmp/odoo.deb Depends \
 #           | tr ',' '\n' | sed 's/^ *//; s/ *$//' | LC_ALL=C sort
+#
+#     A package the new `.deb` adds gets a `deferred` note rather than a
+#     place in layer (a), and one it no longer names gets a `dropped` note
+#     rather than leaving (a): a weekly bump must not rebuild the big layer.
 #
 #     Two of the rules need a decision rather than a rewrite: which
 #     alternative of a group the base image's apt actually resolves

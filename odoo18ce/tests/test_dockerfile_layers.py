@@ -151,6 +151,15 @@ def apt_packages(run: str) -> list[str]:
     return [word for word in found.group(1).split() if not word.startswith("-")]
 
 
+# A note is `<kind>: <value>`, and several are separated by `; `. `deferred`
+# and `dropped` are the two that keep layer (a) frozen across an Odoo bump:
+# `deferred` is in the .deb's Depends and not installed by (a) yet, and
+# `dropped` is no longer in Depends and still installed by (a). Both wait
+# for an event that rebuilds (a) anyway (ADR 0013).
+NOTE_KINDS = {"alternatives", "version", "qualifier", "satisfied-by",
+              "deferred", "dropped"}
+
+
 def read_depends(text: str) -> list[tuple[str, dict[str, str]]]:
     """odoo-deb-depends.txt as (package name, notes) pairs, in file order."""
     entries = []
@@ -158,24 +167,34 @@ def read_depends(text: str) -> list[tuple[str, dict[str, str]]]:
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         name, _, raw_notes = line.partition("  # ")
-        notes = {}
-        for note in raw_notes.split(";"):
-            if not note.strip():
-                continue
-            kind, _, value = note.partition(":")
-            notes[kind.strip()] = value.strip()
+        notes: dict[str, str] = {}
+        kind = None
+        for part in raw_notes.split("; "):
+            head, colon, value = part.partition(":")
+            if colon and head.strip() in NOTE_KINDS:
+                kind = head.strip()
+                notes[kind] = value.strip()
+            elif kind is not None:
+                # A prose reason may contain a semicolon; it belongs to the
+                # note it follows, not to a note kind of its own.
+                notes[kind] = (notes[kind] + "; " + part).strip()
+            elif part.strip():
+                notes[head.strip() or part.strip()] = value.strip()
         entries.append((name.strip(), notes))
     return entries
-
-
-NOTE_KINDS = {"alternatives", "version", "qualifier", "satisfied-by",
-              "deferred"}
 
 
 # ── the guard itself ───────────────────────────────────────────────────
 
 
-def _layer_named(instrs: list[str], needle: str) -> list[int]:
+def _runs_installing(instrs: list[str], package: str) -> list[int]:
+    """The RUNs that install exactly this package. A whole word: layer (c)
+    may add `postgresql-16-pgvector` without making (a) ambiguous."""
+    return [i for i, one in enumerate(instrs)
+            if one.startswith("RUN ") and package in apt_packages(one)]
+
+
+def _runs_containing(instrs: list[str], needle: str) -> list[int]:
     return [i for i, one in enumerate(instrs)
             if one.startswith("RUN ") and needle in one]
 
@@ -184,7 +203,7 @@ def _which_layer(sequence: list[str], upto: int) -> str:
     """The costliest layer a change at `upto` re-sends: itself, or the first
     one under it."""
     for one in sequence[upto:]:
-        if "postgresql-16" in one:
+        if "postgresql-16" in apt_packages(one):
             return SIZES["(a)"]
         if DEB_URL in one:
             return SIZES["(b)"]
@@ -198,8 +217,8 @@ def guard_failures(dockerfile: str, depends: str) -> list[str]:
 
     # Each layer is found by content, not by position, and each must be
     # exactly one RUN.
-    a = _layer_named(instrs, "postgresql-16")
-    b = _layer_named(instrs, DEB_URL)
+    a = _runs_installing(instrs, "postgresql-16")
+    b = _runs_containing(instrs, DEB_URL)
     for label, hits, what in (("(a)", a, "postgresql-16"),
                               ("(b)", b, "the Odoo .deb download")):
         if len(hits) != 1:
@@ -259,13 +278,19 @@ def guard_failures(dockerfile: str, depends: str) -> list[str]:
                 "odoo-deb-depends.txt: %s carries a note this file does not "
                 "document: %s" % (name, unknown))
     for name, notes in entries:
-        if "deferred" in notes and not notes["deferred"]:
+        for kind in ("deferred", "dropped"):
+            if kind in notes and not notes[kind]:
+                problems.append(
+                    "odoo-deb-depends.txt: %s is marked %s without saying "
+                    "why or until when" % (name, kind))
+        if "deferred" in notes and "dropped" in notes:
             problems.append(
-                "odoo-deb-depends.txt: %s is deferred to layer (b) without "
-                "saying why or until when" % name)
+                "odoo-deb-depends.txt: %s cannot be both deferred and "
+                "dropped" % name)
     # A `deferred` line is recorded but not installed in (a): apt pulls it
-    # into (b) instead. That is how a nightly that gains a dependency stays
-    # a 235 MiB bump rather than a 480 MiB one (ADR 0013).
+    # into (b) instead. A `dropped` one is the mirror -- gone from the
+    # .deb's Depends, still in (a). Either way a nightly whose Depends
+    # moved stays a 235 MiB bump rather than a 480 MiB one (ADR 0013).
     wanted = LAYER_A_OWN | {notes.get("satisfied-by") or name
                             for name, notes in entries
                             if "deferred" not in notes}
@@ -334,7 +359,10 @@ def test_the_dependency_list_records_the_pinned_deb() -> None:
                        DOCKERFILE.read_text(encoding="utf-8"), re.M)
     assert source.group(1) == pinned.group(1), (
         "odoo-deb-depends.txt was generated from odoo_%s_all.deb but the "
-        "Dockerfile pins %s" % (source.group(1), pinned.group(1)))
+        "Dockerfile pins %s. Regenerate the list from the pinned package -- "
+        "the recipe is in the file's own header, `dpkg-deb -f ... Depends` "
+        "and the four normalization rules -- and update the `# source:` "
+        "line with it." % (source.group(1), pinned.group(1)))
     entries = read_depends(text)
     assert len(entries) > 40, "the Odoo .deb has dozens of Depends"
     # The two normalizations the pinned .deb actually needs, spelled out so
@@ -374,6 +402,38 @@ def test_a_dependency_may_be_deferred_to_layer_b_but_not_dropped() -> None:
                             "python3-brand-new\npython3-cbor2\n", 1)
     problems = guard_failures(dockerfile, plain)
     assert any("python3-brand-new" in one for one in problems), problems
+    # A reason is prose and may contain a semicolon, which separates notes.
+    prose = depends.replace("python3-cbor2\n", "python3-brand-new  # deferred: "
+                            "not in (a) yet; folded in at the next base bump\n"
+                            "python3-cbor2\n", 1)
+    assert guard_failures(dockerfile, prose) == []
+
+
+def test_a_dependency_the_nightly_drops_may_stay_in_layer_a() -> None:
+    # The mirror of `deferred`: the nightly stops depending on a package
+    # that (a) installs. Removing it from (a) would rebuild the big layer
+    # on a routine bump, so the line stays with a `dropped` note.
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    depends = DEPENDS.read_text(encoding="utf-8")
+    dropped = depends.replace("python3-cbor2\n", "python3-cbor2  # dropped: "
+                              "gone from Depends, removed at the next base "
+                              "bump\n", 1)
+    assert guard_failures(dockerfile, dropped) == []
+    # But not silently: a note with no reason is a failure.
+    silent = depends.replace("python3-cbor2\n", "python3-cbor2  # dropped:\n", 1)
+    assert any("python3-cbor2" in one
+               for one in guard_failures(dockerfile, silent))
+
+
+def test_layer_c_may_add_a_package_whose_name_extends_one_in_layer_a() -> None:
+    # ADR 0013 sends a small addition to (c). `postgresql-16-pgvector` is
+    # such an addition, and it must not make (a) ambiguous.
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    added = dockerfile.replace("        python3-yaml \\\n",
+                               "        postgresql-16-pgvector \\\n"
+                               "        python3-yaml \\\n", 1)
+    assert added != dockerfile
+    assert guard_failures(added, DEPENDS.read_text(encoding="utf-8")) == []
 
 
 # ── self-tests: the mutations that must turn the guard red ─────────────

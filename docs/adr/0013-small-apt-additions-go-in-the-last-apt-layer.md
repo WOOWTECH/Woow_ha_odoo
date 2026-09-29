@@ -126,7 +126,10 @@ runs.
   bump, which is the event list's first line turned inside out. The
   dependency list records it with a `deferred` note instead: apt installs
   it into (b), where it costs a few MiB, and it is folded into (a) at the
-  next event that rebuilds (a) anyway.
+  next event that rebuilds (a) anyway. A dependency the nightly *stops*
+  naming is the mirror: a `dropped` note keeps it in (a), unused and paid
+  for, until the same event removes it. Both are cheaper than the 480 MiB
+  a tidy (a) would cost on a routine bump.
 - **The pinned `.deb`'s `Depends` becomes a tracked file.**
   `odoo18ce/odoo-deb-depends.txt` is regenerated whenever the `.deb` is
   pinned; its format is a contract with the bump workflow. A dependency the
