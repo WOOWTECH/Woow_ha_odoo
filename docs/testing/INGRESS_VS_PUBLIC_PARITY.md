@@ -482,7 +482,7 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 | Safari／非 Chromium | 第三方 cookie、SharedWorker、clipboard 限制不同 | 同上 |
 | 開發者模式差集 | 由 `docs/plans/2026-09-05-odoo-developer-mode-delta-tdd.md` 承接 | 交叉引用，不重複 |
 
-### 10.6 共用層實測結果（2026-09-25，2026-09-27／28 補跑，#143）
+### 10.6 共用層實測結果（2026-09-25，2026-09-27／28／29 補跑，#143／#201）
 
 F、A、B、C、D 群組在 `odoo_parity`（0.4.4）各跑一次，外加 10.1–10.3 指定的模組畫面；Ingress 端是 HA 前端
 面板裡的 iframe（plain-http LAN 入口），`U-C25` 走 https 入口。`U-D8` 拆成兩筆後共 76 項 = 54 `PARITY` + 7 `GAP`
@@ -494,9 +494,17 @@ POS 兩項在 #161 之後於 2026-09-27 補跑，收據列印（`U-F5`）與相�
 重算後的守恆報告見 `docs/testing/evidence/2026-09-27-issue-172/`。
 `U-C23` 於 2026-09-28 以 #168 的新規則補跑一次（#183）：新分頁的位址必然帶 token 是 `STRUCTURAL`（RC-15，`G-07`，severity
 `none`，`public_path` 為 `<PUBLIC_BASE>/survey/<token>`）。Ingress 分頁在 `<HA_BASE><INGRESS_PREFIX>/survey/<token>`、public 分頁在
-`<PUBLIC_BASE>/survey/<token>`，兩邊開的是同一頁；同次補跑 P-Check 全數通過（P-5 是 public 分頁位址的比較基準）。上面的數字已含這一筆，
-`#168` 因此不再是 `GAP` 的 issue。這一輪會寫入 Odoo 資料（P-7 問卷 fixture、Test 按鈕產生的問卷作答），依 ADR 0012 授權；#143 那一輪
+`<PUBLIC_BASE>/survey/<token>`，兩邊開的是同一頁；同次補跑 P-Check 全數通過（P-5 是 public 分頁位址的比較基準）。`#168` 因此不再是 `GAP` 的 issue。這一輪會寫入 Odoo 資料（P-7 問卷 fixture、Test 按鈕產生的問卷作答），依 ADR 0012 授權；#143 那一輪
 自己的證據檔保留它當時記錄的 `GAP`／`important`。這一筆記錄與重算後的守恆報告見 `docs/testing/evidence/2026-09-28-issue-183/`。
+
+`U-A1`、`U-A6`、`U-B2`、`U-D2`、`U-D6` 五項與 outbound 的 `U-E4` 於 2026-09-29 在 Release **0.4.5** 上補跑（#201，run
+`WOOW-PARITY-20260929T040919Z`）。0.4.5 是 2026-09-28 sweep（PR #192–#199）修正的第一個有 `public_url` 的 Release，前此無法做兩面判定。
+五項共用層 check 全數由 `GAP` 轉 `PARITY`（分別對應 #166、#169、#165、#170、#167），`U-B2` 的 Public `session_id` 在 bus socket 開啟後
+讀到 `Secure=True／SameSite=Lax／Path=/`（原 RC-4 的 `GAP`）；`U-E4` 的發票 Download > PDF 在 Ingress 下正常下載、`route_escape=0`（#174
+的 RC-1 逃逸已消失），活動票券 PDF 兩面 `PARITY`，發票列的 verdict 因台灣 CE 無 QR 付款法（#146）仍記 `NOT-RUN`（僅 QR 內容維度被擋）。
+重算後 76 項 = **60 `PARITY` + 1 `GAP` + 2 `APPROVED-DIVERGENCE` + 6 `STRUCTURAL` + 7 `NOT-RUN`**；唯一剩下的 `GAP` 是 `U-C25`（報到台
+媒體來源，issue **#159**），不在 #201 範圍內，其 Live 補跑與 `U-A6` 媒體途徑探測仍待辦。這一輪記錄與守恆報告見
+`docs/testing/evidence/2026-09-29-issue-201/`。
 `NOT-RUN`：`U-A9`（無 60 秒以上的動作）、`U-C22`（只有一種語言）、`/event` 與活動報名
 （未裝 `website_event`）、CE 沒有該控制項的三個模組畫面（MRP 工作中心與工單、出勤 kiosk 全螢幕）。證據與方法見 `docs/testing/evidence/2026-09-25-issue-143/`。
 
