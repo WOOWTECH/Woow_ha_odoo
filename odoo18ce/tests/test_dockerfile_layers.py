@@ -15,7 +15,7 @@ pull never converged, because Docker cannot resume a partial layer
 
 This module freezes that order as text, the way the other Dockerfile and
 workflow tests read their files -- no Dockerfile-parser dependency. It also
-self-tests: six mutations of the Dockerfile that must turn it red, and a
+self-tests: seven mutations of the Dockerfile that must turn it red, and a
 bot-style rewrite of the pinned values that must leave it green.
 """
 import difflib
@@ -269,6 +269,8 @@ def guard_failures(dockerfile: str, depends: str) -> list[str]:
     # (c) comes after (b) and before the clone and the rootfs overlay.
     # Those change on nearly every Release; keeping them below (c) is what
     # lets an ordinary Release re-send them alone and never re-run apt.
+    # Every apt RUN after (b), not just the first: a fourth one added below
+    # the overlay would be as wrong as (c) itself sitting there.
     if c is not None:
         clone = next((i for i, one in enumerate(instrs)
                       if one.startswith("RUN ") and "woow-addons" in one), None)
@@ -278,11 +280,13 @@ def guard_failures(dockerfile: str, depends: str) -> list[str]:
                              ("the rootfs COPY", overlay)):
             if where is None:
                 problems.append("%s is gone from the Dockerfile" % label)
-            elif c > where:
+                continue
+            for i in sorted(one for one in after if one > where):
                 problems.append(
-                    "layer (c) must come before %s: that changes on nearly "
-                    "every Release, and apt must not run again when it does. "
-                    "%s" % (label, HOW_TO_CHANGE))
+                    "%s must come before %s: that changes on nearly every "
+                    "Release, and apt must not run again when it does. %s"
+                    % ("layer (c)" if i == c else "the apt RUN after (c)",
+                       label, HOW_TO_CHANGE))
 
     # Nothing whose value changes on every build may sit above the last RUN:
     # it would miss the cache of every layer under it. ARG BUILD_ARCH above
@@ -398,6 +402,14 @@ def _a_per_build_arg_moved_above_layer_a(text: str) -> str:
         "ARG LAYER_A_REFRESH=", line + "ARG LAYER_A_REFRESH=", 1)
 
 
+def _a_fourth_apt_run_below_the_overlay(text: str) -> str:
+    overlay = "COPY rootfs/ /"
+    return text.replace(overlay, overlay + "\n\nRUN apt-get update \\\n"
+                        "    && apt-get install -y --no-install-recommends "
+                        "vim \\\n    && apt-get clean \\\n"
+                        "    && rm -rf /var/lib/apt/lists/*", 1)
+
+
 MUTATIONS = {
     "an ARG moved above (a)": _arg_moved_above_layer_a,
     "a package added to (a)": _package_added_to_layer_a,
@@ -406,6 +418,7 @@ MUTATIONS = {
     # Two more, for the assertions the four above never reach.
     "(c) moved below the rootfs overlay": _layer_c_moved_below_the_overlay,
     "a per-build ARG moved above (a)": _a_per_build_arg_moved_above_layer_a,
+    "a fourth apt RUN below the overlay": _a_fourth_apt_run_below_the_overlay,
 }
 
 

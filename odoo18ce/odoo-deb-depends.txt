@@ -37,6 +37,21 @@
 #     behind fails the static tier instead of quietly describing a package
 #     that is no longer installed.
 #
+#   * To regenerate it after a bump, read the new package's field and apply
+#     the rules above:
+#
+#         curl -fsSL "https://nightly.odoo.com/18.0/nightly/deb/\
+#         odoo_${ODOO_DEB_VERSION}_all.deb" -o /tmp/odoo.deb
+#         dpkg-deb -f /tmp/odoo.deb Depends \
+#           | tr ',' '\n' | sed 's/^ *//; s/ *$//' | LC_ALL=C sort
+#
+#     Two of the rules need a decision rather than a rewrite: which
+#     alternative of a group the base image's apt actually resolves
+#     (`apt-cache policy <name>` inside the base image answers it), and
+#     whether a name is a real package or one that layer (a) already
+#     provides. Then update layer (a)'s list in the Dockerfile and
+#     EXPECTED_SEQUENCE in the guard test to match.
+#
 #   * A dependency this file misses is not a broken build. Layer (b)
 #     installs the `.deb` with apt, which pulls whatever is still absent --
 #     into (b), where it makes the Odoo layer bigger and nothing else.
