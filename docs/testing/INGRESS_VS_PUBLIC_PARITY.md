@@ -387,12 +387,20 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 最後一輪 Rewrite scan 讀 34 個 bundle，`FAIL 0`、`WARN 37`、`INFO 486`；上表各前綴都是 `INFO`
 > （Runtime shim 攔截），沒有產生任何 Generated rewrite。兩個 surface 的選單爬蟲比對 290 個選單：
 > 272 `PARITY`、4 `GAP`、14 跳過；這 13 個 app 的已比對選單全為 `PARITY`（`website` 的訪客清單除外，見 #160）。
-> `project_todo` 唯一的選單是 server action，依唯讀規則跳過，沒有可比對的畫面。
+> `project_todo` 唯一的選單是 server action，依唯讀規則跳過，那一輪沒有可比對的畫面。
 > 證據在 `docs/testing/evidence/2026-09-24-issue-144/`。
 > 注意 `INFO` 表示「shim 攔得到這種用法」，不保證每個消費點都攔得到：`/barcodes/` 也是 `INFO`，
 > 但當時 `new Audio(url(...))` 仍逃逸（#159）；資料庫裡的 HTML（動作的 help）也不在 bundle 內（#158）。
 > #159 已由 shim 補上媒體來源包裝（2026-09-28），`/barcodes/` 維持 `INFO` 且不新增 Generated rewrite；
 > 但這條注意事項仍然成立：`INFO` 只表示 shim 攔得到，遇到新的消費點要先確認。
+
+> `project_todo` 的畫面於 2026-09-29 由 #163 補判（0.4.5）：改用爬蟲新增的 `open` 子指令，直接開那個
+> server action 回傳的 window action（`project_todo.project_task_action_todo`，不執行 server action），
+> 兩面各判三個畫面——待辦看板、待辦清單兩面 `PARITY`；**待辦表單是 `GAP`（blocker）**：待辦自己的說明 HTML
+> （`project.task.description`，由 `todo_user_onboarding` 複製而來）內的兩張圖在 Ingress 下向 HA 根網址要，
+> 404、`route_escape=2`。與 #158 同型但不是同一個修法：#158 的 Literal rewrite 只綁 `/web/action/load`，
+> 而待辦說明走 `/web/dataset/call_kw`，正是 ADR 0004 的 2026-09-28 附記拒絕改寫的紀錄內容。
+> 這一輪的證據在 `docs/testing/evidence/2026-09-29-issue-163/`。
 
 ---
 
@@ -458,10 +466,10 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 
 | 模組 | 爬蟲 | 必跑項目現況 |
 |---|---|---|
-| `sale_management` | 經 `sale` 選單，23 `PARITY` | `U-E3`／`U-E2`／`U-C20`／`U-D5` → #145 |
+| `sale_management` | 經 `sale` 選單，23 `PARITY`；自有畫面 3 `PARITY`（#163 以 `open` 直接開報價單表單的選購商品頁、報價範本清單與表單） | `U-E3`／`U-E2`／`U-C20`／`U-D5` → #145 |
 | `website_sale` | 15 `PARITY` | `U-D1`–`U-D6`、`U-B2` → #143；`U-D7`、`U-E6` 為 `STRUCTURAL`（RC-10） |
 | `point_of_sale` | 19 `PARITY` | `U-C27` 離線銷售、斷網重整各 1 `PARITY`（#161，見 10.1）；`U-F5` 收據列印、`U-C25` 商品掃描各 1 `PARITY`（#143，見 10.6）；`U-C24` 未測 |
-| ECPay 4 模組 | `ecpay_invoice_tw`、`payment_ecpay` 各 1 `PARITY`；另兩個無自有選單 | `U-E6`（#146，2026-09-27）：Public origin 上一筆 stage 信用卡付款（`S00022`），綠界的回呼經 Cloudflare tunnel 抵達 `/payment/ecpay/result_notify`，交易 `done`，電子發票 `LO22046163` 已開立；回呼網址、付款回呼 2 項 `STRUCTURAL`（Structural gap），後台 4 項（金流服務商、交易、訂單表單，與發票表單上的電子發票號碼）兩端 `PARITY`；`account`／`sale` 選單爬蟲 51 `PARITY`。見 `docs/testing/evidence/2026-09-27-issue-146/` |
+| ECPay 4 模組 | `ecpay_invoice_tw`、`payment_ecpay` 各 1 `PARITY`；另兩個無自有選單 | `U-E6`（#146，2026-09-27）：Public origin 上一筆 stage 信用卡付款（`S00022`），綠界的回呼經 Cloudflare tunnel 抵達 `/payment/ecpay/result_notify`，交易 `done`，電子發票 `LO22046163` 已開立；回呼網址、付款回呼 2 項 `STRUCTURAL`（Structural gap），後台 4 項（金流服務商、交易、訂單表單，與發票表單上的電子發票號碼）兩端 `PARITY`；`account`／`sale` 選單爬蟲 51 `PARITY`。見 `docs/testing/evidence/2026-09-27-issue-146/`。`ecpay_invoice_website` 於 2026-09-29 由 #163 以 `open` 補上自有判定：它掛在 `website_sale.payment`，電子發票區塊（電子發票／紙本／捐贈與載具）在 `/shop/payment` 兩面都算出來、五項訊號皆 0，但該頁的「Edit this content」連結在 Ingress 下前綴重複（`<INGRESS_PREFIX>/@<INGRESS_PREFIX>/shop/payment`，`U-A2`），故記 **`GAP`（important）**；該連結不限結帳頁，每個可編輯的網站頁都有。見 `docs/testing/evidence/2026-09-29-issue-163/` |
 | `survey` | 4 `PARITY`、**2 `GAP`**（同一動作） | 範例圖片逃逸 → **#158**；`U-E3`／`U-C4` → #145 |
 | `im_livechat` | 8 `PARITY` | 外嵌 script 為 `STRUCTURAL`（RC-10）；`U-C26` → #143 |
 | `event` | 7 `PARITY`、**1 `GAP`** | 報到台條碼音效逃逸 → **#159**；`U-E3`／`U-E4` → #145 |
@@ -470,7 +478,7 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 | `hr_attendance` / `hr_timesheet` | 5 / 7 `PARITY` | `U-C24`／`U-C25`／`U-F1` → #143 |
 | `hr_recruitment` | 14 `PARITY` | 對外職缺頁 `U-D7` 為 `STRUCTURAL`（RC-10） |
 
-第 9 節的 13 個 app 同一輪已比對的選單全為 `PARITY`（`project_todo` 只有一個跳過的 server action），唯一例外是 `website` 的訪客清單：經 Ingress 瀏覽網站時，
+第 9 節的 13 個 app 同一輪已比對的選單全為 `PARITY`（`project_todo` 只有一個跳過的 server action，其畫面於 2026-09-29 由 #163 的 `open` 另判：2 `PARITY` + 1 `GAP`），唯一例外是 `website` 的訪客清單：經 Ingress 瀏覽網站時，
 訪客紀錄把 HA 根網址存成頁面 URL（`U-C5`，#160）。
 > #160 已在 add-on 修好：server-wide module `woow_visitor_url` 把訪客追蹤存下的網址改建在 **Canonical URL** 上（`website.get_base_url()`），
 > 路徑與查詢字串照舊。這是 0.4.5 之後的變更，測試主機上的重跑（經 Ingress 瀏覽一次網站後看最新一筆 `website.track`，
@@ -654,6 +662,11 @@ ODOO_BASE_URL=<INGRESS_BASE> ... python3 odoo18ce/tests/e2e_adversarial.py
 python3 odoo18ce/tests/e2e_menu_action_adapter.py crawl --surface public     --apps contacts,project --env-file .env --out public.jsonl
 python3 odoo18ce/tests/e2e_menu_action_adapter.py crawl --surface ha_ingress --apps contacts,project --env-file .env --out ingress.jsonl
 python3 odoo18ce/tests/e2e_menu_action_adapter.py diff public.jsonl ingress.jsonl --out diff.jsonl
+# 爬蟲搆不到的畫面（沒有自有選單，或唯一選單是 server action）：用 open 逐一指名，再用同一個 diff 比對（#163）
+python3 odoo18ce/tests/e2e_menu_action_adapter.py open --surface public     --targets targets.jsonl --env-file .env --out public-open.jsonl
+python3 odoo18ce/tests/e2e_menu_action_adapter.py open --surface ha_ingress --targets targets.jsonl --env-file .env --out ingress-open.jsonl
+# targets.jsonl：每行一個 {"module": ..., "target": ...}；target 是 window action 的 xmlid 或路由，
+# 另需 "expect_model" 或 "expect_selector" 其一，用來確認載入的就是要判的那個畫面（等同爬蟲的 U-C12 檢查）
 # 行動版模擬：crawl 加 --viewport 390x844
 # 共用層 F/A/B/C/D（#143）：先 P-Check、建 P-7 fixture，再跑全部 check，最後守恆檢查
 python3 odoo18ce/tests/e2e_parity_shared_layers_live.py pcheck --env-file .env --db <DB>
