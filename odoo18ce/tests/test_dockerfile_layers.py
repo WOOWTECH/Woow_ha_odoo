@@ -173,16 +173,18 @@ def read_depends(text: str) -> list[tuple[str, dict[str, str]]]:
         notes: dict[str, str] = {}
         kind = None
         for part in raw_notes.split("; "):
-            head, colon, value = part.partition(":")
-            if colon and head.strip() in NOTE_KINDS:
-                kind = head.strip()
-                notes[kind] = value.strip()
+            # A fragment opens a note when it starts with a kind, whether or
+            # not the kind is documented -- a typo must be reported and not
+            # swallowed as prose. Anything else continues the note before
+            # it, because a reason may contain a semicolon.
+            opener = re.match(r"([a-z][a-z0-9-]*):\s*(.*)$", part)
+            if opener:
+                kind = opener.group(1)
+                notes[kind] = opener.group(2).strip()
             elif kind is not None:
-                # A prose reason may contain a semicolon; it belongs to the
-                # note it follows, not to a note kind of its own.
                 notes[kind] = (notes[kind] + "; " + part).strip()
             elif part.strip():
-                notes[head.strip() or part.strip()] = value.strip()
+                notes[part.strip()] = ""
         entries.append((name.strip(), notes))
     return entries
 
@@ -423,6 +425,12 @@ def test_a_dependency_may_be_deferred_to_layer_b_but_not_dropped() -> None:
                             "not in (a) yet; folded in at the next base bump\n"
                             "python3-cbor2\n", 1)
     assert guard_failures(dockerfile, prose) == []
+    # A misspelled kind after the first note is a typo, not prose: silently
+    # accepting it would install the package after all.
+    typo = depends.replace("python3-cbor2\n", "python3-brand-new  # "
+                           "alternatives: a | b; defered: later\n"
+                           "python3-cbor2\n", 1)
+    assert any("defered" in one for one in guard_failures(dockerfile, typo))
 
 
 def test_a_dependency_the_nightly_drops_may_stay_in_layer_a() -> None:

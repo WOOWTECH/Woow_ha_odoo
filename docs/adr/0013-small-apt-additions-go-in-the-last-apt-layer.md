@@ -134,7 +134,14 @@ runs.
   `odoo18ce/odoo-deb-depends.txt` is regenerated whenever the `.deb` is
   pinned; its format is a contract with the bump workflow. A dependency the
   file misses is not a broken build — apt installs it in (b), where it makes
-  (b) bigger and nothing else.
+  (b) bigger and nothing else. The list is one list for both
+  architectures. Naming the packages instead of letting apt resolve them
+  makes an arch-specific name possible where it was not before, so all 59
+  were checked against `bookworm` main, updates and security and against
+  `bookworm-pgdg` for **arm64** as well as amd64; every one exists on both,
+  and `python3-lxml-html-clean` is absent on both, so the alternative
+  resolves to `python3-lxml` either way. CI builds aarch64 only when the
+  version changes, so a future addition to (a) is worth the same check.
 - **The exact compressed size of each layer** is measured by this pull
   request's CI build, for amd64, and recorded in the pull request
   description. The agent container that wrote this ADR has no Docker and
