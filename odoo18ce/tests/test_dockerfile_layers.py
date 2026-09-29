@@ -530,7 +530,7 @@ MUTATIONS = {
     "a package added to (a)": _package_added_to_layer_a,
     "a changed apt flag": _apt_flag_changed_in_layer_a,
     "a RUN inserted above (a)": _run_inserted_above_layer_a,
-    # Two more, for the assertions the four above never reach.
+    # Three more, for the assertions the four above never reach.
     "(c) moved below the rootfs overlay": _layer_c_moved_below_the_overlay,
     "a per-build ARG moved above (a)": _a_per_build_arg_moved_above_layer_a,
     "a fourth apt RUN below the overlay": _a_fourth_apt_run_below_the_overlay,

@@ -27,7 +27,8 @@ The packages do not change at the same rate. Measured on amd64 against
 | the Odoo `.deb` itself | 1 | 235 MiB |
 | the `.deb`'s further dependencies | 110 | 271 MiB |
 
-The 235 MiB in the middle is the only part a weekly Odoo bump touches. The
+The 235 MiB in the middle is the only large part a weekly Odoo bump
+touches. The
 478 MiB around it moves when Debian or PostgreSQL moves, which is a
 quarterly event, and the small additions are a few MiB each.
 
@@ -36,7 +37,10 @@ packages including the Odoo `.deb`'s own `Depends`, (b) the `.deb` alone,
 (c) small apt additions — and a small apt addition goes in (c).** The two
 big layers change only for a named event:
 
-- an Odoo bump — only (b) changes
+- an Odoo bump — (b), and the small layers under it: the two `ODOO_DEB_*`
+  ARGs sit above (c), so a bump re-sends (c), the add-ons clone, the
+  rootfs overlay and the chmod step as well, about 15 MiB on top of the
+  235 MiB package. Layer (a) is what it does not touch.
 - a base-image bump
 - a PostgreSQL major version change
 - a change to the pgdg repository setup
