@@ -440,6 +440,8 @@ class OpenTargetTests(unittest.TestCase):
                 ['{"module": "m", "target": "/shop", "expect_selector": "#x", "expect_model": ""}'],
             "an expect_model on a website route":
                 ['{"module": "m", "target": "/shop/payment", "expect_model": "sale.order"}'],
+            "a fragment":
+                ['{"module": "m", "target": "/my/orders/7#access_token=x", "expect_selector": "#x"}'],
             "a query that does not choose a view":
                 ['{"module": "m", "target": "/odoo/action-1?db=other", "expect_model": "m.m"}'],
             "a cart with a query":
@@ -568,7 +570,7 @@ class OpenEvidenceTests(unittest.TestCase):
 
     def test_two_runs_of_different_databases_are_not_comparable(self) -> None:
         other = RunInfo(run_id=RUN.run_id, target=RUN.target, database="odoo_test")
-        with self.assertRaisesRegex(ValueError, "not on one database"):
+        with self.assertRaisesRegex(ValueError, "crawler configuration: the two runs are not on one database"):
             diff_runs(
                 [record(Surface.PUBLIC)],
                 [evidence_record(other, Surface.HA_INGRESS, module="contacts",

@@ -260,6 +260,9 @@ def _check_route(route: Any, what: str, *, query: bool = True) -> None:
         normalize_route(route, Surface.PUBLIC)
     except ValueError as error:
         raise ValueError("crawler configuration: %s is not a usable route (%s)" % (what, error)) from None
+    if urlsplit(route).fragment:
+        raise ValueError("crawler configuration: %s may not carry a fragment; Odoo routes its screens by "
+                         "path, and a fragment would ride into the identity as written" % what)
     found = urlsplit(route).query
     if found and not (query and _TARGET_QUERY.fullmatch(found)):
         rule = ("a target's query can only choose a view (view_type=...)" if query
@@ -753,7 +756,7 @@ def diff_runs(public_run: Iterable[Mapping[str, Any]], ingress_run: Iterable[Map
     # would be read here as a difference between the surfaces.
     databases = {record.get("database") for record in (*public.values(), *ingress.values())}
     if len(databases) > 1:
-        raise ValueError("the two runs are not on one database: %s"
+        raise ValueError("crawler configuration: the two runs are not on one database: %s"
                          % ", ".join(sorted(repr(name) for name in databases)))
     merged: list[dict[str, Any]] = []
     for identity in sorted(public.keys() | ingress.keys()):
@@ -1439,11 +1442,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     with open(args.public_run, encoding="utf-8") as public, open(args.ingress_run, encoding="utf-8") as ingress:
         public_records, ingress_records = read_records(public), read_records(ingress)
-    merged = diff_runs(public_records, ingress_records)
-    # Which runs these are, so a file left by an earlier run -- a run that
-    # failed leaves the last one where it was -- is seen rather than joined.
+    # Which runs these are, before they are joined, so a file left by an
+    # earlier run -- a run that failed leaves the last one where it was -- is
+    # seen whether the join succeeds or refuses.
     for name, records in (("public", public_records), ("ingress", ingress_records)):
         print("%s run(s): %s" % (name, ", ".join(sorted({record["run_id"] for record in records}))))
+    merged = diff_runs(public_records, ingress_records)
     if args.out:
         with open(args.out, "w", encoding="utf-8") as out:
             for record in merged:
