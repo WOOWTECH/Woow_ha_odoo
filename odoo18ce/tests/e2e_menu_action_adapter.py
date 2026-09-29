@@ -940,6 +940,23 @@ def is_configuration_error(error: BaseException) -> bool:
     return str(error).startswith("crawler configuration:")
 
 
+def _screen_of(page, *, expect_model: str | None) -> dict[str, Any]:
+    """What the screen says it is; waits for an answer when one is expected.
+
+    A target that names a model is judged on it strictly -- "the web client
+    has not said yet" is not an answer -- so the reading is retried for as
+    long as a screen takes to mount, the way `_shows` waits for a selector.
+    """
+    screen = page.evaluate(_SCREEN_JS) or {}
+    if expect_model is None:
+        return screen
+    deadline = time.monotonic() + 15
+    while screen.get("model") is None and time.monotonic() < deadline:
+        page.wait_for_timeout(500)
+        screen = page.evaluate(_SCREEN_JS) or {}
+    return screen
+
+
 def _shows(page, selector: str) -> bool:
     """Whether the screen shows `selector`, giving it the time a screen takes.
 
@@ -1174,7 +1191,7 @@ class SurfaceDriver:
         try:
             page = self.context.new_page()
             items, order = self._cart(page)
-            if items is None or order is None:
+            if items is None:
                 return None
             return {"model": "sale.order", "id": order, "items": items,
                     "how": "the cart holds %d item(s) after the cart step failed" % items}
@@ -1234,17 +1251,17 @@ class SurfaceDriver:
             except Exception:  # Odoo can keep a request open; the settle below still applies.
                 pass
             page.wait_for_timeout(500)
-            screen = page.evaluate(_SCREEN_JS) or {}
+            screen = _screen_of(page, expect_model=expect_model)
             literals = page.evaluate(_URL_LITERALS_JS)
             loaded = screen.get("action")
             if expect_action is not None and loaded is not None and str(loaded) != expect_action:
                 # U-C12: the menu's action must load, not a fallback such as Discuss.
                 available = False
                 result = "loaded action %s instead of %s" % (loaded, expect_action)
-            elif expect_model is not None and screen.get("model") not in (None, expect_model):
-                # As above: a null model is the web client not saying, not the
-                # wrong screen. `expect_selector` is what judges a screen the
-                # web client does not describe.
+            elif expect_model is not None and screen.get("model") != expect_model:
+                # Strictly, null included: `_screen_of` has already waited for
+                # the web client to say, and a target that names a model is not
+                # judged on a screen that never said what it is.
                 available = False
                 result = "loaded model %s instead of %s" % (screen.get("model"), expect_model)
             elif not shown:
