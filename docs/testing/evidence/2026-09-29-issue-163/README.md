@@ -131,15 +131,14 @@ group was changed.
 
 ## The two `GAP`s
 
-Neither has a GitHub issue yet: the process that produced this evidence may not
-write on the tracker. The full text of both issues is in the Iteration's
-`withheld-writes.md`, and the pull request asks for them to be filed; this table
-is to be filled in with their numbers when they are.
+Both were filed on 2026-09-30 from the full text the Iteration left in its
+`withheld-writes.md` (the process that produced this evidence may not write on
+the tracker).
 
 | `GAP` | Issue |
 |---|---|
-| To-do form: the onboarding description's two images load from the Home Assistant root under Ingress (404) | (to file — `withheld-writes.md`) |
-| Website pages: the frontend "Edit this content" link doubles the Ingress prefix (`/@` + a second prefix) | (to file — `withheld-writes.md`) |
+| To-do form: the onboarding description's two images load from the Home Assistant root under Ingress (404) | #210 |
+| Website pages: the frontend "Edit this content" link doubles the Ingress prefix (`/@` + a second prefix) | #211 |
 
 ### To-do form, `project.task` 5 — blocker
 
