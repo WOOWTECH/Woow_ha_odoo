@@ -83,16 +83,17 @@ runs:
         # rebuild runs `apt-get update` and gets new bytes, so only a cache
         # hit keeps a layer's digest -- and only an unchanged digest spares
         # the host the download (issue #155).
-        # The gha cache stays behind it as a best-effort fallback read, for
-        # the build that finds no :buildcache yet -- the first one after
-        # this change -- and for any later miss. Nothing here writes it any
-        # more: CI's push-to-main builds do, every time on amd64 and only
-        # on a version bump on aarch64, so aarch64's fallback is whatever
-        # the last bump left and may be nothing at all. The registry cache
-        # is the one to rely on; this is for the transition.
+        # This is the build's only cache source, on purpose. A cache hit
+        # keeps a layer's digest only when every cache the build reads
+        # holds the same blob for that step, and the gha cache is written
+        # by CI builds that never publish: when a CI build and a Release
+        # build the same step cold, each compresses its own blob, and
+        # BuildKit does not prefer the registry's. aarch64 0.4.7 reported
+        # layer (a) as cached and still re-sent it for that reason. A
+        # Release that finds no :buildcache builds cold and writes it, so
+        # the blob it pushes is the blob it caches (issue #219).
         cache-from: |
           type=registry,ref=${{ inputs.image_base }}-${{ inputs.arch }}:buildcache
-          type=gha,scope=${{ inputs.arch }}
         # Written only from main. A manual images-only run on another ref
         # reads the cache but must not publish its own layers as the cache
         # every later Release starts from -- so a version published that
