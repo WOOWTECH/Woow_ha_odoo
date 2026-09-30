@@ -698,17 +698,22 @@ http {
             # carries the counts and `tests/test_ingress_todo_description.py`
             # pins them, the round trip and the shim's two globals.
             #
-            # What this does not close, said rather than left implicit: the
-            # code view's `editable.innerHTML=this.value` on toggling back
-            # (the `codeview` option, which the To-do field does not set), a
+            # What this does not close, said rather than left implicit, and
+            # ADR 0004's postscript is the list this one summarises: the code
+            # view's `editable.innerHTML=this.value` on toggling back (the
+            # `codeview` option, which the To-do field does not set); a
             # collaborative peer's own snapshot -- the *server* reset above is
             # covered, a snapshot applied from a peer over WebRTC carries
-            # whatever that peer's editable held -- `ImageSelector`'s
-            # preselection comparing a prefixed `src` with `image_src`, the
-            # readonly `HtmlViewer`, which renders through `t-out`, and the
-            # legacy `web_editor` editor behind `html_legacy` and
+            # whatever that peer's editable held, including that peer's
+            # prefix, which is the one open item that is a token write and
+            # not only a render escape; the media dialog's two preselection
+            # comparisons, `ImageSelector.isInitialMedia` on `src` and
+            # `DocumentSelector.fetchAttachments` on `href`; an unquoted
+            # attribute value, which has no closing delimiter to anchor on;
+            # the readonly `HtmlViewer`, which renders through `t-out`; and
+            # the legacy `web_editor` editor behind `html_legacy` and
             # `mass_mailing_html`, which carries none of these expressions.
-            # None was measured escaping; each is its own issue if one is.
+            # Each escapes rather than corrupts, and each is its own issue.
             sub_filter 'editable.innerHTML=fixInvalidHTML(this.config.content)' 'editable.innerHTML=(window.__WOOW_INGRESS_MARKUP_IN__||function(h){return h})(fixInvalidHTML(this.config.content))';
             sub_filter 'async updateValue(value,{changeId}={changeId:this.lastChangeId}){this.lastValue=normalizeHTML(value,this.clearElementToCompare.bind(this));' 'async updateValue(value,{changeId}={changeId:this.lastChangeId}){value=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(value);this.lastValue=normalizeHTML(value,this.clearElementToCompare.bind(this));';
             sub_filter 'const relativeSrc=srcUrl.pathname;' 'const relativeSrc=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(srcUrl.pathname);';
