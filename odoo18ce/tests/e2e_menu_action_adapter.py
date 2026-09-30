@@ -722,7 +722,12 @@ class SurfaceObservation:
     url_literals: Sequence[str] = ()
     url_violations: Sequence[Mapping[str, str]] = ()
     http_5xx: int = 0
-    # The records an `open` target created to reach its screen; empty for a read.
+    # The records an `open` target created to reach its screen -- the cart
+    # `ensure_cart` filled, and nothing else. Empty does not mean the run wrote
+    # nothing: a target on `GET_WRITING_ROUTES` writes while its screen renders,
+    # bounded to `WRITE_DATABASE` but not reported here, and so do the page's own
+    # templates and JavaScript. Read it as "what the run set up", not as "what
+    # the database got".
     writes: Sequence[Mapping[str, Any]] = ()
 
 
