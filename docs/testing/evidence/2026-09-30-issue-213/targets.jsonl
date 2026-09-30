@@ -1,0 +1,5 @@
+# The Live check PR #229 owes (#213): the reworked cart step, on a cart that
+# starts empty, on both surfaces. `#cart_products` renders only when the
+# session's cart holds a line, so the selector is the cart step succeeding.
+# The product is the #163 fixture, still published on odoo_parity.
+{"module": "website_sale", "target": "/shop/cart", "label": "Cart page holding the cart step's line (#213)", "expect_selector": "#cart_products", "cart": "/shop/woow-parity-20260929t045315z-service-58"}
