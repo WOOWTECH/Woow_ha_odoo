@@ -13,6 +13,8 @@ from urllib.parse import urlsplit
 from e2e_menu_action_adapter import (
     EVIDENCE_SCHEMA,
     GET_WRITING_ROUTES,
+    _is_cart_update,
+    _reached,
     WRITE_DATABASE,
     get_writing_route,
     is_configuration_error,
@@ -678,19 +680,23 @@ class FakePage:
     Every call lands in `log`, so a test can say what happened in what order.
     """
 
-    def __init__(self, carts, *, order="7", enabled=(), grew=True, badges=(), answered=True,
+    def __init__(self, carts, *, order="7", orders=(), enabled=(), grew=True, badges=(), answered=True,
                  load_error=None) -> None:
         self.carts = list(carts)
         self.order = order
+        # Per-cart-page-reading order ids, consumed in order; `order` when out.
+        self.orders = list(orders)
         self.enabled = list(enabled)
         self.grew = grew
         self.badges = list(badges)
         self.answered = answered
         self.load_error = load_error
         # A `load` that fails on a page that did arrive, unless `arrives` says
-        # the navigation never got there at all.
+        # the navigation never got there at all -- or `lands_at` says it
+        # arrived somewhere else, the way a lapsed session lands on the login.
         self.url = ""
         self.arrives = True
+        self.lands_at: str | None = None
         self.click_error: Exception | None = None
         self.path = ""
         self.log: list[str] = []
@@ -706,21 +712,27 @@ class FakePage:
         if self.load_error is not None and kwargs.get("wait_until") == "load":
             if not self.arrives:
                 self.url = ""
+            if self.lands_at is not None:
+                self.url = self.lands_at
             raise self.load_error
 
     def locator(self, selector: str) -> FakeLocator:
         return FakeLocator(self, selector)
 
     def evaluate(self, script: str, *args):
-        if "data-order-id" in script:
-            return self.order
+        # The one reading the step makes: the badge's count and order id in
+        # one round-trip (`_CART_STATE_JS`).
+        assert "data-order-id" in script, "the cart step reads the badge in one evaluate"
+        order = self.order
         if self.path == "/shop/cart":
             count = self.carts.pop(0) if self.carts else None
             self.log.append("cart:%s" % count)
-            return count
-        badge = self.badges.pop(0) if self.badges else 0
-        self.log.append("badge:%s" % badge)
-        return badge
+            if self.orders:
+                order = self.orders.pop(0)
+        else:
+            count = self.badges.pop(0) if self.badges else 0
+            self.log.append("badge:%s" % count)
+        return {"count": count, "order": order}
 
     @contextlib.contextmanager
     def expect_response(self, matcher, **kwargs):
@@ -736,6 +748,9 @@ class FakePage:
 
     def wait_for_timeout(self, milliseconds: int) -> None:
         self.log.append("slept")
+
+    def is_closed(self) -> bool:
+        return self.closed
 
     def close(self) -> None:
         self.closed = True
@@ -786,8 +801,10 @@ class CartStepTests(unittest.TestCase):
             "goto:/shop/cart", "cart:0",
             "goto:/shop/product/desk-1", "badge:0",
             "wait:visible", "enabled?False", "slept", "enabled?True", "click", "answered?True",
-            "grew?True", "goto:/shop/cart", "cart:1",
+            "goto:/shop/cart", "cart:1",
         ])
+        # No badge wait after an answered click: the POST answering is what
+        # says the add committed, and the cart reading above is the record.
         # The product page is opened on `load`, not `domcontentloaded`: the
         # handler comes with the website bundle, and `load` is every bundle
         # script fetched and run. The cart readings need no bundle.
@@ -1024,6 +1041,100 @@ class CartStepTests(unittest.TestCase):
             driver.open_screen(target)
         self.assertTrue(is_configuration_error(caught.exception))
         self.assertIn("HA websocket gave no result for 5", str(caught.exception))
+
+    def test_a_session_dead_before_the_screen_stops_the_run_the_same_way(self) -> None:
+        # `_open`'s own refresh, before any page is made: a dead websocket
+        # there is the harness too, and a raw websocket message would carry
+        # the host every other message masks -- so it is raised as the
+        # configuration error it is, masked.
+        driver = cart_driver(FakeContext())
+        driver.ingress = mock.Mock()
+        driver.ingress.keep_alive.side_effect = RuntimeError(
+            "ws to https://odoo.example gave no answer")
+        with self.assertRaises(RuntimeError) as caught:
+            driver._open("/odoo/action-1", backend=True)
+        self.assertTrue(is_configuration_error(caught.exception))
+        self.assertIn("before opening the screen", str(caught.exception))
+        self.assertIn("<PUBLIC_BASE>", str(caught.exception))
+        self.assertNotIn("https://odoo.example", str(caught.exception))
+
+    def test_a_run_stopped_after_the_cart_write_names_the_unaccounted_cart(self) -> None:
+        # The cart is filled, then the session dies before the screen opens:
+        # `open_screens` will write no record for the target, so the line the
+        # run just committed would be named nowhere -- the error names it, the
+        # way `ensure_cart`'s own in-loop handler does.
+        target, = parse_targets([CART_TARGET])
+        driver = cart_driver(FakeContext(FakePage([0, 1])))
+        driver.ingress = mock.Mock()
+        driver.ingress.keep_alive.side_effect = [None, RuntimeError("HA websocket gave no result for 9")]
+        with self.assertRaises(RuntimeError) as caught:
+            driver.open_screen(target)
+        self.assertTrue(is_configuration_error(caught.exception))
+        self.assertIn("no record will name the cart: sale.order:7 holding 1 item(s)", str(caught.exception))
+
+    def test_the_cart_answer_is_matched_by_path_and_status(self) -> None:
+        # `/shop/cart/update` must not match the quantity editor's
+        # `/shop/cart/update_json` (a substring did), an ingress prefix in
+        # front is the same route, and an error answer committed nothing.
+        response = mock.Mock()
+        response.ok, response.url = True, "https://odoo.example/shop/cart/update"
+        self.assertTrue(_is_cart_update(response))
+        response.url = "https://ha/api/hassio_ingress/tok9/shop/cart/update"
+        self.assertTrue(_is_cart_update(response))
+        response.url = "https://odoo.example/website_sale/product_configurator/update_cart"
+        self.assertTrue(_is_cart_update(response))
+        response.url = "https://odoo.example/shop/cart/update_json"
+        self.assertFalse(_is_cart_update(response))
+        response.ok, response.url = False, "https://odoo.example/shop/cart/update"
+        self.assertFalse(_is_cart_update(response))
+
+    def test_a_load_that_failed_on_the_login_page_is_the_navigation_failing(self) -> None:
+        # The old guard asked whether the URL contained the route anywhere:
+        # `/web/login?redirect=/shop/product/desk-1` does, in its query, and
+        # the step then polled the login page 30s for an add-to-cart button
+        # and blamed the button. The path says where the navigation landed.
+        self.assertTrue(_reached("https://odoo.example/shop/product/desk-1", "/shop/product/desk-1"))
+        self.assertTrue(_reached("https://ha/ingress/tok/shop/product/desk-1/", "/shop/product/desk-1"))
+        self.assertFalse(_reached("https://odoo.example/web/login?redirect=/shop/product/desk-1",
+                                  "/shop/product/desk-1"))
+        page = FakePage([0], load_error=RuntimeError("Timeout 60000ms exceeded"))
+        page.lands_at = "https://odoo.example/web/login?redirect=/shop/product/desk-1"
+        with self.assertRaisesRegex(RuntimeError, "Timeout 60000ms exceeded"):
+            cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual(page.clicks, 0)
+
+    def test_an_enabled_poll_on_a_dead_page_raises_the_death_not_the_button(self) -> None:
+        # A reading that raises because the page itself is gone is not a
+        # button answering "disabled": no amount of polling answers it, and
+        # "never became enabled" would mask the fault class that matters.
+        page = FakePage([0])
+        page.enabled = [RuntimeError("Target page, context or browser has been closed")]
+        page.closed = True
+        with self.assertRaisesRegex(RuntimeError, "has been closed"):
+            cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual(page.clicks, 0)
+
+    def test_the_give_up_names_the_last_reading_that_raised(self) -> None:
+        # A poll that spent its whole deadline on readings that raised should
+        # say what they said: "never became enabled" alone reads as a disabled
+        # button when the page was tearing itself down under the poll.
+        page = FakePage([0])
+        page.enabled = [RuntimeError("Execution context was destroyed, most likely because of a navigation")]
+        with mock.patch("e2e_menu_action_adapter.time.monotonic",
+                        side_effect=itertools.chain([0.0, 1.0], itertools.count(32.0, 31.0))):
+            with self.assertRaisesRegex(RuntimeError, r"never became enabled \(the last reading said: "
+                                                      r"Execution context was destroyed"):
+                cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual(page.clicks, 0)
+
+    def test_a_two_click_cart_keeps_the_order_a_reading_then_lost(self) -> None:
+        # The confirming readings can catch the badge without its
+        # `data-order-id` for a moment; overwriting the id already named
+        # would make the record say `sale.order:None` against the other
+        # surface's real id -- a blocker GAP on two identical screens.
+        page = FakePage([0, 0, 0, 1, 2, 2], orders=["7", "7", "7", "7", None, None])
+        write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual((write["id"], write["items"]), ("7", 2))
 
     def test_the_retry_is_bounded_and_the_step_gives_up_saying_how_often_it_tried(self) -> None:
         page = FakePage([0, 0, 0, 0])

@@ -1145,16 +1145,19 @@ _SCREEN_JS = r"""() => {
 
 
 # The website's navbar cart badge: the number of items in the session's cart,
-# and the sale order it belongs to (`data-order-id`).
+# and the sale order it belongs to (`data-order-id`), in one round-trip -- the
+# two must come from the same DOM state, or a count and an id read either side
+# of an update would pair a size with an order it never had.
 # null, not 0: an unreadable badge is not an empty cart, and a write this run
-# made must never be denied by a reading that failed.
-_CART_QUANTITY_JS = """() => {
+# made must never be denied by a reading that failed. `''` is unreadable too:
+# Number('') is 0, which is an answer the badge did not give.
+_CART_STATE_JS = """() => {
   const node = document.querySelector('.my_cart_quantity');
-  if (!node) return null;
+  if (!node) return {count: null, order: null};
   const text = (node.textContent || '').trim();
-  if (!text) return null;          // Number('') is 0, which is an answer this is not
   const value = Number(text);
-  return Number.isFinite(value) ? value : null;
+  return {count: text && Number.isFinite(value) ? value : null,
+          order: node.getAttribute('data-order-id')};
 }"""
 _CART_GREW_JS = """(before) => {
   const node = document.querySelector('.my_cart_quantity');
@@ -1169,8 +1172,32 @@ _CART_UPDATE_ROUTES = ("/shop/cart/update", "/website_sale/product_configurator/
 
 
 def _is_cart_update(response) -> bool:
-    """Whether a response is the cart answering an add."""
-    return any(route in response.url for route in _CART_UPDATE_ROUTES)
+    """Whether a response is the cart answering an add.
+
+    By path, not substring: `/shop/cart/update` must not match the quantity
+    editor's `/shop/cart/update_json`, which answers without adding anything --
+    a wait it satisfied would read the cart before the add committed, and the
+    retry would then double the line. An error answer is no add either: a 500
+    did not commit, so the wait keeps waiting and the cart reading says what
+    really happened.
+    """
+    if not response.ok:
+        return False
+    path = urlsplit(response.url).path
+    return any(path == route or path.endswith(route) for route in _CART_UPDATE_ROUTES)
+
+
+def _reached(url: str | None, route: str) -> bool:
+    """Whether a navigation's final URL is the route it was aimed at.
+
+    The path alone, unquoted, query dropped and an ingress prefix in front
+    tolerated: `/web/login?redirect=<route>` names the route in its query and
+    is the login page, not the product -- a substring test over the whole URL
+    called that arrival.
+    """
+    path = unquote(urlsplit(url or "").path).rstrip("/")
+    aimed = unquote(urlsplit(route).path).rstrip("/")
+    return bool(aimed) and (path == aimed or path.endswith(aimed))
 
 
 # Every theme the parity plan covers renders one of these.
@@ -1179,6 +1206,11 @@ _ADD_TO_CART = "#add_to_cart, a[data-action='add_to_cart'], button:has-text('Add
 # clicks again: an add that lands after the reading that called the cart empty
 # would otherwise be doubled by the second click.
 _CART_SETTLE_MS = 2000
+# How long the badge has to rise after a click whose POST never answered: the
+# response wait has already given the add 30s, so this covers only a theme
+# that adds by a route `_is_cart_update` does not name -- its XHR had those
+# 30s too -- without paying the full bound twice for a dead element.
+_CART_BADGE_GRACE_MS = 5000
 # How many times the add-to-cart button is clicked before the step gives up.
 # Two: one click, and one more for the handler race no wait can see. A third
 # would start guessing at a shop that is simply broken, and a broken shop is
@@ -1341,7 +1373,10 @@ class SurfaceDriver:
                 writes = (self.ensure_cart(target.cart),)
             except Exception as error:  # noqa: BLE001 -- a failed cart is evidence too, not a crash
                 if is_configuration_error(error):
-                    raise
+                    # Masked at this boundary too, not only where each message
+                    # is raised: one callsite forgetting `masker.text` must
+                    # not be what puts the host in the run log.
+                    raise RuntimeError(self.masker.text(str(error))) from None
                 # Judging the screen now would judge whatever the cart happened
                 # to hold, so the target is unavailable on this surface and the
                 # record says why. The click may have landed before whatever
@@ -1358,10 +1393,24 @@ class SurfaceDriver:
                     signals={name: 0 for name in SIGNALS}, route=None, model=None, view=None,
                     writes=(cart,) if cart else (),
                 )
-        observation = self._open(
-            target.route, backend=target.backend,
-            expect_model=target.expect_model, expect_selector=target.expect_selector,
-        )
+        try:
+            observation = self._open(
+                target.route, backend=target.backend,
+                expect_model=target.expect_model, expect_selector=target.expect_selector,
+            )
+        except Exception as error:  # noqa: BLE001 -- only a configuration error escapes `_open`
+            if not is_configuration_error(error):
+                raise
+            detail = ""
+            if writes:
+                # This stops the run before `open_screens` writes a record, so
+                # the cart line `ensure_cart` just committed would go
+                # unaccounted -- the message carries it, the way the in-loop
+                # handler in `ensure_cart` carries its own.
+                write = writes[0]
+                detail = ("; no record will name the cart: %s:%s holding %s item(s), %s"
+                          % (write["model"], write["id"], write["items"], write["how"]))
+            raise RuntimeError(self.masker.text(str(error) + detail)) from None
         return replace(observation, writes=writes)
 
     def ensure_cart(self, product_route: str) -> dict[str, Any]:
@@ -1422,9 +1471,12 @@ class SurfaceDriver:
             if before:
                 return {"model": "sale.order", "id": order, "items": before,
                         "how": "the cart already held %d item(s); nothing was added" % before}
-            # `confirmed` starts true because one click has nothing to confirm.
             clicks, filled_first = 0, False
-            moved, unread, confirmed = False, False, True
+            # Bound where a two-click cart is read until it settles, further
+            # down; the `elif clicks > 1` branch of `how` is the only reader
+            # and cannot run before that. Initialised here so the names exist
+            # on every path, not because any path reads these values.
+            moved, unread, confirmed = False, False, False
             for attempt in range(1, _CART_CLICK_ATTEMPTS + 1):
                 if self.ingress:
                     # Minutes of waits live in this loop, against the
@@ -1454,11 +1506,11 @@ class SurfaceDriver:
                                       " (%s), so what it holds is unaccounted for" % (clicks, why))
                         else:
                             detail = ""
-                        # A configuration error is re-raised by `open_screen`
-                        # rather than passed through the masker the `cart not
-                        # filled` path uses, so this one masks itself: a raw
-                        # Playwright message carries the host and the ingress
-                        # token every other message in this driver hides.
+                        # This one masks itself -- a raw websocket message
+                        # carries the host and the ingress token every other
+                        # message in this driver hides -- and `open_screen`
+                        # masks configuration errors once more at its
+                        # boundary, for any callsite this discipline misses.
                         raise RuntimeError("crawler configuration: the ingress session could not be refreshed "
                                            "during the cart step (%s)"
                                            % self.masker.text((str(error).splitlines() or [""])[0] + detail)
@@ -1473,7 +1525,12 @@ class SurfaceDriver:
                     # filled late gets its moment and one more reading, and
                     # ends the step here instead of growing again.
                     page.wait_for_timeout(_CART_SETTLE_MS)
-                    after, order = self._cart(page)
+                    after, read_order = self._cart(page)
+                    # A reading that lost the badge's order id for a moment
+                    # must not erase the one an earlier reading named: a
+                    # success row with `id: None` against the other surface's
+                    # real id is a blocker GAP on two identical screens.
+                    order = read_order or order
                     if after is None:
                         # Not empty -- unreadable, the same answer the reading
                         # after a click gives, and no reason to click again.
@@ -1483,16 +1540,23 @@ class SurfaceDriver:
                     if after:
                         filled_first = True
                         break
-                if self._click_add_to_cart(page, product_route):
+                clicked = self._click_add_to_cart(page, product_route)
+                if clicked:
                     clicks += 1
-                    try:
-                        # The button posts to /shop/cart/update and the navbar badge
-                        # rises when that answers. Some themes navigate to the cart
-                        # first; the badge is on that page too. Leaving before it
-                        # answers would cancel the write and leave the cart empty.
-                        page.wait_for_function(_CART_GREW_JS, arg=0, timeout=30000)
-                    except Exception:  # noqa: BLE001 -- the cart page below is the real check
-                        pass
+                    if clicked == "unanswered":
+                        try:
+                            # No POST `_is_cart_update` names answered this
+                            # click: a theme that adds by another route, or the
+                            # dead element the retry exists for. The navbar
+                            # badge is the signal left -- some themes navigate
+                            # to the cart first, and it is on that page too --
+                            # and it gets a short grace, not the full bound the
+                            # response wait already spent on the same click.
+                            # An answered click needs neither: its own POST
+                            # answering is what says the add committed.
+                            page.wait_for_function(_CART_GREW_JS, arg=0, timeout=_CART_BADGE_GRACE_MS)
+                        except Exception:  # noqa: BLE001 -- the cart page below is the real check
+                            pass
                     if clicks > 1:
                         # A badge that rose cannot say which of the two clicks
                         # raised it, so the second click gets the same grace the
@@ -1507,7 +1571,8 @@ class SurfaceDriver:
                     # while that navigation was loading, which is the same late
                     # add the grace above catches and the same doubling.
                     filled_first = True
-                after, order = self._cart(page)
+                after, read_order = self._cart(page)
+                order = read_order or order
                 if after is None:
                     # The page could not say, which is not the same as empty and
                     # is not something another click would answer. The count is
@@ -1536,7 +1601,10 @@ class SurfaceDriver:
                         if again == after:
                             confirmed = True
                             break
-                        after, order, moved = again, again_order, True
+                        # `or order`: a confirming reading that momentarily
+                        # lost the order id must not overwrite the one already
+                        # named -- see the readings above.
+                        after, order, moved = again, again_order or order, True
                 if after:
                     break
                 # The badge that said otherwise was wrong, or what it saw is
@@ -1588,7 +1656,7 @@ class SurfaceDriver:
         finally:
             page.close()
 
-    def _click_add_to_cart(self, page, product_route: str) -> bool:
+    def _click_add_to_cart(self, page, product_route: str) -> str | bool:
         """Open the product page and click add-to-cart once it can be clicked.
 
         False when it found nothing to click for: the badge on the page this
@@ -1597,6 +1665,12 @@ class SurfaceDriver:
         twice. A badge on a page other than the cart can be a step behind, so a
         low reading proves nothing and is not trusted -- a reading above zero is
         the cart saying it is not empty, and that is all this asks of it.
+
+        A click comes back as `"answered"` -- its POST to a cart route drew an
+        answer, which is what says the add committed -- or `"unanswered"`: no
+        such answer inside the wait's bound, so the caller still has the badge
+        and the cart reading to consult. Both are true, the way the old bool
+        was; only False means nothing was clicked.
 
         `domcontentloaded` is when the button exists, not when it works: the
         handler is attached by the website bundle, which is still loading then,
@@ -1621,51 +1695,70 @@ class SurfaceDriver:
             # likely run, and the click's own retry is the guard behind it. So
             # the step goes on with the page it has -- navigating again would
             # throw that away and land exactly where `load` was waiting to get
-            # past. A navigation that never arrived is a real failure.
-            if product_route not in (page.url or ""):
+            # past. A navigation that never arrived is a real failure, and so
+            # is one that arrived somewhere else: a login page naming the
+            # product in its `redirect=` is the session lapsing, not the
+            # product page, and polling its DOM for an add-to-cart button
+            # would report the wrong fault. `_reached` reads the path only.
+            if not _reached(page.url, product_route):
                 raise
-        if (page.evaluate(_CART_QUANTITY_JS) or 0) > 0:
+        if ((page.evaluate(_CART_STATE_JS) or {}).get("count") or 0) > 0:
             return False
         button = page.locator(_ADD_TO_CART).first
         # A button that is not there 30s after `load` is a shop the run should
-        # report on, not wait for -- 30s because that is what a bare `click()`
-        # would have given it to appear, and nothing retries this abort. The
-        # poll after it keeps the same 30s a bare
-        # `click()` would have auto-waited: a themed `button[disabled]` waiting
-        # on its own combination XHR takes seconds, and nothing retries a step
-        # this aborts -- only an empty cart is clicked at again.
+        # report on, not wait for -- 30s is what a bare `click()` would have
+        # given it to appear, and nothing retries a step this aborts: only an
+        # empty cart is clicked at again. The enabled poll below keeps the
+        # same bound, for a themed `button[disabled]` waiting on its own
+        # combination XHR -- that takes seconds, not the whole of it.
         button.wait_for(state="visible", timeout=30000)
         deadline = time.monotonic() + 30
-        # The reading carries its own timeout: Playwright's default is 30s, and
-        # a button that stopped resolving would blow the poll's bound and report
-        # a raw Playwright timeout instead of what happened here.
+        last_error: Exception | None = None
         while True:
-            # A reading that raises -- a button detached while the page hydrates
-            # -- is not the button answering "disabled", and it must not end the
-            # poll before the deadline it promises.
-            with contextlib.suppress(Exception):
-                if button.is_enabled(timeout=5000):
+            # Checked first, and each reading is bounded by what is left of
+            # the deadline: a reading that kept raising for its full 5s would
+            # otherwise overshoot the bound by up to one reading.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                detail = ""
+                if last_error is not None:
+                    detail = (" (the last reading said: %s)"
+                              % self.masker.text((str(last_error).splitlines() or [""])[0]))
+                raise RuntimeError("the add-to-cart button on %s never became enabled%s"
+                                   % (self.masker.text(product_route), detail))
+            try:
+                # The reading carries its own timeout: Playwright's default is
+                # 30s, and a button that stopped resolving would report a raw
+                # Playwright timeout instead of what happened here.
+                if button.is_enabled(timeout=min(5000, max(100, int(remaining * 1000)))):
                     break
-            if time.monotonic() >= deadline:
-                raise RuntimeError("the add-to-cart button on %s never became enabled"
-                                   % self.masker.text(product_route))
+            except Exception as error:  # noqa: BLE001 -- a button detached mid-hydration; bounded above
+                # Not the button answering "disabled", so the poll goes on --
+                # unless the page itself is gone, which no amount of polling
+                # answers and which the run should name as what it is.
+                if page.is_closed():
+                    raise
+                last_error = error
             page.wait_for_timeout(250)
         clicked = False
+        answered = False
         try:
             # The badge rising says some add landed, not that this click's did:
             # on a retry the first click's late add satisfies that wait at once
             # and the second add then has no wait of its own. This click's own
             # POST answering is what says its add committed before the cart is
             # read. A click that draws no such answer -- a theme that adds by
-            # another route, or the dead element this retry exists for -- falls
-            # back to the badge wait and the cart reading in `ensure_cart`.
+            # another route, or the dead element this retry exists for -- is
+            # reported as such, and the caller falls back to the badge and the
+            # cart reading in `ensure_cart`.
             with page.expect_response(_is_cart_update, timeout=30000):
                 button.click()
                 clicked = True
+            answered = True
         except Exception:  # noqa: BLE001 -- see above; a click that failed is re-raised
             if not clicked:
                 raise
-        return True
+        return "answered" if answered else "unanswered"
 
     def check_selectors(self, targets: Iterable[OpenTarget]) -> None:
         """Refuse an `expect_selector` Playwright cannot read, before judging.
@@ -1747,23 +1840,31 @@ class SurfaceDriver:
         The count is None when the cart page did not show one.
         """
         page.goto(self.base + "/shop/cart", wait_until="domcontentloaded", timeout=60000)
-        # website_sale puts both on every page's navbar badge.
-        order = page.evaluate(
-            "() => { const n = document.querySelector('.my_cart_quantity');"
-            " return (n && n.getAttribute('data-order-id')) || null; }"
-        )
+        # website_sale puts both on every page's navbar badge; one reading, so
+        # the count and the order id come from the same DOM state.
+        state = page.evaluate(_CART_STATE_JS) or {}
+        order = state.get("order")
         # An absent attribute, and the "0" the templates render before the
         # session has an order, are both "no order": a write row naming
         # `sale.order:0` would claim a record nobody created, and the empty-cart
         # reading in `_cart_after_failure` turns on telling those apart.
-        return page.evaluate(_CART_QUANTITY_JS), (str(order) if order and str(order) != "0" else None)
+        return state.get("count"), (str(order) if order and str(order) != "0" else None)
 
     def _open(
         self, route: str, *, backend: bool, expect_action: str | None = None,
         expect_model: str | None = None, expect_selector: str | None = None,
     ) -> SurfaceObservation:
         if self.ingress:
-            self.ingress.keep_alive()
+            try:
+                self.ingress.keep_alive()
+            except Exception as error:  # noqa: BLE001 -- the harness losing its session, not the screen
+                # The same fault `ensure_cart` names inside its loop: a dead
+                # websocket here is not evidence about the screen, and a raw
+                # Playwright message would carry the host and the ingress
+                # token every other message in this driver hides.
+                raise RuntimeError("crawler configuration: the ingress session could not be refreshed "
+                                   "before opening the screen (%s)"
+                                   % self.masker.text((str(error).splitlines() or [""])[0])) from None
         page = self.context.new_page()
         page_errors: list[str] = []
         console: list[tuple[str, str]] = []
