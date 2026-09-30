@@ -20,13 +20,16 @@
   Ingress-only, prefixing through the same `path()` the `fetch`, XHR and
   attribute wrappers already use), and two rewrites on the Ingress
   listener's asset location put the prefix on where the editor renders its
-  content and take it off again on the clone it saves. The value that
-  reaches the database is the value the Public origin would have saved, so
-  a to-do edited under Ingress still shows its pictures on both surfaces;
-  the same round trip covers every `html` field in the backend web client,
-  and no frontend or website-editor bundle carries either expression. The
-  Public origin gets neither the shim nor the rules and is unchanged. No
-  version bump. Issue #210, parent #148.
+  content and take it off again on the clone it saves. The prefix goes only
+  on URL attributes inside a start tag, so prose and escaped code samples
+  keep their bytes, and it comes off again from every attribute and every
+  piece of text, so nothing the prefixing reached can end up in the record.
+  The value that reaches the database is the value the Public origin would
+  have saved, so a to-do edited under Ingress still shows its pictures on
+  both surfaces; the same round trip covers every `html` field in the
+  backend web client, and no frontend or website-editor bundle carries
+  either expression. The Public origin gets neither the shim nor the rules
+  and is unchanged. No version bump. Issue #210, parent #148.
 
 ## 0.4.8 — 2026-09-30
 

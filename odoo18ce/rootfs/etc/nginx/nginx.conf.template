@@ -170,35 +170,73 @@ http {
     # rewrite, so the prefix goes on where the markup is *rendered* and comes
     # off again where the editor hands its content back.
     #
-    # `__WOOW_INGRESS_MARKUP_IN__(html)` prefixes the URL attributes of a
-    # markup string through the shim's own `path()` -- one URL helper, so
-    # `blob:`, `data:`, `#`, cross-origin, protocol-relative, a value that is
-    # already prefixed and a non-string all behave as they do everywhere else.
-    # It returns a string the caller assigns, so nothing is fetched before the
-    # prefix is on. Only the four attributes whose whole value is one URL are
-    # covered: `src`, `href`, `action`, `data-src`. `srcset` is a candidate
-    # list that needs a parse rather than a substitution, and belongs to #166
-    # with every other attribute rule; `style` backgrounds inside record HTML
-    # stay as they are (#194 covers page HTML only).
+    # `__WOOW_INGRESS_MARKUP_IN__(html)` prefixes URL attributes in a markup
+    # string through the shim's own `path()` -- one URL helper, so `blob:`,
+    # `data:`, `#`, cross-origin, protocol-relative, a value that is already
+    # prefixed and a non-string all behave as they do everywhere else. It
+    # returns a string the caller assigns, so nothing is fetched before the
+    # prefix is on.
     #
-    # `__WOOW_INGRESS_MARKUP_OUT__(root)` is the inverse, on the detached
-    # element the editor clones for saving: it takes the prefix off the same
-    # four attributes, including the `origin`-qualified form, and it writes
-    # through `A` -- the native `setAttribute` the shim captured before
-    # wrapping it -- because the wrapper would put the prefix straight back.
-    # Its locals are prefixed `m` for the same reason the helpers are: `O` is
-    # already the captured `window.open` in this closure, and shadowing it
-    # here would be a trap for whoever moves the next line.
-    # The element it is handed is a clone outside the document, so nothing is
-    # re-fetched. That is what keeps the database root-relative: the value the
-    # editor saves is the value the Public origin would have saved.
+    # It matches in two steps, and the first one is what keeps it off the
+    # rest of the markup: `mT` selects a **start tag** (`<`, a letter, then
+    # no `<` or `>`), and `mR` runs only inside one. So an attribute-shaped
+    # run of text -- an escaped code sample, prose, a comment, an end tag --
+    # is not a candidate, which a single attribute regex over the whole
+    # string could not promise. Two shapes are still outside it, and both
+    # fail safely: a start tag holding a `>` inside an attribute value is not
+    # recognised as a tag, so its URLs keep escaping rather than being
+    # corrupted; and markup nested inside another attribute's value
+    # (`data-bs-content="<img src=...>"`) has a real `<tag>` in it, so the
+    # inner URL is prefixed -- which the strip below undoes on save, so it
+    # never reaches the record. Only the four attributes whose whole value is
+    # one URL are prefixed: `src`, `href`, `action`, `data-src`; `srcset` is
+    # a candidate list needing a parse and belongs to #166 with every other
+    # attribute rule, and `style` backgrounds inside record HTML stay as they
+    # are (#194 covers page HTML). A value is a candidate only if its first
+    # byte is `/`, which makes the round trip exact: `path()` on a
+    # root-relative value yields the prefix and nothing else, so removing the
+    # prefix gives back the byte-identical original. A relative value is left
+    # alone precisely because prefixing it would resolve it, and the resolved
+    # path is not what the record held.
+    #
+    # `__WOOW_INGRESS_MARKUP_OUT__(root)` is the inverse, and it is
+    # deliberately *wider* than `IN` rather than its mirror: it removes every
+    # occurrence of the prefix from every attribute value and every character
+    # data node in the subtree. That is what makes the record safe whatever
+    # `IN` touched, including the two shapes above, and it also takes off a
+    # prefix the shim's own wrappers applied to an attribute `IN` never
+    # prefixes -- `xlink:href` through `setAttribute`, `srcset` through the
+    # property setter. Removing the prefix is always the right answer for a
+    # saved value: the prefix carries the Supervisor token, so an occurrence
+    # of it in a record is the harm, not content worth keeping.
+    #
+    # It writes attributes through `A` -- the native `setAttribute` the shim
+    # captured before wrapping it -- because the wrapper would put the prefix
+    # straight back. Its locals are prefixed `m` for the same reason the
+    # helpers are: `O` is already the captured `window.open` in this closure,
+    # and shadowing it here would be a trap for whoever moves the next line.
+    #
+    # **The element is adopted into an inert document first, and that is not
+    # a detail.** The editor hands it the `cloneNode(true)` of the editable:
+    # detached from the tree, but still owned by the live document, and an
+    # `<img>` that is merely detached still loads -- so writing the
+    # root-relative `src` there would fetch it from the Home Assistant root
+    # and cost a 404 and a console error on every save, which is the escape
+    # this issue is about, moved rather than fixed. A document from
+    # `document.implementation.createHTMLDocument()` has no browsing context,
+    # so the image-data algorithm stops before requesting anything. The
+    # document is created once and reused. Adoption only changes
+    # `ownerDocument`; the clone keeps its null parent, and everything
+    # downstream of `getElContent` -- the field's serialisation and
+    # `savePendingImages` -- reads and queries it without caring which
+    # document owns it. The live editable is untouched either way.
     #
     # Read-only and non-configurable like `__WOOW_INGRESS_URL__`, published
     # only when the Ingress prefix is non-empty because the IIFE returns
     # before this line otherwise, and every rewritten expression falls back to
     # the untouched value when the globals are absent.
     map $upstream_http_content_type $ingress_markup_global_shim {
-        default 'var mA=["src","href","action","data-src"],mR=/(\s(?:data-src|src|href|action)=)([\x22\x27])(\/[^\x22\x27<>]*)\2/g,mIn=function(h){return typeof h==="string"?h.replace(mR,function(m,a,q,v){return a+q+path(v)+q}):h},mOut=function(r){if(!r||!r.querySelectorAll)return r;var mB=location.origin,n=r.querySelectorAll("[src],[href],[action],[data-src]"),i,j,k,v;for(i=0;i<n.length;i++)for(j=0;j<mA.length;j++){k=mA[j];v=n[i].getAttribute(k);if(typeof v!=="string")continue;if(v.indexOf(mB+P)===0)v=v.slice(mB.length);if(v.indexOf(P)===0)A.call(n[i],k,v.slice(P.length)||"/")}return r},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
+        default 'var mT=/<[A-Za-z][^<>]*>/g,mR=/(\s(?:data-src|src|href|action)=)([\x22\x27])(\/[^\x22\x27<>]*)\2/g,mD,mF=function(m,a,q,v){return a+q+path(v)+q},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mR,mF)}):h},mS=function(s){return s.split(P).join("")},mW=function(x){var t=x.attributes,c=x.childNodes,i,v,y;if(t)for(i=0;i<t.length;i++){v=t[i].value;if(typeof v==="string"&&v.indexOf(P)>=0)A.call(x,t[i].name,mS(v))}if(c)for(i=0;i<c.length;i++){y=c[i];if(y.nodeValue!=null){if(y.nodeValue.indexOf(P)>=0)y.nodeValue=mS(y.nodeValue)}else mW(y)}},mOut=function(r){if(!r||!r.childNodes)return r;if(!mD)mD=document.implementation.createHTMLDocument("");mD.adoptNode(r);mW(r);return r},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
     }
 
     map $upstream_http_content_type $ingress_runtime_shim {
@@ -621,8 +659,11 @@ http {
             # value it compares against `lastValue` alike, so stripping here
             # keeps those two consistent. The strip runs after the handlers,
             # so a prefix one of them put on through the shim's own
-            # `setAttribute` wrapper comes off as well. The clone is outside
-            # the document, so nothing is re-fetched.
+            # `setAttribute` wrapper comes off as well. The clone is detached
+            # but still owned by the live document, where a detached `<img>`
+            # still loads, so the helper adopts it into an inert document
+            # before writing anything -- see the map above for why that is
+            # the difference between fixing this escape and moving it.
             #
             # Both patterns were measured on 2026-09-30 across every bundle
             # the control group serves: exactly once each in

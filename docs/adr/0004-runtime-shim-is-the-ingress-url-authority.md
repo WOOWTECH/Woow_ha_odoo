@@ -452,16 +452,49 @@ the clone is outside the document, so nothing is re-fetched. The strip runs
 `setAttribute` wrapper comes off as well.
 
 **Two helpers, published and not hooked.** `__WOOW_INGRESS_MARKUP_IN__(html)`
-prefixes the URL attributes of a markup string through the shim's own `path()`,
-the way #174's `__WOOW_INGRESS_URL__` does, so there is still one URL helper
-and one set of rules about `blob:`, `data:`, `#`, cross-origin, a protocol-
-relative reference and a value already prefixed.
-`__WOOW_INGRESS_MARKUP_OUT__(root)` is the inverse on the clone, and it writes
-through the native `setAttribute` the shim captured before wrapping it, because
-the wrapper would put the prefix straight back. Both are read-only,
-non-configurable and defined only when the Ingress prefix is non-empty; both
-rewritten expressions fall back to the untouched value when they are absent, so
-an Ingress page whose shim did not run still renders and still saves.
+prefixes URL attributes in a markup string through the shim's own `path()`, the
+way #174's `__WOOW_INGRESS_URL__` does, so there is still one URL helper and
+one set of rules about `blob:`, `data:`, `#`, cross-origin, a protocol-relative
+reference and a value already prefixed. It matches in two steps, and the first
+is what keeps it off the rest of the markup: one pattern selects a **start
+tag** -- `<`, a letter, then no `<` or `>` -- and the attribute pattern runs
+only inside one. An attribute-shaped run of *text* is therefore not a
+candidate, which a single attribute regex over the whole string could not
+promise, and which matters because record HTML holds prose and escaped code
+samples.
+
+`__WOOW_INGRESS_MARKUP_OUT__(root)` is the inverse, and it is deliberately
+*wider* than `IN` rather than its mirror: it removes every occurrence of the
+prefix from every attribute value and every character-data node in the
+subtree. That is what makes the record safe whatever `IN` touched -- including
+the two shapes `IN` reaches that are not really attributes, markup nested
+inside another attribute's value and a real start tag inside a comment -- and
+it also takes off a prefix the shim's own wrappers applied to an attribute `IN`
+never prefixes, `xlink:href` through `setAttribute` and `srcset` through the
+property setter. Removing the prefix is always the right answer for a value on
+its way to storage: the prefix carries the Supervisor token, so an occurrence
+of it in a record is the harm and not content worth keeping. It writes through
+the native `setAttribute` the shim captured before wrapping it, because the
+wrapper would put the prefix straight back.
+
+Both are read-only, non-configurable and defined only when the Ingress prefix
+is non-empty; both rewritten expressions fall back to the untouched value when
+they are absent, so an Ingress page whose shim did not run still renders and
+still saves.
+
+**The strip works in an inert document, and that is not a detail.** The clone
+`getElContent` makes is detached from the tree but still owned by the live
+document, and a detached `<img>` still loads -- so writing the root-relative
+`src` onto it would fetch it from the Home Assistant root and cost a 404 and a
+console error on *every* save, which is this issue's escape moved rather than
+fixed. `OUT` therefore adopts the clone into a
+`document.implementation.createHTMLDocument()` first: that document has no
+browsing context, so the image-data algorithm stops before requesting
+anything. The document is created once and reused, adoption only changes
+`ownerDocument`, and everything downstream of `getElContent` -- the field's
+serialisation and `savePendingImages` -- reads and queries the clone without
+caring which document owns it. A bonus of the same move: an image
+`savePendingImages` re-points afterwards does not load either.
 
 **This is not a Group B hook, and the distinction is the whole decision.** A
 hook on `innerHTML` prefixes every markup insertion in the page, including the
@@ -472,16 +505,31 @@ test that asserts the shim has none of Group B's hooks keeps passing and keeps
 meaning what it said; a second test asserts the helpers themselves hook
 nothing.
 
-**Four attributes, and only a value beginning `/`.** `src`, `href`, `action`
-and `data-src` -- the ones whose whole value is one URL. `srcset` is a
+**Four attributes prefixed, and only a value beginning `/`.** `src`, `href`,
+`action` and `data-src` -- the ones whose whole value is one URL. `srcset` is a
 candidate list that needs a parse rather than a substitution and belongs to
 #166 with every other attribute rule; a `style` background inside record HTML
-stays as it is (#194 covers page HTML). Requiring the first byte to be `/`
-excludes a protocol-relative reference, which is the limit every other prefix
-rule in the template has and #166 owns -- here it is excluded rather than
-broken -- and it leaves an absolute same-origin URL alone: Odoo writes
-root-relative URLs into record HTML, so one somebody pasted is unmeasured
-rather than fixed.
+stays as it is (#194 covers page HTML). Both are *stripped* on the way out,
+because the shim's own wrappers can have put a prefix there.
+
+Requiring the first byte to be `/` is what makes the round trip exact:
+`path()` on a root-relative value yields the prefix and nothing else, so
+removing the prefix gives back the byte-identical original. It also excludes a
+protocol-relative reference -- the limit every other prefix rule in the
+template has and #166 owns, excluded here rather than broken -- and it leaves a
+relative value alone, because prefixing it would *resolve* it and the resolved
+path is not what the record held. An absolute same-origin URL is left alone for
+the same round-trip reason: Odoo writes root-relative URLs into record HTML, so
+one somebody pasted is unmeasured rather than fixed, and if the shim's
+`setAttribute` wrapper normalised one during editing the strip takes the prefix
+off again.
+
+Two shapes fall outside the tag pattern and both fail safely. A start tag
+holding a `>` inside an attribute value is not recognised as a tag, so its URLs
+keep escaping rather than being corrupted. Markup nested inside another
+attribute's value, and a start tag written inside a comment, *are* prefixed --
+visible in the editor until the next load, never in the record, because the
+strip removes the prefix from every attribute and every character-data node.
 
 **What is not closed, said rather than left implicit.** The code view's
 `editable.innerHTML = this.value` on toggling back (the `codeview` option,
