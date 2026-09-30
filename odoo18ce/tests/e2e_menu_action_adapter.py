@@ -366,17 +366,20 @@ def session_database(reported: str | None) -> str:
 # so `/shop/change_pricelist` covers the `/shop/change_pricelist/<id>` the route
 # is actually spelled as, and a route under a prefix needs its own key only when
 # its write is not the one the prefix cites -- `/shop/payment/validate` has one
-# for that reason, and the longest key is the one a refusal names. The value cites the
-# write in upstream `website_sale` at the pinned Odoo -- 18.0.20260930, the
-# `ODOO_DEB_VERSION` of odoo18ce/Dockerfile -- read from that `.deb` under
-# `usr/lib/python3/dist-packages/odoo/addons/website_sale/`. The audit covers
-# every `type='http'` route of that module the navigation itself can reach --
-# every `@route` of `controllers/`, including the bare `@route()` overrides of
-# `website`'s own routes, whose route is the parent's: one not listed here is
-# either unreachable by that navigation (`methods=['POST']`, `type='json'`) or
-# its body was read and writes nothing: nothing but `request.session` (`/shop`),
-# or nothing at all (`/shop/<product>`, `/shop/<product>/document/<id>`,
-# `/shop/confirmation`, `/shop/print`, `/shop/product/<id>`). The body is what
+# for that reason, and the longest key is the one a refusal names. The value
+# cites the write in upstream Odoo at the version odoo18ce/Dockerfile pins --
+# 18.0.20260930, `ODOO_DEB_VERSION` -- read from that `.deb` under
+# `usr/lib/python3/dist-packages/odoo/addons/`; a path with no module in front
+# of it is under `website_sale/`, the one module audited route by route.
+#
+# That audit covers every `type='http'` route of `website_sale` the navigation
+# itself can reach -- every `@route` of `controllers/`, including the bare
+# `@route()` overrides of `website`'s own routes, whose route is the parent's:
+# one not listed here is either unreachable by that navigation
+# (`methods=['POST']`, `type='json'`) or its body was read and writes nothing --
+# nothing but `request.session` (`/shop`), or nothing at all (`/shop/<product>`,
+# `/shop/<product>/document/<id>`, `/shop/confirmation`, `/shop/print`,
+# `/shop/product/<id>`). The body is what
 # was read, not the `readonly=True` flag two of them carry: that flag is not a
 # bound, because `odoo/http.py:2157-2168` rolls a read-only transaction back and
 # re-runs the handler on a read/write cursor, so a `readonly` route that writes
@@ -396,23 +399,19 @@ def session_database(reported: str | None) -> str:
 # under its own redirects), which is a property of today's Odoo and not of this
 # list.
 #
-# The list is `website_sale`'s routes and no others, and it is not the whole of
-# what Odoo writes on a GET. Two writes outside it were read and left where they
-# are, for two different reasons.
-#
+# One write outside the list was read and left outside it:
 # `website/models/ir_http.py:203` creates or touches a `website.visitor` on any
 # tracked page's GET, whichever module serves it. Bounding that here would
 # refuse the read-only runs the parity plan is built on -- every page `crawl`
 # visits makes the same write -- while leaving `crawl` as it is, so it belongs
 # to whoever takes the read-only guarantee up as a whole and not to this seam.
 #
-# `sale/controllers/portal.py` writes on `/my/orders/<id>`: `:270`
-# `_portal_ensure_token()` stores an `access_token` on an order still to be
-# paid, and `:168` posts a "Quotation viewed by customer" note. That one is
-# bounded by nothing and would fit a list entry, but it is a `sale` write, and
-# this list is the `website_sale` audit #212 asked for; adding it would claim an
-# audit of `sale` that nobody has done, and `sale`'s portal has more routes than
-# this one. It is recorded here so the next audit starts from it.
+# And the list is not a complete audit of every Odoo module: `website_sale` was
+# audited route by route, and the one `sale` route below is the one `sale` route
+# that was read, not a finding that `sale`'s portal holds no others. A known
+# write belongs on the list whatever module holds it -- an entry bounds it, and
+# leaving it off to keep the list tidy would leave the hole this Issue is about
+# -- but the absence of a `sale` route from the list says nothing.
 GET_WRITING_ROUTES = {
     # controllers/main.py:796 unlinks the cart lines of archived products, and
     # :785-786 rewrites an abandoned cart's lines onto the session cart and
@@ -455,6 +454,13 @@ GET_WRITING_ROUTES = {
     # its body marks the cart's order lines for a recompute of their `name` in
     # the new language, which the request flushes onto `sale.order.line`.
     "/website/lang": "recomputes the cart's order line names in the chosen language",
+    # `sale`'s route, not `website_sale`'s, and on the list because the write was
+    # read: sale/controllers/portal.py:270 `_portal_ensure_token()` stores a
+    # fresh `access_token` on any order `_has_to_be_paid()`, and :168 posts a
+    # "Quotation viewed by customer" note on a draft or sent order a portal user
+    # opens with a token. `sale`'s portal has more routes than this one and they
+    # have not been read; see the note above the list.
+    "/my/orders": "stores an access_token on an unpaid order and posts a viewed-by-customer note",
 }
 
 
@@ -487,7 +493,7 @@ def get_writing_route(route: str) -> str | None:
     the literal spelling would, which is the safe direction for a guard.
     """
     parts = urlsplit(route)
-    if parts.netloc or not parts.path.startswith("/"):
+    if parts.scheme or parts.netloc or not parts.path.startswith("/"):
         raise ValueError("crawler configuration: %r is not an absolute path, so whether it writes "
                          "on a plain GET cannot be judged" % route)
     # `normpath` resolves the dot segments the browser would resolve for itself;
@@ -515,8 +521,8 @@ def require_write_database(targets: Iterable[OpenTarget], database: str | None) 
     Both are refused here, before the first screen is opened, so a misaimed run
     is a configuration error and not a mutated database.
 
-    Not every write a run can make is one of those two -- the list is the
-    `website_sale` audit and no wider, and a page writes through its own
+    Not every write a run can make is one of those two -- `website_sale` is the
+    one module audited route by route, and a page writes through its own
     templates and JavaScript as well. `GET_WRITING_ROUTES` says what is outside
     it and why. This guard is as good as that list, not better.
 

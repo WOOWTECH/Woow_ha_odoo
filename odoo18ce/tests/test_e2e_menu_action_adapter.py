@@ -546,6 +546,9 @@ class OpenTargetTests(unittest.TestCase):
         # can check against upstream `website_sale`.
         self.assertLessEqual({"/shop/checkout", "/shop/confirm_order", "/shop/address"},
                              set(GET_WRITING_ROUTES))
+        # The list is not `website_sale`-only: a known GET write belongs on it
+        # whichever module holds the route.
+        self.assertIn("/my/orders", GET_WRITING_ROUTES)
         for prefix, where in GET_WRITING_ROUTES.items():
             with self.subTest(prefix):
                 # A prefix is matched against a target's path, so it has to be
@@ -565,7 +568,8 @@ class OpenTargetTests(unittest.TestCase):
         self.assertEqual(get_writing_route("/website/lang/fr_BE"), "/website/lang")
         # None means "not on this list", not "writes nothing": `/my/orders/<id>`
         # writes in `sale`, which this list does not cover -- see its comment.
-        for outside in ("/shop", "/shop/cartons", "/shop/checkouts", "/my/orders/7",
+        self.assertEqual(get_writing_route("/my/orders/7"), "/my/orders")
+        for outside in ("/shop", "/shop/cartons", "/shop/checkouts", "/my/home",
                         "/odoo/action-project_todo.project_task_action_todo"):
             with self.subTest(outside):
                 self.assertIsNone(get_writing_route(outside))
@@ -591,7 +595,10 @@ class OpenTargetTests(unittest.TestCase):
     def test_a_route_the_guard_cannot_read_is_refused_not_permitted(self) -> None:
         # `parse_targets` refuses both of these, so only a caller that skipped it
         # gets here -- and then a None would read as "this route is safe".
-        for unreadable in ("shop/checkout", "//shop/checkout", "https://host/shop/checkout"):
+        for unreadable in ("shop/checkout", "//shop/checkout", "https://host/shop/checkout",
+                           # A scheme with no authority: `urlsplit` leaves the
+                           # path readable and the route is still not one.
+                           "https:/my/orders/7", "mailto:/shop/checkout"):
             with self.subTest(unreadable):
                 with self.assertRaisesRegex(ValueError, "crawler configuration"):
                     get_writing_route(unreadable)
