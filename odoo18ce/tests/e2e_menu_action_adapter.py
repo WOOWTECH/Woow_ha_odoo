@@ -1370,10 +1370,12 @@ class SurfaceDriver:
         order and its size instead, and it carries the run id.
 
         The click is bounded but not quick: with every wait in it timing out,
-        one cart target costs about nine minutes -- two passes of a `load`
-        navigation, the button waits, the badge wait and two cart readings --
-        against about four before the retry existed. A run that sizes a timeout
-        around this step should size it for that.
+        one cart target costs about eleven minutes -- two passes of a `load`
+        navigation, the button waits, the badge wait and the cart readings,
+        including the ones that confirm a two-click cart settled -- against
+        about four before the retry existed. A run that sizes a timeout around
+        this step should size it for that, and the loop refreshes the ingress
+        session as it goes so the window does not lapse inside it.
 
         This writes, and is deliberately not an `Operation`:
         `NON_MUTATING_OPERATIONS` is every member of that enum, so a WRITE
@@ -1466,6 +1468,20 @@ class SurfaceDriver:
                     # account for, whatever the page would not say.
                     raise RuntimeError("the cart page did not show its item count after adding %s in %d click(s)"
                                        % (self.masker.text(product_route), clicks))
+                if after and clicks > 1:
+                    # More than one click means the record has to name the
+                    # quantity the cart settled at. A reading taken while the
+                    # second update was still committing names the smaller one;
+                    # the other surface then records the larger and `_judge`
+                    # calls two identical screens a blocker GAP. So the cart is
+                    # read until two readings in a row agree, three at most.
+                    for _ in range(2):
+                        page.wait_for_timeout(_CART_SETTLE_MS)
+                        again, again_order = self._cart(page)
+                        if again == after:
+                            break
+                        if again is not None:
+                            after, order = again, again_order
                 if after:
                     break
                 # The badge that said otherwise was wrong, or what it saw is
@@ -1585,7 +1601,12 @@ class SurfaceDriver:
         page = None
         try:
             if self.ingress:
-                self.ingress.keep_alive()
+                # Best effort, and suppressed: this reading is the one thing
+                # standing between a cart the run filled and a `writes` that
+                # never names it, so a session that will not refresh must not
+                # cost it. A page that then fails is what the reason is for.
+                with contextlib.suppress(Exception):
+                    self.ingress.keep_alive()
             page = self.context.new_page()
             items, order = self._cart(page)
         except Exception as error:  # noqa: BLE001 -- the failure that brought us here is the story

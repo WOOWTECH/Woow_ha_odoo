@@ -788,8 +788,9 @@ class CartStepTests(unittest.TestCase):
         # so the cart reads empty. That is a flake, not a broken screen, and
         # failing the run on it costs a whole two-surface judgement.
         # The readings: empty before the step, empty after the first click,
-        # empty again just before the second, and filled after it.
-        page = FakePage([0, 0, 0, 1])
+        # empty again just before the second, filled after it, and the same
+        # again -- two clicks are read until the cart stops moving.
+        page = FakePage([0, 0, 0, 1, 1])
         write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
         self.assertEqual(page.clicks, 2)
         self.assertEqual((write["items"], write["id"]), (1, "7"))
@@ -806,7 +807,10 @@ class CartStepTests(unittest.TestCase):
         # judge, and reporting one item would hide it. A product that adds
         # several at once looks the same from here, so the record names both
         # readings of it rather than asserting the one it cannot tell.
-        page = FakePage([0, 0, 0, 2])
+        # The first reading after the second click catches qty 1, mid-commit;
+        # the reading after it catches the 2 the cart settled at, and that is
+        # the one the record carries.
+        page = FakePage([0, 0, 0, 1, 2, 2])
         write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
         self.assertEqual((page.clicks, write["items"]), (2, 2))
         self.assertEqual(write["how"], "added the product on /shop/product/desk-1 to the cart (0 -> 2 items)"
@@ -845,6 +849,27 @@ class CartStepTests(unittest.TestCase):
         self.assertEqual((page.clicks, write["items"]), (0, 4))
         self.assertEqual(write["how"], "the cart held 4 item(s) by the time the product page"
                                        " for /shop/product/desk-1 was up; nothing was added")
+
+    def test_a_cart_still_moving_after_three_readings_carries_the_last_of_them(self) -> None:
+        # Bounded: the confirming readings stop at three whether they agree or
+        # not, and what the record says is the last reading taken.
+        page = FakePage([0, 0, 0, 1, 2, 3])
+        write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual(write["items"], 3)
+        # Six cart readings and no seventh: one before the step, one after each
+        # click, the grace one before the second, and two confirming ones.
+        self.assertEqual(page.log.count("goto:/shop/cart"), 6)
+
+    def test_a_cart_kept_alive_that_will_not_refresh_still_gets_read(self) -> None:
+        # The reading after a failed step is what keeps a cart the run filled in
+        # `writes`; an ingress session that will not refresh must not cost it.
+        target, = parse_targets([CART_TARGET])
+        driver = cart_driver(FakeContext(FakePage([0, 0, 0, 0]), FakePage([1])))
+        driver.ingress = mock.Mock()
+        driver.ingress.keep_alive.side_effect = RuntimeError("the websocket went away")
+        observation = driver.open_screen(target)
+        self.assertEqual([write["items"] for write in observation.writes], [1])
+        self.assertIn("cart not filled", observation.result)
 
     def test_the_retry_is_bounded_and_the_step_gives_up_saying_how_often_it_tried(self) -> None:
         page = FakePage([0, 0, 0, 0])
