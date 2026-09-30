@@ -406,6 +406,15 @@ for (const name of ["xlink:title", "data-x_y", "ns:a.b"]) {
     '<img ' + name + '=' + "'" + 'a" src="/x' + "'" + ' src="' + P + PICTURE + '">'
   );
 }
+// Whitespace around the `=` is taken for the same reason, and put back as it
+// came: `alt = '...'` is legal HTML, and an attribute the walk skips is an
+// attribute whose value it searches inside.
+for (const eq of [" = ", "\t=\t", "\n=\n", "= ", " ="]) {
+  assert.equal(
+    markupIn('<img alt' + eq + "'" + 'a" src="/x' + "'" + ' src' + eq + '"' + PICTURE + '">'),
+    '<img alt' + eq + "'" + 'a" src="/x' + "'" + ' src' + eq + '"' + P + PICTURE + '">'
+  );
+}
 // The URL parser reads `/\host/x` as `//host/x` for an http(s) base, so the
 // second-character guard has to refuse a backslash as well as a slash --
 // otherwise path() would return a same-host one as a prefixed path and the

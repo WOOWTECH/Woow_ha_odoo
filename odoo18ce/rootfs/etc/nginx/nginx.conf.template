@@ -217,7 +217,10 @@ http {
     # and a `_` as well -- because an attribute the walk cannot tokenise is
     # one whose value it would then search inside, which is the misalignment
     # above: `<img xlink:title='a src="/x' src="/y">` needs `xlink:title` to
-    # be one token even though nothing will ever prefix it. It is a comma-delimited
+    # be one token even though nothing will ever prefix it. Whitespace around
+    # the `=` is taken for the same reason and put back unchanged, because
+    # `alt = '...'` is legal HTML and an attribute the walk skips is an
+    # attribute whose value it searches inside. It is a comma-delimited
     # `indexOf` and not an anchored regex, because an anchored regex needs a
     # `$` and nginx reads a `$` in a quoted parameter as a variable -- with
     # `/i` after it, as an invalid one, which `nginx -t` refuses. The
@@ -263,7 +266,7 @@ http {
     # before this line otherwise, and every rewritten expression falls back to
     # the untouched value when the globals are absent.
     map $upstream_http_content_type $ingress_markup_global_shim {
-        default 'var mT=/<[A-Za-z][^<>]*>/g,mA=/(^|\s)([A-Za-z][-A-Za-z0-9:._]*)=([\x22\x27])((?:(?!\3)[^<>])*)\3/g,mU=function(n){return ",src,href,action,data-src,".indexOf(","+n.toLowerCase()+",")>=0},mF=function(m,s,n,q,v){return mU(n)&&v.charAt(0)==="/"&&v.charCodeAt(1)!==47&&v.charCodeAt(1)!==92?s+n+"="+q+path(v)+q:m},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mA,mF)}):h},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
+        default 'var mT=/<[A-Za-z][^<>]*>/g,mA=/(^|\s)([A-Za-z][-A-Za-z0-9:._]*)(\s*=\s*)([\x22\x27])((?:(?!\4)[^<>])*)\4/g,mU=function(n){return ",src,href,action,data-src,".indexOf(","+n.toLowerCase()+",")>=0},mF=function(m,s,n,e,q,v){return mU(n)&&v.charAt(0)==="/"&&v.charCodeAt(1)!==47&&v.charCodeAt(1)!==92?s+n+e+q+path(v)+q:m},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mA,mF)}):h},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
     }
 
     map $upstream_http_content_type $ingress_runtime_shim {

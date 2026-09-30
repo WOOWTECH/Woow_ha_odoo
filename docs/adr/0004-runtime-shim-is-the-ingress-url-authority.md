@@ -515,10 +515,19 @@ on both surfaces. Walking makes the `alt` value one token, so the `src` inside
 it is never seen and the real `src` is the one prefixed. The shape is in the
 Static-tier test, named for what it is.
 
+Which is why the walk takes more than it prefixes: any attribute it cannot
+tokenise is one whose value it searches inside, and that is the same defect
+again. So the *name* it consumes may hold a `:`, a `.` or a `_`
+(`xlink:title`), and whitespace around the `=` is consumed and put back
+unchanged (`alt = '...'`), even though neither is a name or a spelling anything
+will ever be prefixed for. Each of those spellings reached the misalignment in
+its own review round, which is the reason to state the principle and not only
+the cases.
+
 Three shapes stay outside the pair, and all three fail safely -- the URL keeps
 escaping rather than being corrupted. A start tag holding a `>` inside an
 attribute value is not recognised as a tag. An unquoted value has no closing
-delimiter to consume. And an unquoted value that swallows the attribute after
+delimiter to consume, whatever surrounds its `=`. And an unquoted value that swallows the attribute after
 it (`alt=a"src="/x"`, which is how a browser parses it too) leaves the inner
 `src` preceded by a quote rather than by whitespace, which the walk requires.
 What *is* reached and is not really an attribute is markup nested inside
