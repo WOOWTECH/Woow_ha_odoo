@@ -1,0 +1,34 @@
+public run(s): WOOW-PARITY-20260930T041149Z
+ingress run(s): WOOW-PARITY-20260930T041814Z
+PARITY menu:website.custom_menu_edit_menu|ir.actions.client:584
+PARITY menu:website.menu_ace_editor|ir.actions.client:584
+PARITY menu:website.menu_edit_menu|ir.actions.client:584
+PARITY menu:website.menu_optimize_seo|ir.actions.client:584
+PARITY menu:website.menu_page_properties|ir.actions.client:584
+GAP menu:website.menu_visitor_view_menu|ir.actions.act_window:596: public U-C5 ha_origin: <HA_BASE>/; public U-C5 ha_origin: <HA_BASE>/shop/woow-parity-20260929t045315z-service-58; public U-C5 ha_origin: <HA_BASE>/jobs/woow-parity-20260929t040919z-job-3; public U-C5 ha_origin: <HA_BASE>/contactus; ingress U-C5 ha_origin: <HA_BASE>/; ingress U-C5 ha_origin: <HA_BASE>/shop/woow-parity-20260929t045315z-service-58; ingress U-C5 ha_origin: <HA_BASE>/jobs/woow-parity-20260929t040919z-job-3; ingress U-C5 ha_origin: <HA_BASE>/contactus
+PARITY menu:website.menu_website_add_features|ir.actions.act_window:579
+SKIPPED menu:website.menu_website_analytics|ir.actions.server:587: server action may write
+PARITY menu:website.menu_website_configuration|ir.actions.client:584
+PARITY menu:website.menu_website_pages_list|ir.actions.act_window:591
+PARITY menu:website.menu_website_preview|ir.actions.client:584
+PARITY menu:website.menu_website_website_settings|ir.actions.act_window:597
+PARITY menu:website.website_visitor_menu|ir.actions.act_window:595
+PARITY menu:website_hr_recruitment.menu_job_pages|ir.actions.act_window:723
+PARITY menu:website_links.menu_link_tracker|ir.actions.client:584
+PARITY menu:website_sale.menu_catalog_categories|ir.actions.act_window:953
+PARITY menu:website_sale.menu_catalog_pricelists|ir.actions.act_window:194
+PARITY menu:website_sale.menu_catalog_products|ir.actions.act_window:955
+PARITY menu:website_sale.menu_ecommerce_delivery|ir.actions.act_window:940
+PARITY menu:website_sale.menu_ecommerce_payment_methods|ir.actions.act_window:216
+PARITY menu:website_sale.menu_ecommerce_payment_providers|ir.actions.act_window:215
+PARITY menu:website_sale.menu_orders_abandoned_orders|ir.actions.act_window:960
+PARITY menu:website_sale.menu_orders_customers|ir.actions.act_window:57
+PARITY menu:website_sale.menu_orders_orders|ir.actions.act_window:956
+PARITY menu:website_sale.menu_orders_unpaid_orders|ir.actions.act_window:959
+PARITY menu:website_sale.menu_product_attribute_action|ir.actions.act_window:190
+PARITY menu:website_sale.menu_product_combos|ir.actions.act_window:192
+PARITY menu:website_sale.menu_product_pages|ir.actions.act_window:962
+PARITY menu:website_sale.menu_report_sales|ir.actions.act_window:950
+PARITY menu:website_sale.product_catalog_product_ribbons|ir.actions.act_window:954
+PARITY menu:website_sale.product_catalog_product_tags|ir.actions.act_window:184
+30 judged = 29 PARITY + 1 GAP; 1 skipped
