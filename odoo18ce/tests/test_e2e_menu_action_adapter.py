@@ -548,17 +548,22 @@ class OpenTargetTests(unittest.TestCase):
         self.assertEqual(get_writing_route("/shop/change_pricelist/3"), "/shop/change_pricelist")
         self.assertEqual(get_writing_route("/shop/checkout/"), "/shop/checkout")
         self.assertEqual(get_writing_route("/website/lang/fr_BE"), "/website/lang")
-        for reading in ("/shop", "/shop/cartons", "/shop/checkouts", "/my/orders/7",
+        # None means "not on this list", not "writes nothing": `/my/orders/<id>`
+        # writes in `sale`, which this list does not cover -- see its comment.
+        for outside in ("/shop", "/shop/cartons", "/shop/checkouts", "/my/orders/7",
                         "/odoo/action-project_todo.project_task_action_todo"):
-            with self.subTest(reading):
-                self.assertIsNone(get_writing_route(reading))
+            with self.subTest(outside):
+                self.assertIsNone(get_writing_route(outside))
 
     def test_a_get_writing_route_is_matched_as_odoo_routes_it(self) -> None:
         # `normalize_route` keeps percent-escapes and repeated slashes on
         # purpose, and werkzeug unquotes the path before matching, so a target
         # can spell a writing route in a way the literal prefix misses.
         for spelling in ("/shop/%63heckout", "/shop//checkout", "/shop/checkout%2F",
-                         "/shop/%70ayment/validate"):
+                         "/shop/%70ayment/validate",
+                         # A language segment, which Odoo strips before routing:
+                         # the ordinary spelling on a multilingual site.
+                         "/zh_TW/shop/checkout", "/fr/shop/cart", "/en/website/lang/fr"):
             with self.subTest(spelling):
                 self.assertIsNotNone(get_writing_route(spelling))
         # `//shop/checkout` never reaches here: `urlsplit` reads `//shop` as an

@@ -374,14 +374,17 @@ def session_database(reported: str | None) -> str:
 # (`/shop`) -- or renders without writing (`/shop/confirmation`, `/shop/print`,
 # `/shop/product/<id>`).
 #
-# The list is `website_sale`'s routes and no others. One write it therefore does
-# not bound is the `website` module's own visitor tracking: `website/models/
-# ir_http.py:203` creates or touches a `website.visitor` on any tracked page's
-# GET, whichever module serves it. That write predates `open` and is not a
-# checkout write -- every page `crawl` visits makes it too, so bounding it here
-# would refuse the read-only runs the parity plan is built on while leaving
-# `crawl` as it is. It belongs to whoever takes the read-only guarantee up as a
-# whole, not to this seam.
+# The list is `website_sale`'s routes and no others, and it is not the whole of
+# what Odoo writes on a GET. Two writes outside it, both read and both left
+# where they are: `website/models/ir_http.py:203` creates or touches a
+# `website.visitor` on any tracked page's GET, whichever module serves it, and
+# `sale/controllers/portal.py` writes on `/my/orders/<id>` -- `:270`
+# `_portal_ensure_token()` stores an `access_token` on an order still to be
+# paid, and `:168` posts a "Quotation viewed by customer" note. Neither is a
+# checkout write, and the first is made by every page `crawl` visits, so
+# bounding them at this seam would refuse the read-only runs the parity plan is
+# built on while leaving `crawl` as it is. They belong to whoever takes the
+# read-only guarantee up as a whole.
 GET_WRITING_ROUTES = {
     # controllers/main.py:796 unlinks the cart lines of archived products, and
     # :785-786 rewrites an abandoned cart's lines onto the session cart and
@@ -434,13 +437,21 @@ def get_writing_route(route: str) -> str | None:
     deliberately keeps percent-escapes and repeated slashes, because they can
     route differently; werkzeug unquotes before matching, so `/shop/%63heckout`
     reaches `/shop/checkout` and has to be refused with it. Both are undone
-    here, which can only ever refuse more than the literal spelling would.
+    here. So is the language segment: Odoo's frontend takes the first segment of
+    a path it cannot route as a language code and routes what is left
+    (`http_routing/models/ir_http.py:390-392` at the pinned Odoo), which makes
+    `/zh_TW/shop/checkout` the ordinary spelling of the checkout on a
+    multilingual site. Every one of those can only refuse more than the literal
+    spelling would, which is the safe direction for a guard.
     """
-    path = unquote(urlsplit(route).path)
-    path = re.sub(r"/{2,}", "/", path).rstrip("/") or "/"
-    for prefix in GET_WRITING_ROUTES:
-        if path == prefix or path.startswith(prefix + "/"):
-            return prefix
+    path = re.sub(r"/{2,}", "/", unquote(urlsplit(route).path))
+    head, _, rest = path.lstrip("/").partition("/")
+    candidates = [path] + (["/" + rest] if head and rest else [])
+    for candidate in candidates:
+        trimmed = candidate.rstrip("/") or "/"
+        for prefix in GET_WRITING_ROUTES:
+            if trimmed == prefix or trimmed.startswith(prefix + "/"):
+                return prefix
     return None
 
 
