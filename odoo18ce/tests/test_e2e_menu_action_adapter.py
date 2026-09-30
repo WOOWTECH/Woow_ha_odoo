@@ -8,7 +8,9 @@ import unittest
 
 from e2e_menu_action_adapter import (
     EVIDENCE_SCHEMA,
+    GET_WRITING_ROUTES,
     WRITE_DATABASE,
+    get_writing_route,
     is_configuration_error,
     session_database,
     Masker,
@@ -42,6 +44,7 @@ from e2e_menu_action_crawler import (
     Manifest,
     MenuRecord,
     NON_MUTATING_OPERATIONS,
+    Operation,
     Surface,
 )
 
@@ -484,8 +487,11 @@ class OpenTargetTests(unittest.TestCase):
         # is every member of that enum, so a WRITE member would be permitted by
         # the read-only policy instead of refused. ADR 0012 bounds it instead.
         self.assertEqual(WRITE_DATABASE, "odoo_parity")
-        reading = parse_targets(['{"module": "m", "target": "/shop/checkout", "expect_selector": "#x"}'])
-        writing = parse_targets(['{"module": "m", "target": "/shop/checkout", "expect_selector": "#x",'
+        # `/shop` is the listing page: it writes nothing but the session, so it
+        # is the reading half of this pair. A target that writes on GET is the
+        # subject of the next test, not of this one.
+        reading = parse_targets(['{"module": "m", "target": "/shop", "expect_selector": "#x"}'])
+        writing = parse_targets(['{"module": "m", "target": "/shop", "expect_selector": "#x",'
                                  ' "cart": "/shop/product/desk-1"}'])
         require_write_database(reading, "odoo_test")
         require_write_database(reading, None)
@@ -495,6 +501,49 @@ class OpenTargetTests(unittest.TestCase):
             # that cannot say where it would write may not write.
             with self.assertRaisesRegex(RuntimeError, "odoo_parity"):
                 require_write_database(writing, unknown)
+
+    def test_a_route_that_writes_on_a_get_is_held_to_the_same_database(self) -> None:
+        # `open` navigates with a plain GET, and Odoo's checkout writes while
+        # rendering one, so a target naming such a route writes with no `cart:`
+        # of its own. The bound is the cart's bound, and it is read off the
+        # target list before any page is opened.
+        checkout = parse_targets(['{"module": "m", "target": "/shop/checkout", "expect_selector": "#x"}'])
+        for unknown in ("odoo_test", None):
+            with self.assertRaisesRegex(RuntimeError, "/shop/checkout.*odoo_parity") as caught:
+                require_write_database(checkout, unknown)
+            self.assertTrue(is_configuration_error(caught.exception))
+        # On the bound the same file runs, cart or no cart.
+        require_write_database(checkout, WRITE_DATABASE)
+        with_cart = parse_targets(['{"module": "m", "target": "/shop/checkout", "expect_selector": "#x",'
+                                   ' "cart": "/shop/product/desk-1"}'])
+        require_write_database(with_cart, WRITE_DATABASE)
+
+    def test_every_get_writing_route_is_named_with_where_its_write_was_read(self) -> None:
+        # The list is the guard, so an entry with no citation is an entry nobody
+        # can check against upstream `website_sale`.
+        self.assertLessEqual({"/shop/checkout", "/shop/confirm_order", "/shop/address"},
+                             set(GET_WRITING_ROUTES))
+        for prefix, where in GET_WRITING_ROUTES.items():
+            with self.subTest(prefix):
+                self.assertTrue(prefix.startswith("/shop/") or prefix == "/shop/cart")
+                self.assertTrue(where)
+
+    def test_a_get_writing_route_is_matched_by_prefix_on_a_segment_boundary(self) -> None:
+        # `/shop/payment/validate` is under `/shop/payment` and writes more than
+        # it does; a route that only shares its characters is a different route.
+        self.assertEqual(get_writing_route("/shop/payment/validate"), "/shop/payment")
+        self.assertEqual(get_writing_route("/shop/change_pricelist/3"), "/shop/change_pricelist")
+        self.assertEqual(get_writing_route("/shop/checkout/"), "/shop/checkout")
+        for reading in ("/shop", "/shop/cartons", "/shop/checkouts", "/my/orders/7",
+                        "/odoo/action-project_todo.project_task_action_todo"):
+            with self.subTest(reading):
+                self.assertIsNone(get_writing_route(reading))
+
+    def test_the_get_writing_guard_did_not_move_into_the_operation_enum(self) -> None:
+        # The enum only ever names reads: NON_MUTATING_OPERATIONS is every
+        # member of it, so a WRITE member would be permitted rather than
+        # refused. The guard stays at the target seam for that reason.
+        self.assertEqual(NON_MUTATING_OPERATIONS, frozenset(Operation))
 
 
 TODO_TARGET = OpenTarget(module="project_todo", target="project_todo.project_task_action_todo",

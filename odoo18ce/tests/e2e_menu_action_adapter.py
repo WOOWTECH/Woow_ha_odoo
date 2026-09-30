@@ -21,6 +21,12 @@ outside the crawler's `OperationPolicy` on purpose -- see `ensure_cart` -- and
 `require_write_database`
 keeps it on the one database ADR 0012 allows it on.
 
+Navigating writes too where Odoo writes on a plain GET: the checkout routes
+edit the draft order while rendering it. `GET_WRITING_ROUTES` names those
+routes and `require_write_database` holds them to the same database, so a
+target reaches one only on a run allowed to write -- whether or not it declared
+a cart.
+
 Credentials come from the environment only:
 
   ODOO_TEST_LOGIN, ODOO_TEST_PASSWORD   both surfaces
@@ -218,7 +224,9 @@ class OpenTarget:
     are the `open` form of the crawler's U-C12 check: without them a fallback
     screen that loads cleanly on both surfaces would read as `PARITY`.
     `cart` names a product page to add to the cart before opening the target;
-    it is the only field that writes.
+    it is the only field that writes. The `target` itself can write as well,
+    when it names a route Odoo writes on while rendering a GET -- see
+    `GET_WRITING_ROUTES`.
     """
 
     module: str
@@ -342,16 +350,100 @@ def session_database(reported: str | None) -> str:
     return reported
 
 
+# Routes that write while rendering a plain GET, and where that write was read.
+#
+# `open` navigates a target with `page.goto`, which is a GET and nothing more,
+# so a route that writes on GET mutates the run's database whether or not the
+# target declared a `cart:`. Both older guards key on that declaration --
+# `ensure_cart` refuses the explicit write, `require_write_database` refuses a
+# target file that asks for one -- so a target naming such a route sailed past
+# both. The target list is the seam: the route is known before the first page
+# is opened, and the enum cannot help (`NON_MUTATING_OPERATIONS` is every
+# member of `Operation`, so nothing named there is ever refused).
+#
+# A key is a route prefix: it bounds the route itself and everything under it,
+# so `/shop/payment` also covers `/shop/payment/validate`. The value cites the
+# write in upstream `website_sale` at the pinned Odoo -- 18.0.20260930, the
+# `ODOO_DEB_VERSION` of odoo18ce/Dockerfile -- read from that `.deb` under
+# `usr/lib/python3/dist-packages/odoo/addons/website_sale/`. The audit covers
+# every `type='http'` route of that module a GET can reach: one not listed here
+# either declares `methods=['POST']`, is `readonly=True`, or was read and only
+# touches `request.session`, which is not the database (`/shop`) -- or renders
+# without writing (`/shop/confirmation`, `/shop/print`, `/shop/product/<id>`).
+GET_WRITING_ROUTES = {
+    # controllers/main.py:796 unlinks the cart lines of archived products, and
+    # :785-786 rewrites an abandoned cart's lines onto the session cart and
+    # cancels it when `?access_token=` revives one.
+    "/shop/cart": "unlinks the cart lines of archived products",
+    # controllers/main.py:1056 persists a delivery method and its price on the
+    # draft order (`_set_delivery_method`); :1039 runs `_check_cart`, which at
+    # :2073-2076 stores a `shop_warning` on the order and its zero-priced
+    # lines. `sale_get_order` itself writes too: models/website.py:457 moves
+    # the order onto the logged-in partner when the two disagree.
+    "/shop/checkout": "persists a delivery method on the draft sale.order",
+    # controllers/main.py:1133 runs the same `_check_cart` before rendering the
+    # address form, so the `shop_warning` writes at :2073-2076 apply here too.
+    "/shop/address": "stores a shop_warning on the cart through _check_cart",
+    # controllers/main.py:1797-1802 recomputes the order's taxes and prices and
+    # re-applies its delivery method, all on the draft order.
+    "/shop/confirm_order": "recomputes the draft order's taxes, prices and delivery method",
+    # controllers/main.py:1820 runs `_check_cart` before rendering the extra
+    # step, so the `shop_warning` writes at :2073-2076 apply.
+    "/shop/extra_info": "stores a shop_warning on the cart through _check_cart",
+    # controllers/main.py:1931 runs `_check_cart_and_addresses`, so the
+    # `shop_warning` writes at :2073-2076 apply. Under the same prefix,
+    # `/shop/payment/validate` is heavier still: :1978-1979 confirms the draft
+    # order (`_validate_order`), which is not a draft edit but a sale.
+    "/shop/payment": "stores a shop_warning on the cart, and /shop/payment/validate confirms the order",
+    # controllers/main.py:737 and :747 set the cart's pricelist and recompute
+    # its prices (`_cart_update_pricelist`, `_recompute_prices`).
+    "/shop/pricelist": "sets the cart's pricelist and recomputes its prices",
+    # controllers/main.py:721 sets the cart's pricelist for the pricelist the
+    # route names (`_cart_update_pricelist`).
+    "/shop/change_pricelist": "sets the cart's pricelist and recomputes its prices",
+}
+
+
+def get_writing_route(route: str) -> str | None:
+    """The `GET_WRITING_ROUTES` prefix `route` falls under, or None.
+
+    A prefix matches the route itself and anything below it, on a path segment
+    boundary: `/shop/payment/validate` is under `/shop/payment`, and a route
+    that merely starts with the same characters (`/shop/cartons`) is not. The
+    query is ignored -- it cannot make a writing route a reading one.
+    """
+    path = urlsplit(route).path.rstrip("/") or "/"
+    for prefix in GET_WRITING_ROUTES:
+        if path == prefix or path.startswith(prefix + "/"):
+            return prefix
+    return None
+
+
 def require_write_database(targets: Iterable[OpenTarget], database: str | None) -> None:
-    """A cart target writes, so ADR 0012 allows it on one database only.
+    """A target that writes -- a cart, or a route that writes on GET -- is bounded.
+
+    ADR 0012 allows the write on one database only, and a target writes two
+    ways: it declares a `cart:`, or it names a route Odoo writes on while
+    rendering a plain GET. Both are refused here, before the first screen is
+    opened, so a misaimed run is a configuration error and not a mutated
+    database.
 
     `database` is what the session reported it is on. `None` -- it reported
     nothing -- refuses the write like any other wrong answer: a run that cannot
     say where it would write may not write.
     """
-    if any(target.cart for target in targets) and database != WRITE_DATABASE:
+    if database == WRITE_DATABASE:
+        return
+    if any(target.cart for target in targets):
         raise RuntimeError("crawler configuration: a target fills a cart, which writes; "
                            "the session's database is %r, not %s" % (database, WRITE_DATABASE))
+    for target in targets:
+        prefix = get_writing_route(target.route)
+        if prefix is not None:
+            raise RuntimeError("crawler configuration: target %s writes on a plain GET -- %s %s; "
+                               "that write is allowed on %s only, and the session's database is %r"
+                               % (target.target, prefix, GET_WRITING_ROUTES[prefix],
+                                  WRITE_DATABASE, database))
 
 
 # --- Home Assistant websocket messages -----------------------------------
