@@ -157,9 +157,130 @@ http {
         default 'try{Object.defineProperty(window,"__WOOW_INGRESS_URL__",{value:path,writable:false,configurable:false,enumerable:true})}catch(e){window.__WOOW_INGRESS_URL__=path}';
     }
 
+    # The markup helpers the shim publishes (issue #210). Two string
+    # functions, not a hook: ADR 0004 leaves markup insertion uncovered
+    # because the HTML editor loads *and saves* record content through it, so
+    # a shim hook on `innerHTML` would write the token-bearing Ingress prefix
+    # into the database. The onboarding to-do's description is exactly that
+    # case -- `project_todo` copies `todo_user_onboarding` into
+    # `project.task.description`, `<img src="/project_todo/static/img/...">`
+    # and all, and under Ingress the two pictures were fetched from the Home
+    # Assistant root and answered 404. The route the value arrives on is
+    # `/web/dataset/call_kw`, which is the one response ADR 0004 refuses to
+    # rewrite, so the prefix goes on where the markup is *rendered* and comes
+    # off again on every value the field hands back.
+    #
+    # `__WOOW_INGRESS_MARKUP_IN__(html)` prefixes URL attributes in a markup
+    # string through the shim's own `path()` -- one URL helper, so `blob:`,
+    # `data:`, `#`, cross-origin, protocol-relative, a value that is already
+    # prefixed and a non-string all behave as they do everywhere else.
+    #
+    # It matches in two steps, and both of them are about *not* matching the
+    # wrong thing. `mT` selects a **start tag** (`<`, a letter, then no `<`
+    # or `>`), so an attribute-shaped run of text -- an escaped code sample,
+    # prose, an end tag -- is not a candidate, which a single attribute regex
+    # over the whole string could not promise. Then `mA` walks that tag
+    # *attribute by attribute*, and only a name in `mU` with a quoted value
+    # beginning `/` is handed to `path()`.
+    #
+    # Walking rather than searching is what keeps an earlier attribute's
+    # contents out of it: in `<img alt='a" src="/x' src="/y">` the `alt` value
+    # is consumed as one token, so the `src=` inside it is never seen and the
+    # real `src` is still the one prefixed. A pattern that searched for
+    # `src="` would open its value at the wrong quote and restructure the tag
+    # -- losing the real `src` -- and the strip cannot undo that, because it
+    # only removes a prefix.
+    #
+    # Which is why the walk **consumes more than it prefixes**, and that is
+    # the rule rather than the list: any attribute it cannot tokenise is an
+    # attribute whose value it then searches inside, which is the same defect
+    # again. So the name is anything but whitespace, `=`, `/`, `<`, `>` or a
+    # quote -- the HTML attribute-name shape, not the four names; the
+    # whitespace around the `=` is taken and put back unchanged; an
+    # **unquoted** value is consumed as a token too, even though nothing
+    # unquoted is ever prefixed (there is no delimiter to put back); and an
+    # attribute may begin at a **quote** as well as at whitespace, because
+    # `<a href="/x"title="y">` is legal and minified HTML writes it. That
+    # last one is why the quoted value ends on a *lookahead*: the closing
+    # quote stays in the string rather than being consumed, so it is there to
+    # be the next attribute's opener, and the replacement re-emits only up to
+    # the value. Five review rounds each found this defect through a
+    # different spelling -- a `:` in the name, a `.` or `_`, `alt = '...'`,
+    # `alt= href='...'`, and no separator at all.
+    #
+    # Two shapes stay outside the pair and both fail safely -- the URL keeps
+    # escaping rather than being corrupted. A start tag holding a `>` inside
+    # an attribute value is not recognised as a tag at all. And an unquoted
+    # value that is itself a URL is not prefixed. What *is* reached and is
+    # not really an attribute is markup nested inside another attribute's
+    # value, a start tag written inside a comment, and a `src="..."` inside
+    # somebody's unquoted value (`alt=a"src="/x"`, where a browser reads one
+    # `alt` and no `src`): all three are prefixed, and the strip undoes that
+    # on the way to the record.
+    #
+    # Only the four attributes whose whole value is one URL are prefixed:
+    # `src`, `href`, `action`, `data-src`. `srcset` is a candidate list
+    # needing a parse and belongs to #166 with every other attribute rule,
+    # and `style` backgrounds inside record HTML stay as they are (#194
+    # covers page HTML). The value runs to the *matching* quote -- the class
+    # excludes whichever quote opened it and not both, so a `'` in a
+    # double-quoted `src` (`Mary's photo.png`) is part of the URL and not the
+    # end of it. The name test is case-insensitive, because `mT` accepts an
+    # uppercase tag name and `<IMG SRC="...">` is legal HTML somebody can
+    # paste into the code view, and it is an *exact* name, so
+    # `data-original-src` is not a `data-src`. The name the *walk* consumes is
+    # a different and much wider thing, for the reason given above. It is a comma-delimited
+    # `indexOf` and not an anchored regex, because an anchored regex needs a
+    # `$` and nginx reads a `$` in a quoted parameter as a variable -- with
+    # `/i` after it, as an invalid one, which `nginx -t` refuses. The
+    # Static-tier test renders the whole template through a real nginx, which
+    # is how that was found rather than shipped.
+    #
+    # A value is a candidate only if its first byte is `/` and its second is
+    # neither `/` (47) nor a backslash (92). The leading `/` leaves a
+    # relative value alone, because prefixing it would *resolve* it and the
+    # resolved path is not what the record held. Excluding the second
+    # character leaves a protocol-relative reference alone, which is the
+    # limit every other prefix rule in this template has and #166 owns:
+    # without it `path()` would return a *same-host* `//host/x` as a prefixed
+    # root-relative path, and the strip would then store `/x` -- a silently
+    # rewritten link rather than an unfixed one. A cross-origin `//host/x`
+    # was never at risk; `path()` returns it as it came. The backslash is
+    # there because the URL parser treats `/\host/x` as `//host/x` for an
+    # http(s) base, so it is the same hazard spelled differently; it is
+    # tested by character code rather than as a literal, because nginx turns
+    # `\\` in a quoted parameter into one backslash and would leave the
+    # JavaScript with an unterminated string.
+    #
+    # `path()` normalises what it does prefix the way the browser resolves a
+    # URL, so a value already in normal form round-trips byte for byte and
+    # one that is not (a literal space, a non-ASCII filename, a `..`
+    # segment) comes back percent-encoded or collapsed -- the same address,
+    # different bytes, and the Static-tier test pins each shape.
+    #
+    # `__WOOW_INGRESS_MARKUP_OUT__(value)` removes **every** occurrence of the
+    # prefix from a string. It is deliberately wider than `IN` rather than its
+    # mirror, because that is what makes the record safe whatever `IN`
+    # reached, and because the shim's own wrappers put the prefix on
+    # attributes `IN` never touches (`xlink:href` through `setAttribute`,
+    # `srcset` through the property setter) and on an image
+    # `savePendingImages` re-points after the editor has handed its content
+    # over. Removing the prefix is always the right answer for a value on its
+    # way to storage: the prefix carries the Supervisor token, so an
+    # occurrence of it in a record is the harm and not content worth keeping
+    # -- including one a user typed, which the test says out loud.
+    #
+    # Read-only and non-configurable like `__WOOW_INGRESS_URL__`, published
+    # only when the Ingress prefix is non-empty because the IIFE returns
+    # before this line otherwise, and every rewritten expression falls back to
+    # the untouched value when the globals are absent.
+    map $upstream_http_content_type $ingress_markup_global_shim {
+        default 'var mT=/<[A-Za-z][^<>]*>/g,mA=/(^|\s|[\x22\x27])([^\s=\/<>\x22\x27]+)(\s*=\s*)(?:([\x22\x27])((?:(?!\4)[^<>])*)(?=\4)|[^\s<>\x22\x27]+)/g,mU=function(n){return ",src,href,action,data-src,".indexOf(","+n.toLowerCase()+",")>=0},mF=function(m,s,n,e,q,v){return q&&mU(n)&&v.charAt(0)==="/"&&v.charCodeAt(1)!==47&&v.charCodeAt(1)!==92?s+n+e+q+path(v):m},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mA,mF)}):h},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
+    }
+
     map $upstream_http_content_type $ingress_runtime_shim {
         default "";
-        "~*^text/html(?:;|$)" '$ingress_clipboard_shim$ingress_canonical_url_shim<script>window.__INGRESS_PATH__="$safe_ingress_path";(function(){var P=window.__INGRESS_PATH__||"";if(!P)return;var path=function(u){if(typeof u!=="string")return u;if(u.charAt(0)==="#")return u;try{var x=new URL(u,location.href);if(x.origin===location.origin){var q=x.pathname+x.search+x.hash;while(q.indexOf(P+P)===0)q=q.slice(P.length);if(q.indexOf(P)===0)return q;if(q.charAt(0)==="/")return P+q}}catch(e){}return u};var F=window.fetch;window.fetch=function(i,o){if(typeof i==="string")i=path(i);else if(i instanceof URL)i=path(i.href);else if(i&&i.url){var u=path(i.url);if(u!==i.url)i=new Request(u,i)}return F(i,o)};var X=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){arguments[1]=path(u);return X.apply(this,arguments)};var H=function(fn){return function(s,t,u){if(typeof u==="string")arguments[2]=path(u);else if(u instanceof URL)arguments[2]=path(u.href);return fn.apply(this,arguments)}};var HP=History.prototype.pushState,HR=History.prototype.replaceState;History.prototype.pushState=H(HP);History.prototype.replaceState=H(HR);var A=Element.prototype.setAttribute;Element.prototype.setAttribute=function(n,v){if((n==="href"||n==="src"||n==="action"||n==="xlink:href")&&typeof v==="string")v=path(v);return A.call(this,n,v)};var prop=function(proto,n){if(!proto)return;var d=Object.getOwnPropertyDescriptor(proto,n);if(!d||!d.set)return;Object.defineProperty(proto,n,{get:d.get,set:function(v){return d.set.call(this,path(v))},configurable:true})};prop(window.HTMLAnchorElement&&HTMLAnchorElement.prototype,"href");prop(window.HTMLLinkElement&&HTMLLinkElement.prototype,"href");prop(window.HTMLScriptElement&&HTMLScriptElement.prototype,"src");prop(window.HTMLImageElement&&HTMLImageElement.prototype,"src");prop(window.HTMLImageElement&&HTMLImageElement.prototype,"srcset");prop(window.HTMLFormElement&&HTMLFormElement.prototype,"action");var O=window.open;window.open=function(u){if(typeof u==="string")arguments[0]=path(u);return O.apply(this,arguments)};var WK=window.Worker;if(WK){window.Worker=function(u,o){return new WK(path(String(u)),o)};window.Worker.prototype=WK.prototype}var SW=window.SharedWorker;if(SW){window.SharedWorker=function(u,o){return new SW(path(String(u)),o)};window.SharedWorker.prototype=SW.prototype}var W=window.WebSocket;window.WebSocket=function(u,p){var s=String(u),h=location.host;if(s.indexOf("ws://"+h)===0||s.indexOf("wss://"+h)===0){var x=new URL(s);if(x.pathname.indexOf(P)!==0)x.pathname=P+x.pathname;s=x.toString()}return p===undefined?new W(s):new W(s,p)};window.WebSocket.prototype=W.prototype;window.WebSocket.CONNECTING=W.CONNECTING;window.WebSocket.OPEN=W.OPEN;window.WebSocket.CLOSING=W.CLOSING;window.WebSocket.CLOSED=W.CLOSED;try{if(navigator.serviceWorker){var C={addEventListener:function(){},removeEventListener:function(){},postMessage:function(){}};var K="woow-odoo-sw-clean-%%INGRESS_CACHE_VERSION%%";if(navigator.serviceWorker.getRegistrations)navigator.serviceWorker.getRegistrations().then(function(rs){var removed=false;return Promise.all(rs.map(function(r){var a=r.active||r.waiting||r.installing,s=a&&a.scriptURL||"";if(r.scope.indexOf("/odoo")!==-1||s.indexOf("/web/service-worker.js")!==-1)return r.unregister().then(function(ok){removed=removed||ok});return Promise.resolve()})).then(function(){if(removed&&!sessionStorage.getItem(K)){sessionStorage.setItem(K,"1");location.reload()}})});try{Object.defineProperty(navigator.serviceWorker,"controller",{get:function(){return C},configurable:true})}catch(e){};navigator.serviceWorker.register=function(){return Promise.resolve({scope:P+"/",installing:null,waiting:null,active:C,update:function(){return Promise.resolve()},unregister:function(){return Promise.resolve(true)},addEventListener:function(){},removeEventListener:function(){}})}}}catch(e){}$ingress_injection_hooks_shim$ingress_url_global_shim})()</script>';
+        "~*^text/html(?:;|$)" '$ingress_clipboard_shim$ingress_canonical_url_shim<script>window.__INGRESS_PATH__="$safe_ingress_path";(function(){var P=window.__INGRESS_PATH__||"";if(!P)return;var path=function(u){if(typeof u!=="string")return u;if(u.charAt(0)==="#")return u;try{var x=new URL(u,location.href);if(x.origin===location.origin){var q=x.pathname+x.search+x.hash;while(q.indexOf(P+P)===0)q=q.slice(P.length);if(q.indexOf(P)===0)return q;if(q.charAt(0)==="/")return P+q}}catch(e){}return u};var F=window.fetch;window.fetch=function(i,o){if(typeof i==="string")i=path(i);else if(i instanceof URL)i=path(i.href);else if(i&&i.url){var u=path(i.url);if(u!==i.url)i=new Request(u,i)}return F(i,o)};var X=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){arguments[1]=path(u);return X.apply(this,arguments)};var H=function(fn){return function(s,t,u){if(typeof u==="string")arguments[2]=path(u);else if(u instanceof URL)arguments[2]=path(u.href);return fn.apply(this,arguments)}};var HP=History.prototype.pushState,HR=History.prototype.replaceState;History.prototype.pushState=H(HP);History.prototype.replaceState=H(HR);var A=Element.prototype.setAttribute;Element.prototype.setAttribute=function(n,v){if((n==="href"||n==="src"||n==="action"||n==="xlink:href")&&typeof v==="string")v=path(v);return A.call(this,n,v)};var prop=function(proto,n){if(!proto)return;var d=Object.getOwnPropertyDescriptor(proto,n);if(!d||!d.set)return;Object.defineProperty(proto,n,{get:d.get,set:function(v){return d.set.call(this,path(v))},configurable:true})};prop(window.HTMLAnchorElement&&HTMLAnchorElement.prototype,"href");prop(window.HTMLLinkElement&&HTMLLinkElement.prototype,"href");prop(window.HTMLScriptElement&&HTMLScriptElement.prototype,"src");prop(window.HTMLImageElement&&HTMLImageElement.prototype,"src");prop(window.HTMLImageElement&&HTMLImageElement.prototype,"srcset");prop(window.HTMLFormElement&&HTMLFormElement.prototype,"action");var O=window.open;window.open=function(u){if(typeof u==="string")arguments[0]=path(u);return O.apply(this,arguments)};var WK=window.Worker;if(WK){window.Worker=function(u,o){return new WK(path(String(u)),o)};window.Worker.prototype=WK.prototype}var SW=window.SharedWorker;if(SW){window.SharedWorker=function(u,o){return new SW(path(String(u)),o)};window.SharedWorker.prototype=SW.prototype}var W=window.WebSocket;window.WebSocket=function(u,p){var s=String(u),h=location.host;if(s.indexOf("ws://"+h)===0||s.indexOf("wss://"+h)===0){var x=new URL(s);if(x.pathname.indexOf(P)!==0)x.pathname=P+x.pathname;s=x.toString()}return p===undefined?new W(s):new W(s,p)};window.WebSocket.prototype=W.prototype;window.WebSocket.CONNECTING=W.CONNECTING;window.WebSocket.OPEN=W.OPEN;window.WebSocket.CLOSING=W.CLOSING;window.WebSocket.CLOSED=W.CLOSED;try{if(navigator.serviceWorker){var C={addEventListener:function(){},removeEventListener:function(){},postMessage:function(){}};var K="woow-odoo-sw-clean-%%INGRESS_CACHE_VERSION%%";if(navigator.serviceWorker.getRegistrations)navigator.serviceWorker.getRegistrations().then(function(rs){var removed=false;return Promise.all(rs.map(function(r){var a=r.active||r.waiting||r.installing,s=a&&a.scriptURL||"";if(r.scope.indexOf("/odoo")!==-1||s.indexOf("/web/service-worker.js")!==-1)return r.unregister().then(function(ok){removed=removed||ok});return Promise.resolve()})).then(function(){if(removed&&!sessionStorage.getItem(K)){sessionStorage.setItem(K,"1");location.reload()}})});try{Object.defineProperty(navigator.serviceWorker,"controller",{get:function(){return C},configurable:true})}catch(e){};navigator.serviceWorker.register=function(){return Promise.resolve({scope:P+"/",installing:null,waiting:null,active:C,update:function(){return Promise.resolve()},unregister:function(){return Promise.resolve(true)},addEventListener:function(){},removeEventListener:function(){}})}}}catch(e){}$ingress_injection_hooks_shim$ingress_url_global_shim$ingress_markup_global_shim})()</script>';
     }
 
     # ---- Origin listener (8069): who is calling? ----
@@ -544,6 +665,103 @@ http {
             # `path()` never sees this value, because a style attribute is not
             # a way it wraps.
             sub_filter 'url({{snippet.thumbnailSrc}})' "url({{(snippet.thumbnailSrc+'').indexOf('/')===0?'$safe_ingress_path'+snippet.thumbnailSrc:snippet.thumbnailSrc}})";
+            # The HTML editor's content, in and out (issue #210, the #163
+            # To-do form). The onboarding to-do's description is record HTML
+            # that carries `<img src="/project_todo/static/img/todo_access.png">`
+            # and one more like it; under Ingress the browser resolved both
+            # against the Home Assistant root and got 404 -- two Prefix
+            # escapes, two 4xx and two console errors on a screen that is
+            # clean on the Public origin.
+            #
+            # Markup insertion is the way ADR 0004 leaves uncovered on
+            # purpose, and the reason is this very field: the editor loads a
+            # value and saves the same value back, so a prefix put on at
+            # delivery is a prefix written into the database. The delivery
+            # route here is `/web/dataset/call_kw`, which ADR 0004's
+            # action-help postscript names as the response it will not
+            # rewrite. So this pair follows the rule the snippet-thumbnail
+            # postscript states instead -- rewrite where the URL is
+            # *rendered*, and leave the delivered value alone -- and adds the
+            # half that rule did not need there: because this value comes
+            # back through the same component, the prefix is taken off again
+            # on every value the field stores.
+            #
+            # **In: `Editor.attachTo`**, where the value becomes DOM. The
+            # prefix has to be on the string *before* the assignment, because
+            # the browser starts fetching an `<img>` the moment the markup is
+            # parsed -- a fix-up afterwards would still cost the 404, and a
+            # fix-up on the clone the editor saves would cost it again on
+            # every save, because a detached `<img>` loads too.
+            #
+            # **Out: `HtmlField.updateValue`**, which is the one place the
+            # field writes the record -- every path reaches it: the editor's
+            # content, the urgent `getContent()`, and the code view's
+            # textarea. Stripping the argument rather than the editable means
+            # the live editable keeps the prefix it renders with, `lastValue`
+            # is computed from the value that is actually stored, and an
+            # image `savePendingImages` re-points *after* `getElContent` has
+            # returned is covered as well -- it is not, if the strip happens
+            # inside the editor.
+            #
+            # **Out again: `_commitChanges`'s `comparisonValue`**, which is
+            # the other half of that. It is read off the same clone, so it
+            # keeps the prefix, while `lastValue` no longer has one; the
+            # urgent short-circuit that compares them would then never fire
+            # and the field would write twice on every urgent save. Both
+            # sides go through the strip, so the comparison Odoo wrote works
+            # as Odoo wrote it. Nothing else reads `comparisonValue`.
+            #
+            # **In again: the collaboration plugin's stale-document reset.**
+            # The To-do field carries `'collaborative': true`, and
+            # `resetFromServerAndResyncWithPeers()` reads the field over ORM
+            # and assigns it straight to `editable.innerHTML` -- a second
+            # render site, reached whenever the open document is behind the
+            # server's, and the two pictures would escape there exactly as
+            # they did before this fix. It is the same one-line assignment,
+            # so it takes the same helper.
+            #
+            # **And the path a rewritten `src` has to be undone for.**
+            # `/html_editor/get_image_info` is the route the image tools ask
+            # for an attachment behind an `<img>`, and the controller only
+            # looks up a record when the `src` it is given starts
+            # `/web/image`; anything else falls through to a URL search and
+            # the cropper reports "This image is an external image". The
+            # client builds that argument as `srcUrl.pathname`, which under
+            # Ingress now carries the prefix -- for an image the media dialog
+            # inserted it already did, because the shim's `setAttribute`
+            # wrapper prefixes `src`. Handing it through the same strip
+            # restores the root-relative path the route expects, on both the
+            # backend and the frontend editor, and it is a no-op on a value
+            # that has no prefix.
+            #
+            # All five patterns were measured on 2026-09-30 across every
+            # bundle the control group serves; `tests/fixtures/bundles/README.md`
+            # carries the counts and `tests/test_ingress_todo_description.py`
+            # pins them, the round trip and the shim's two globals.
+            #
+            # What this does not close, said rather than left implicit, and
+            # ADR 0004's postscript is the list this one summarises: the code
+            # view's `editable.innerHTML=this.value` on toggling back (the
+            # `codeview` option, which the To-do field does not set); a
+            # collaborative peer's own snapshot -- the *server* reset above is
+            # covered, a snapshot applied from a peer over WebRTC carries
+            # whatever that peer's editable held, including that peer's
+            # prefix, which is the one open item that is a token write and
+            # not only a render escape; the media dialog's two preselection
+            # comparisons, `ImageSelector.isInitialMedia` on `src` and
+            # `DocumentSelector.fetchAttachments` on `href`; an unquoted
+            # attribute value, which has no closing delimiter to anchor on;
+            # the readonly `HtmlViewer`, which reaches markup twice over --
+            # `t-out` on the plain path, `iframeTarget.innerHTML` on the
+            # full-HTML one; and the legacy `web_editor` editor behind
+            # `html_legacy` and `mass_mailing_html`, which carries none of
+            # these expressions.
+            # Each escapes rather than corrupts, and each is its own issue.
+            sub_filter 'editable.innerHTML=fixInvalidHTML(this.config.content)' 'editable.innerHTML=(window.__WOOW_INGRESS_MARKUP_IN__||function(h){return h})(fixInvalidHTML(this.config.content))';
+            sub_filter 'async updateValue(value,{changeId}={changeId:this.lastChangeId}){this.lastValue=normalizeHTML(value,this.clearElementToCompare.bind(this));' 'async updateValue(value,{changeId}={changeId:this.lastChangeId}){value=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(value);this.lastValue=normalizeHTML(value,this.clearElementToCompare.bind(this));';
+            sub_filter 'const relativeSrc=srcUrl.pathname;' 'const relativeSrc=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(srcUrl.pathname);';
+            sub_filter 'if(content){this.editable.innerHTML=content;}' 'if(content){this.editable.innerHTML=(window.__WOOW_INGRESS_MARKUP_IN__||function(h){return h})(content);}';
+            sub_filter 'const comparisonValue=el.innerHTML;' 'const comparisonValue=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(el.innerHTML);';
             # Generated rewrites (ADR 0005). The add-on writes this file from
             # its own Rewrite scan; the config-rendering init step creates it
             # empty so a fresh install starts. It holds prefix rules only, and

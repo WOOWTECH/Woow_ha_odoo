@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Under Ingress, the **To-do** form's description now shows its two
+  pictures instead of two broken images. The onboarding to-do Odoo creates
+  for every user carries
+  `<img src="/project_todo/static/img/todo_access.png">` and one more like
+  it inside `project.task.description`, the browser resolved both against
+  the Home Assistant root, and Home Assistant answered 404 --
+  `route_escape=2`, `http_4xx_5xx=2` and `console_error=2` on a screen that
+  is clean on the Public origin (a Prefix escape, root cause `RC-1`). Those
+  URLs are record content in the database, not a bundle asset, and the HTML
+  editor inserts them as markup -- the one path the Runtime shim leaves
+  alone on purpose, because the editor saves the same value back and a hook
+  there would write the token-bearing Ingress prefix into the record. So
+  the shim now publishes two markup helpers,
+  `__WOOW_INGRESS_MARKUP_IN__` and `__WOOW_INGRESS_MARKUP_OUT__` (string
+  functions, read-only, Ingress-only, prefixing through the same `path()`
+  the `fetch`, XHR and attribute wrappers already use), and five rewrites
+  on the Ingress listener's asset location call them: the prefix goes on at
+  both places the editor renders a stored value -- when the field opens, and
+  when the collaboration plugin resets a stale document from the server --
+  comes off again on every value the field writes to the record and on the
+  clone the urgent save compares against it, and comes off the `src` the
+  image tools send to `/html_editor/get_image_info`, which only recognises
+  an attachment from a path beginning `/web/image`. The prefix goes only on URL
+  attributes inside a start tag, so prose and escaped code samples keep
+  their bytes, and it comes off every occurrence in the stored string, so
+  neither the editor nor a pasted image can put an Ingress URL -- token and
+  all -- into a record. The value that reaches the database is the value
+  the Public origin would have saved, so a to-do edited under Ingress still
+  shows its pictures on both surfaces. Two consequences worth knowing: a
+  URL in record HTML that was not already in normal form comes back
+  percent-encoded or with a `..` segment collapsed the first time it is
+  edited under Ingress (the same address, different bytes), and text that
+  looks like an Ingress prefix is removed when the field is saved, because
+  that prefix carries the Supervisor token. The same round trip covers
+  every field the Odoo 18 HTML editor drives in the backend web client; the
+  legacy `web_editor` editor behind `html_legacy` and `mass_mailing_html`
+  carries none of these expressions and is unchanged, as is the readonly
+  preview of an html field. The Public origin gets neither the shim nor the
+  rules. No version bump. Issue #210, parent #148.
+
 ## 0.4.8 — 2026-09-30
 
 ### Fixed
