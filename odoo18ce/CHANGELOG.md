@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- Odoo nightly package 18.0.20260914 -> 18.0.20260930.
+
 ## 0.4.6 — 2026-09-30
 
 ### Changed
