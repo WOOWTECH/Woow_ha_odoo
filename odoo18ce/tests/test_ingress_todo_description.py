@@ -375,6 +375,13 @@ assert.equal(
 );
 // Single-quoted attributes are the same attributes.
 assert.equal(markupIn("<img src='" + PICTURE + "'/>"), "<img src='" + P + PICTURE + "'/>");
+// An uppercase tag and attribute is legal HTML and somebody can paste it into
+// the code view; an unquoted value has no closing delimiter to anchor on and
+// is not covered, so it keeps escaping rather than being corrupted.
+assert.equal(markupIn('<IMG SRC="' + PICTURE + '">'), '<IMG SRC="' + P + PICTURE + '">');
+assert.equal(markupIn('<img Data-Src="' + PICTURE + '"/>'),
+  '<img Data-Src="' + P + PICTURE + '"/>');
+assert.equal(markupIn('<img src=' + PICTURE + '>'), '<img src=' + PICTURE + '>');
 // The value runs to the *matching* quote, so the other one is part of the URL
 // -- an attachment called "Mary's photo.png" is a real filename.
 assert.equal(

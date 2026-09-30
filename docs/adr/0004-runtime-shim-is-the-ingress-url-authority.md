@@ -530,6 +530,12 @@ there. The value runs to the *matching* quote -- the class excludes whichever
 quote opened it, not both -- so a `'` inside a double-quoted `src` is part of
 the URL, which an attachment called `Mary's photo.png` needs it to be.
 
+The pattern is case-insensitive, because `<IMG SRC="...">` is legal HTML and
+the tag pattern already accepts it; an **unquoted** value (`src=/a.png`) is
+not covered, because there is no closing delimiter to anchor the match on, and
+it keeps escaping rather than being corrupted. Neither shape is what Odoo's
+HTML serialiser writes, so both arrive only by hand through the code view.
+
 The leading `/` leaves a relative value alone, because prefixing it would
 *resolve* it and the resolved path is not what the record held; an absolute
 same-origin URL is left alone for the same reason. Excluding `//` is a separate
@@ -574,12 +580,19 @@ collaboration transport on the test host (it needs two simultaneous Ingress
 sessions on one to-do), and a strip that removes a *foreign* prefix has to
 reason about what an Ingress prefix looks like, which today only nginx's
 `safe_ingress_path` map does. It belongs to its own issue with its own
-measurement. Also open: `ImageSelector.isInitialMedia`
-preselecting by comparing a prefixed `src` with `attachment.image_src`, already
-true before this change for any image the media dialog inserted under Ingress;
-the readonly `HtmlViewer`, which renders through `t-out` and is none of the
-five sites; and the legacy `web_editor` editor behind `html_legacy` and
-`mass_mailing_html`, which carries none of these expressions. None has been
+measurement. Also open: the media dialog's two preselection comparisons --
+`ImageSelector.isInitialMedia`, which compares a prefixed `src` with
+`attachment.image_src`, and `DocumentSelector.fetchAttachments`, which compares
+a prefixed `href` with `/web/content/<id>` -- so reopening the dialog on an
+existing image or document link does not highlight the attachment it came
+from. The first was already true before this change for anything the dialog
+itself inserted under Ingress, because the shim's `setAttribute` wrapper
+prefixes `src` and `href`; both are display state, and closing them means
+teaching those comparisons about the prefix the way the `get_image_info`
+argument was taught. Also open: the readonly `HtmlViewer`, which renders
+through `t-out` and is none of the five sites; and the legacy `web_editor`
+editor behind `html_legacy` and `mass_mailing_html`, which carries none of
+these expressions. None has been
 measured escaping -- except the peer snapshot, which is unmeasured rather than
 clean -- and each is its own issue.
 

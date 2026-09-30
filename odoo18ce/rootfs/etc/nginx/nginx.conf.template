@@ -194,7 +194,12 @@ http {
     # covers page HTML). The value runs to the *matching* quote -- the class
     # excludes whichever quote opened it and not both, so a `'` in a
     # double-quoted `src` (`Mary's photo.png`) is part of the URL and not the
-    # end of it.
+    # end of it. The pattern is case-insensitive, because `mT` accepts an
+    # uppercase tag name and `<IMG SRC="...">` is legal HTML somebody can
+    # paste into the code view; an **unquoted** value (`src=/a.png`), also
+    # legal and also never what Odoo's serialiser writes, is not covered --
+    # it keeps escaping rather than being corrupted, and covering it needs a
+    # second branch with no closing delimiter to anchor on.
     #
     # A value is a candidate only if its first byte is `/` and its second is
     # not. The leading `/` leaves a relative value alone, because prefixing
@@ -229,7 +234,7 @@ http {
     # before this line otherwise, and every rewritten expression falls back to
     # the untouched value when the globals are absent.
     map $upstream_http_content_type $ingress_markup_global_shim {
-        default 'var mT=/<[A-Za-z][^<>]*>/g,mR=/(\s(?:data-src|src|href|action)=)([\x22\x27])(\/(?!\/)(?:(?!\2)[^<>])*)\2/g,mF=function(m,a,q,v){return a+q+path(v)+q},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mR,mF)}):h},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
+        default 'var mT=/<[A-Za-z][^<>]*>/g,mR=/(\s(?:data-src|src|href|action)=)([\x22\x27])(\/(?!\/)(?:(?!\2)[^<>])*)\2/gi,mF=function(m,a,q,v){return a+q+path(v)+q},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mR,mF)}):h},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
     }
 
     map $upstream_http_content_type $ingress_runtime_shim {
