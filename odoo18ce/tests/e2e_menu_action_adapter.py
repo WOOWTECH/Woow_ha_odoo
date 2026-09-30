@@ -1409,14 +1409,23 @@ class SurfaceDriver:
             if before:
                 return {"model": "sale.order", "id": order, "items": before,
                         "how": "the cart already held %d item(s); nothing was added" % before}
-            clicks, filled_first = 0, False
+            clicks, filled_first, settled = 0, False, True
             for attempt in range(1, _CART_CLICK_ATTEMPTS + 1):
                 if self.ingress:
-                    # Up to nine minutes of waits live in this loop, against the
+                    # Minutes of waits live in this loop, against the
                     # Supervisor's fifteen-minute ingress window (U-B6): a
                     # session that lapses here makes every request after it read
-                    # as a product GAP.
-                    self.ingress.keep_alive()
+                    # as a product GAP. A refresh that fails is the harness
+                    # losing its session, so it is raised as one -- `open_screen`
+                    # swallows anything else into `cart not filled`, which would
+                    # file a dead websocket as a blocker GAP on a screen nobody
+                    # judged, and `_open` stops the run on the same fault.
+                    try:
+                        self.ingress.keep_alive()
+                    except Exception as error:  # noqa: BLE001 -- turned into the harness error it is
+                        raise RuntimeError("crawler configuration: the ingress session could not be refreshed "
+                                           "during the cart step (%s)"
+                                           % (str(error).splitlines() or [""])[0]) from None
                 if attempt > 1:
                     # The add may still have been in flight when the reading
                     # above called the cart empty, and clicking again would add
@@ -1469,6 +1478,7 @@ class SurfaceDriver:
                     raise RuntimeError("the cart page did not show its item count after adding %s in %d click(s)"
                                        % (self.masker.text(product_route), clicks))
                 if after and clicks > 1:
+                    settled = False
                     # More than one click means the record has to name the
                     # quantity the cart settled at. A reading taken while the
                     # second update was still committing names the smaller one;
@@ -1479,6 +1489,7 @@ class SurfaceDriver:
                         page.wait_for_timeout(_CART_SETTLE_MS)
                         again, again_order = self._cart(page)
                         if again == after:
+                            settled = True
                             break
                         if again is not None:
                             after, order = again, again_order
@@ -1513,6 +1524,12 @@ class SurfaceDriver:
                     if after > 1:
                         how += (", and the cart holds more than the one item the step meant to add"
                                 " -- a product that adds several, or a click that was not lost after all")
+                    if not settled:
+                        # Read as "this size is the last reading, not a settled
+                        # one": an update still committing lands after it, and
+                        # the other surface reading the larger cart is then a
+                        # difference in the evidence and not in the screens.
+                        how += "; the cart was still changing when the run left it"
             return {"model": "sale.order", "id": order, "items": after, "how": how}
         finally:
             page.close()

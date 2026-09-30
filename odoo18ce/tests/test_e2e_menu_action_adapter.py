@@ -856,6 +856,10 @@ class CartStepTests(unittest.TestCase):
         page = FakePage([0, 0, 0, 1, 2, 3])
         write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
         self.assertEqual(write["items"], 3)
+        # And it says so: a size nothing confirmed is the last reading taken,
+        # and the other surface reading a larger cart is a difference in the
+        # evidence rather than in the screens.
+        self.assertTrue(write["how"].endswith("; the cart was still changing when the run left it"), write["how"])
         # Six cart readings and no seventh: one before the step, one after each
         # click, the grace one before the second, and two confirming ones.
         self.assertEqual(page.log.count("goto:/shop/cart"), 6)
@@ -863,13 +867,29 @@ class CartStepTests(unittest.TestCase):
     def test_a_cart_kept_alive_that_will_not_refresh_still_gets_read(self) -> None:
         # The reading after a failed step is what keeps a cart the run filled in
         # `writes`; an ingress session that will not refresh must not cost it.
+        # The two calls the loop makes are let through, the third is the one
+        # `_cart_after_failure` makes and suppresses.
         target, = parse_targets([CART_TARGET])
         driver = cart_driver(FakeContext(FakePage([0, 0, 0, 0]), FakePage([1])))
         driver.ingress = mock.Mock()
-        driver.ingress.keep_alive.side_effect = RuntimeError("the websocket went away")
+        driver.ingress.keep_alive.side_effect = [None, None, RuntimeError("the websocket went away")]
         observation = driver.open_screen(target)
         self.assertEqual([write["items"] for write in observation.writes], [1])
         self.assertIn("cart not filled", observation.result)
+
+    def test_a_session_that_will_not_refresh_inside_the_loop_stops_the_run(self) -> None:
+        # Anything the cart step raises but a configuration error becomes
+        # `cart not filled` on the observation -- a blocker GAP on a screen
+        # nobody judged. A dead ingress session is the harness, and `_open`
+        # stops the run on the same fault, so this one stops it too.
+        target, = parse_targets([CART_TARGET])
+        driver = cart_driver(FakeContext(FakePage([0, 1])))
+        driver.ingress = mock.Mock()
+        driver.ingress.keep_alive.side_effect = RuntimeError("HA websocket gave no result for 5")
+        with self.assertRaises(RuntimeError) as caught:
+            driver.open_screen(target)
+        self.assertTrue(is_configuration_error(caught.exception))
+        self.assertIn("HA websocket gave no result for 5", str(caught.exception))
 
     def test_the_retry_is_bounded_and_the_step_gives_up_saying_how_often_it_tried(self) -> None:
         page = FakePage([0, 0, 0, 0])
