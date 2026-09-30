@@ -367,9 +367,19 @@ def session_database(reported: str | None) -> str:
 # `ODOO_DEB_VERSION` of odoo18ce/Dockerfile -- read from that `.deb` under
 # `usr/lib/python3/dist-packages/odoo/addons/website_sale/`. The audit covers
 # every `type='http'` route of that module a GET can reach: one not listed here
-# either declares `methods=['POST']`, is `readonly=True`, or was read and only
-# touches `request.session`, which is not the database (`/shop`) -- or renders
-# without writing (`/shop/confirmation`, `/shop/print`, `/shop/product/<id>`).
+# either declares `methods=['POST']`, is `readonly=True`, or its controller was
+# read and writes nothing but `request.session`, which is not the database
+# (`/shop`) -- or renders without writing (`/shop/confirmation`, `/shop/print`,
+# `/shop/product/<id>`).
+#
+# The list is `website_sale`'s routes and no others. One write it therefore does
+# not bound is the `website` module's own visitor tracking: `website/models/
+# ir_http.py:203` creates or touches a `website.visitor` on any tracked page's
+# GET, whichever module serves it. That write predates `open` and is not a
+# checkout write -- every page `crawl` visits makes it too, so bounding it here
+# would refuse the read-only runs the parity plan is built on while leaving
+# `crawl` as it is. It belongs to whoever takes the read-only guarantee up as a
+# whole, not to this seam.
 GET_WRITING_ROUTES = {
     # controllers/main.py:796 unlinks the cart lines of archived products, and
     # :785-786 rewrites an abandoned cart's lines onto the session cart and
@@ -434,6 +444,9 @@ def require_write_database(targets: Iterable[OpenTarget], database: str | None) 
     """
     if database == WRITE_DATABASE:
         return
+    # Read once: this walks the targets twice, and an `Iterable` may be a
+    # generator, which the first walk would leave empty for the second.
+    targets = tuple(targets)
     if any(target.cart for target in targets):
         raise RuntimeError("crawler configuration: a target fills a cart, which writes; "
                            "the session's database is %r, not %s" % (database, WRITE_DATABASE))

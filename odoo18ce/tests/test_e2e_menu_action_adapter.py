@@ -5,6 +5,7 @@ Nothing here opens a browser, a websocket or reads credentials.
 """
 import json
 import unittest
+from urllib.parse import urlsplit
 
 from e2e_menu_action_adapter import (
     EVIDENCE_SCHEMA,
@@ -487,9 +488,9 @@ class OpenTargetTests(unittest.TestCase):
         # is every member of that enum, so a WRITE member would be permitted by
         # the read-only policy instead of refused. ADR 0012 bounds it instead.
         self.assertEqual(WRITE_DATABASE, "odoo_parity")
-        # `/shop` is the listing page: it writes nothing but the session, so it
-        # is the reading half of this pair. A target that writes on GET is the
-        # subject of the next test, not of this one.
+        # `/shop` is the listing page: its controller writes nothing but the
+        # session, so it is the reading half of this pair. A target that writes
+        # on GET is the subject of the next test, not of this one.
         reading = parse_targets(['{"module": "m", "target": "/shop", "expect_selector": "#x"}'])
         writing = parse_targets(['{"module": "m", "target": "/shop", "expect_selector": "#x",'
                                  ' "cart": "/shop/product/desk-1"}'])
@@ -518,6 +519,14 @@ class OpenTargetTests(unittest.TestCase):
                                    ' "cart": "/shop/product/desk-1"}'])
         require_write_database(with_cart, WRITE_DATABASE)
 
+    def test_the_guard_reads_a_target_list_it_can_only_walk_once(self) -> None:
+        # The guard walks the targets twice -- once for a declared cart, once
+        # for a writing route -- and it takes an `Iterable`, so a generator
+        # would arrive empty at the second walk and permit the write.
+        checkout = parse_targets(['{"module": "m", "target": "/shop/checkout", "expect_selector": "#x"}'])
+        with self.assertRaisesRegex(RuntimeError, "/shop/checkout"):
+            require_write_database((target for target in checkout), "odoo_test")
+
     def test_every_get_writing_route_is_named_with_where_its_write_was_read(self) -> None:
         # The list is the guard, so an entry with no citation is an entry nobody
         # can check against upstream `website_sale`.
@@ -525,7 +534,11 @@ class OpenTargetTests(unittest.TestCase):
                              set(GET_WRITING_ROUTES))
         for prefix, where in GET_WRITING_ROUTES.items():
             with self.subTest(prefix):
-                self.assertTrue(prefix.startswith("/shop/") or prefix == "/shop/cart")
+                # A prefix is matched against a target's path, so it has to be
+                # one: no origin, no query, and no trailing slash, which
+                # `get_writing_route` strips off the path before comparing.
+                self.assertEqual(prefix, urlsplit(prefix).path.rstrip("/"))
+                self.assertTrue(prefix.startswith("/"))
                 self.assertTrue(where)
 
     def test_a_get_writing_route_is_matched_by_prefix_on_a_segment_boundary(self) -> None:
