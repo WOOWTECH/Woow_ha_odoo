@@ -18,6 +18,7 @@ from e2e_menu_action_adapter import (
     Masker,
     OpenTarget,
     RunInfo,
+    SurfaceDriver,
     SurfaceObservation,
     addon_info_command,
     auth_message,
@@ -632,6 +633,226 @@ class OpenTargetTests(unittest.TestCase):
         self.assertEqual(NON_MUTATING_OPERATIONS, frozenset(Operation))
 
 
+CART_TARGET = '{"module": "m", "target": "/shop/checkout", "expect_selector": "#x",' \
+              ' "cart": "/shop/product/desk-1"}'
+
+
+class FakeLocator:
+    """The add-to-cart button, as much of it as the cart step touches."""
+
+    def __init__(self, page, selector: str) -> None:
+        self.page = page
+        self.selector = selector
+
+    @property
+    def first(self) -> "FakeLocator":
+        return self
+
+    def wait_for(self, **kwargs) -> None:
+        self.page.log.append("wait:%s" % kwargs.get("state"))
+
+    def is_enabled(self) -> bool:
+        enabled = self.page.enabled.pop(0) if self.page.enabled else True
+        self.page.log.append("enabled?%s" % enabled)
+        return enabled
+
+    def click(self) -> None:
+        self.page.log.append("click")
+        self.page.clicks += 1
+
+
+class FakePage:
+    """A page that answers only what the cart step asks of it, no browser.
+
+    `carts` is what each `/shop/cart` reading reports, in order -- None for a
+    page that did not say -- and `order` is the `data-order-id` on the badge.
+    Every call lands in `log`, so a test can say what happened in what order.
+    """
+
+    def __init__(self, carts, *, order="7", enabled=(), grew=True) -> None:
+        self.carts = list(carts)
+        self.order = order
+        self.enabled = list(enabled)
+        self.grew = grew
+        self.log: list[str] = []
+        self.clicks = 0
+        self.closed = False
+
+    def goto(self, url: str, **kwargs) -> None:
+        self.log.append("goto:%s" % urlsplit(url).path)
+
+    def locator(self, selector: str) -> FakeLocator:
+        return FakeLocator(self, selector)
+
+    def evaluate(self, script: str, *args):
+        if "data-order-id" in script:
+            return self.order
+        count = self.carts.pop(0) if self.carts else None
+        self.log.append("cart:%s" % count)
+        return count
+
+    def wait_for_function(self, script: str, **kwargs) -> None:
+        self.log.append("grew?%s" % self.grew)
+        if not self.grew:
+            raise RuntimeError("Timeout 30000ms exceeded")
+
+    def wait_for_timeout(self, milliseconds: int) -> None:
+        self.log.append("slept")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeContext:
+    """Hands out the prepared pages in order; the cart step makes two at most."""
+
+    def __init__(self, *pages, fail_after: int | None = None) -> None:
+        self.pages = list(pages)
+        self.fail_after = fail_after
+        self.made = 0
+
+    def new_page(self) -> FakePage:
+        self.made += 1
+        if self.fail_after is not None and self.made > self.fail_after:
+            raise RuntimeError("Target page, context or browser has been closed")
+        return self.pages.pop(0)
+
+
+def cart_driver(context, *, database=WRITE_DATABASE) -> SurfaceDriver:
+    """A driver holding only what the cart step reads off `self`.
+
+    `__init__` wants a browser, a login and, on ingress, a live session; the
+    cart step wants the database the write is bounded to, a context to make
+    pages on, the base its URLs hang off and a masker for the route it names.
+    """
+    driver = SurfaceDriver.__new__(SurfaceDriver)
+    driver.surface = Surface.PUBLIC
+    driver.ingress = None
+    driver.database = database
+    driver.context = context
+    driver.base = "https://odoo.example"
+    driver.masker = Masker(bases={"<PUBLIC_BASE>": "https://odoo.example"}, ingress_prefix=None, secrets=())
+    return driver
+
+
+class CartStepTests(unittest.TestCase):
+    """`ensure_cart` and what a failed cart step leaves behind. No browser."""
+
+    def test_the_click_waits_for_a_button_that_is_attached_and_enabled(self) -> None:
+        # At domcontentloaded the button exists before its handler does, so the
+        # click waits for the element and for it to answer that it is enabled --
+        # all of "the page is live" Playwright can see -- and only then clicks.
+        page = FakePage([0, 1], enabled=(False, True))
+        write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual(page.log, [
+            "goto:/shop/cart", "cart:0",
+            "goto:/shop/product/desk-1", "wait:visible", "enabled?False", "slept", "enabled?True", "click",
+            "grew?True", "goto:/shop/cart", "cart:1",
+        ])
+        self.assertEqual(write, {"model": "sale.order", "id": "7", "items": 1,
+                                 "how": "added the product on /shop/product/desk-1 to the cart (0 -> 1 items)"})
+        self.assertTrue(page.closed)
+
+    def test_a_button_that_never_becomes_enabled_fails_the_step_not_the_click(self) -> None:
+        page = FakePage([0], enabled=(False, False))
+        with mock.patch("e2e_menu_action_adapter.time.monotonic", side_effect=(0.0, 31.0)):
+            with self.assertRaisesRegex(RuntimeError, "add-to-cart button on /shop/product/desk-1 never became enabled"):
+                cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual(page.clicks, 0)
+
+    def test_a_lost_click_is_clicked_once_more_and_the_record_says_it_was(self) -> None:
+        # The handler race no wait can see: the click landed on a dead element,
+        # so the cart reads empty. That is a flake, not a broken screen, and
+        # failing the run on it costs a whole two-surface judgement.
+        page = FakePage([0, 0, 2])
+        write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual(page.clicks, 2)
+        self.assertEqual((write["items"], write["id"]), (2, "7"))
+        self.assertEqual(write["how"], "added the product on /shop/product/desk-1 to the cart (0 -> 2 items)"
+                                       "; the first 1 click(s) left it empty")
+        # Two clicks means two passes over the product page, and no third.
+        self.assertEqual(page.log.count("goto:/shop/product/desk-1"), 2)
+
+    def test_the_retry_is_bounded_and_the_step_gives_up_saying_how_often_it_tried(self) -> None:
+        page = FakePage([0, 0, 0])
+        with self.assertRaisesRegex(RuntimeError, r"the cart is still empty after adding "
+                                                 r"/shop/product/desk-1 in 2 click\(s\)") as caught:
+            cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertFalse(is_configuration_error(caught.exception))
+        self.assertEqual(page.clicks, 2)
+        self.assertTrue(page.closed)
+
+    def test_a_cart_page_that_gives_no_count_is_not_a_cart_to_click_at_again(self) -> None:
+        # None is "the page did not say", which no further click answers.
+        page = FakePage([0, None])
+        with self.assertRaisesRegex(RuntimeError, "did not show its item count"):
+            cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual(page.clicks, 1)
+
+    def test_a_cart_that_already_holds_something_is_left_alone(self) -> None:
+        # Both surfaces judge the same cart, so the second run must not add to it.
+        page = FakePage([3])
+        write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual(page.clicks, 0)
+        self.assertEqual(write["items"], 3)
+        self.assertIn("nothing was added", write["how"])
+
+    def test_the_cart_write_is_still_refused_off_the_parity_database(self) -> None:
+        page = FakePage([0, 1])
+        driver = cart_driver(FakeContext(page), database="odoo_test")
+        with self.assertRaises(RuntimeError) as caught:
+            driver.ensure_cart("/shop/product/desk-1")
+        self.assertTrue(is_configuration_error(caught.exception))
+        self.assertEqual(page.clicks, 0)
+
+    def test_an_empty_cart_the_failed_step_created_is_still_a_write(self) -> None:
+        # Visiting the shop as the logged-in user creates the draft sale.order
+        # before anything is added to it. An empty cart that names its order is
+        # a row this run made, and ADR 0012 has every mutation accounted for.
+        target, = parse_targets([CART_TARGET])
+        filling, after = FakePage([0, 0, 0]), FakePage([0], order="7")
+        observation = cart_driver(FakeContext(filling, after)).open_screen(target)
+        self.assertFalse(observation.available)
+        self.assertIn("cart not filled", observation.result)
+        self.assertEqual(list(observation.writes), [
+            {"model": "sale.order", "id": "7", "items": 0, "how": "created empty by the failed cart step"},
+        ])
+
+    def test_a_cart_that_could_not_be_read_is_no_write_and_the_record_says_why(self) -> None:
+        target, = parse_targets([CART_TARGET])
+        unreadable = cart_driver(FakeContext(FakePage([0, 0, 0]), FakePage([None]))).open_screen(target)
+        self.assertEqual(list(unreadable.writes), [])
+        self.assertIn("did not show afterwards how many items", unreadable.result)
+        # A cart page that could not even be opened is the same answer, with the
+        # reason it gave: the failure that brought us here is still the headline.
+        gone = cart_driver(FakeContext(FakePage([0, 0, 0]), fail_after=1)).open_screen(target)
+        self.assertEqual(list(gone.writes), [])
+        self.assertIn("could not be read afterwards", gone.result)
+        self.assertIn("cart not filled", gone.result)
+
+    def test_an_empty_cart_naming_no_order_is_a_record_nobody_created(self) -> None:
+        # The badge carries "0" until the session has an order, and an absent
+        # attribute reads as None: a write row naming sale.order:0 would claim
+        # a record that does not exist.
+        target, = parse_targets([CART_TARGET])
+        for missing in (None, "0", ""):
+            observation = cart_driver(
+                FakeContext(FakePage([0, 0, 0]), FakePage([0], order=missing)),
+            ).open_screen(target)
+            self.assertEqual(list(observation.writes), [], msg=repr(missing))
+            self.assertIn("named no order", observation.result)
+
+    def test_a_cart_the_failed_step_did_fill_is_named_as_before(self) -> None:
+        target, = parse_targets([CART_TARGET])
+        # The click landed and something later in the step failed: the line is
+        # this run's and the other surface will reuse it.
+        observation = cart_driver(FakeContext(FakePage([0, 0, 0]), FakePage([1]))).open_screen(target)
+        self.assertEqual(list(observation.writes), [
+            {"model": "sale.order", "id": "7", "items": 1,
+             "how": "the cart holds 1 item(s) after the cart step failed"},
+        ])
+
+
 TODO_TARGET = OpenTarget(module="project_todo", target="project_todo.project_task_action_todo",
                          label="To-do kanban", expect_model="project.task")
 
@@ -702,6 +923,25 @@ class OpenEvidenceTests(unittest.TestCase):
         grew = judge((cart("2", "the cart already held 2 item(s)", items=2),))
         self.assertEqual((grew["verdict"], grew["severity"]), ("GAP", "blocker"))
         self.assertIn("ingress=sale.order:2 holding 2", grew["notes"])
+
+    def test_an_empty_cart_write_is_an_ordinary_write_row_to_diff(self) -> None:
+        # No new evidence format for `items: 0`: it joins and compares by the
+        # same "model:id holding n" reading as every other write row.
+        empty = {"model": "sale.order", "id": "7", "items": 0,
+                 "how": "created empty by the failed cart step"}
+        filled = dict(empty, items=1, how="added one")
+        judge = lambda left, right: diff_runs(
+            [evidence_record(RUN, Surface.PUBLIC, module="m", identity="open:route:/shop/payment",
+                             observation=observation(writes=left))],
+            [evidence_record(RUN, Surface.HA_INGRESS, module="m", identity="open:route:/shop/payment",
+                             observation=observation(writes=right))],
+        )[0]
+        self.assertEqual(judge((empty,), (empty,))["verdict"], "PARITY")
+        differ = judge((empty,), (filled,))
+        self.assertEqual((differ["verdict"], differ["severity"]), ("GAP", "blocker"))
+        self.assertIn("records written: public=sale.order:7 holding 0 ingress=sale.order:7 holding 1",
+                      differ["notes"])
+        self.assertIn("records written: public=sale.order:7 holding 0 ingress=none", judge((empty,), ())["notes"])
 
     def test_two_runs_of_different_databases_are_not_comparable(self) -> None:
         other = RunInfo(run_id=RUN.run_id, target=RUN.target, database="odoo_test")

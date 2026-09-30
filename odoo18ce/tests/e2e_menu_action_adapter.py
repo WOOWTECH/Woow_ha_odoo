@@ -791,8 +791,9 @@ class SurfaceObservation:
     url_violations: Sequence[Mapping[str, str]] = ()
     http_5xx: int = 0
     # The records an `open` target created to reach its screen -- the cart
-    # `ensure_cart` filled, and nothing else. Empty does not mean the run wrote
-    # nothing: a target on `GET_WRITING_ROUTES` writes while its screen renders,
+    # `ensure_cart` filled, or the one a failed cart step left empty, and
+    # nothing else. Empty does not mean the run wrote nothing: a target on
+    # `GET_WRITING_ROUTES` writes while its screen renders,
     # bounded to `WRITE_DATABASE` but not reported here, and so do the page's own
     # templates and JavaScript. Read it as "what the run set up", not as "what
     # the database got".
@@ -1159,6 +1160,13 @@ _CART_GREW_JS = """(before) => {
   const node = document.querySelector('.my_cart_quantity');
   return !!node && Number((node.textContent || '').trim()) > before;
 }"""
+# Every theme the parity plan covers renders one of these.
+_ADD_TO_CART = "#add_to_cart, a[data-action='add_to_cart'], button:has-text('Add to cart')"
+# How many times the add-to-cart button is clicked before the step gives up.
+# Two: one click, and one more for the handler race no wait can see. A third
+# would start guessing at a shop that is simply broken, and a broken shop is
+# evidence the run should record rather than keep clicking at.
+_CART_CLICK_ATTEMPTS = 2
 
 
 def is_configuration_error(error: BaseException) -> bool:
@@ -1314,12 +1322,15 @@ class SurfaceDriver:
                 # to hold, so the target is unavailable on this surface and the
                 # record says why. The click may have landed before whatever
                 # failed, so the cart is read once more: a line this run created
-                # is named even then, and the other surface will reuse it.
-                cart = self._cart_after_failure()
+                # is named even then, and the other surface will reuse it. An
+                # order the run created and never filled counts as one too, and
+                # when there is no record the `unread` half says why not.
+                cart, unread = self._cart_after_failure()
                 return SurfaceObservation(
                     available=False,
-                    result=self.masker.text("cart not filled (%s): %s"
-                                            % (classify_failure(error).value, (str(error).splitlines() or [""])[0])),
+                    result=self.masker.text("cart not filled (%s): %s%s"
+                                            % (classify_failure(error).value, (str(error).splitlines() or [""])[0],
+                                               "; " + unread if unread else "")),
                     signals={name: 0 for name in SIGNALS}, route=None, model=None, view=None,
                     writes=(cart,) if cart else (),
                 )
@@ -1372,33 +1383,68 @@ class SurfaceDriver:
             if before:
                 return {"model": "sale.order", "id": order, "items": before,
                         "how": "the cart already held %d item(s); nothing was added" % before}
-            page.goto(self.base + product_route, wait_until="domcontentloaded", timeout=60000)
-            page.locator("#add_to_cart, a[data-action='add_to_cart'], button:has-text('Add to cart')").first.click()
-            try:
-                # The button posts to /shop/cart/update and the navbar badge
-                # rises when that answers. Some themes navigate to the cart
-                # first; the badge is on that page too. Leaving before it
-                # answers would cancel the write and leave the cart empty.
-                page.wait_for_function(_CART_GREW_JS, arg=0, timeout=30000)
-            except Exception:  # noqa: BLE001 -- the cart page below is the real check
-                pass
-            after, order = self._cart(page)
-            if after is None:
-                raise RuntimeError("the cart page did not show its item count after adding %s"
-                                   % self.masker.text(product_route))
-            if not after:
-                # Without this the run would judge a checkout the cart never
-                # made reachable, or record a write that never happened.
-                raise RuntimeError("the cart is still empty after adding %s" % self.masker.text(product_route))
+            for attempt in range(1, _CART_CLICK_ATTEMPTS + 1):
+                self._click_add_to_cart(page, product_route)
+                try:
+                    # The button posts to /shop/cart/update and the navbar badge
+                    # rises when that answers. Some themes navigate to the cart
+                    # first; the badge is on that page too. Leaving before it
+                    # answers would cancel the write and leave the cart empty.
+                    page.wait_for_function(_CART_GREW_JS, arg=0, timeout=30000)
+                except Exception:  # noqa: BLE001 -- the cart page below is the real check
+                    pass
+                after, order = self._cart(page)
+                if after is None:
+                    # The page could not say, which is not the same as empty and
+                    # is not something another click would answer.
+                    raise RuntimeError("the cart page did not show its item count after adding %s"
+                                       % self.masker.text(product_route))
+                if after:
+                    break
+                if attempt == _CART_CLICK_ATTEMPTS:
+                    # Without this the run would judge a checkout the cart never
+                    # made reachable, or record a write that never happened.
+                    raise RuntimeError("the cart is still empty after adding %s in %d click(s)"
+                                       % (self.masker.text(product_route), attempt))
+                # An empty cart after a click Playwright delivered to an enabled
+                # button is the handler race `_click_add_to_cart` cannot see:
+                # the element was there, its listener was not. The next pass
+                # re-opens the product page and clicks again, and that is the
+                # whole retry -- the bound above is what keeps it one.
             return {
                 "model": "sale.order",
                 "id": order,
                 "items": after,
-                "how": "added the product on %s to the cart (0 -> %d items)"
-                       % (self.masker.text(product_route), after),
+                "how": "added the product on %s to the cart (0 -> %d items)%s"
+                       % (self.masker.text(product_route), after,
+                          "" if attempt == 1 else
+                          "; the first %d click(s) left it empty" % (attempt - 1)),
             }
         finally:
             page.close()
+
+    def _click_add_to_cart(self, page, product_route: str) -> None:
+        """Open the product page and click add-to-cart once it can be clicked.
+
+        `domcontentloaded` is when the button exists, not when it works: on the
+        JS-heavy shop page the handler is attached by the website bundle, which
+        is still loading then, so a click at that moment can land on a dead
+        element and the cart never grows. Waiting for the button to be visible
+        -- attached, and laid out where a click reaches it -- and to say it is
+        enabled is as much of "the page is live" as Playwright can see: it
+        cannot see the listener, which is why the caller clicks again on a cart
+        that stayed empty rather than failing the run on the first miss.
+        """
+        page.goto(self.base + product_route, wait_until="domcontentloaded", timeout=60000)
+        button = page.locator(_ADD_TO_CART).first
+        button.wait_for(state="visible", timeout=30000)
+        deadline = time.monotonic() + 30
+        while not button.is_enabled():
+            if time.monotonic() >= deadline:
+                raise RuntimeError("the add-to-cart button on %s never became enabled"
+                                   % self.masker.text(product_route))
+            page.wait_for_timeout(250)
+        button.click()
 
     def check_selectors(self, targets: Iterable[OpenTarget]) -> None:
         """Refuse an `expect_selector` Playwright cannot read, before judging.
@@ -1421,29 +1467,40 @@ class SurfaceDriver:
         finally:
             page.close()
 
-    def _cart_after_failure(self) -> dict[str, Any] | None:
-        """What the cart holds after a cart step that failed part-way.
+    def _cart_after_failure(self) -> tuple[dict[str, Any] | None, str | None]:
+        """What the cart holds after a cart step that failed part-way, and why not.
 
-        None when the cart could not be read: `writes` names the records a run
-        created or reused, and a cart nobody could read is neither. The reason
-        the step failed is on the observation itself.
+        An empty cart and an unreadable cart are not the same thing. Visiting
+        the shop as the logged-in user creates the draft `sale.order` before
+        anything is added to it, so a cart that reads empty and still names its
+        order is a row this run made, and ADR 0012 has it accounted for on this
+        database like any other: it goes into `writes` with `items: 0`. Only a
+        cart nobody could read is no record at all -- then the record is None
+        and the second half of the answer is the reason, which the caller puts
+        on the observation beside the failure that brought us here.
         """
         page = None
         try:
             page = self.context.new_page()
             items, order = self._cart(page)
-            if not items:
-                # Unreadable, or empty: either way there is no record this run
-                # created or reused. Why the step failed is on the observation.
-                return None
-            return {"model": "sale.order", "id": order, "items": items,
-                    "how": "the cart holds %d item(s) after the cart step failed" % items}
-        except Exception:  # noqa: BLE001 -- the failure that brought us here is the story
-            return None
+        except Exception as error:  # noqa: BLE001 -- the failure that brought us here is the story
+            return None, ("the cart could not be read afterwards (%s)"
+                          % (str(error).splitlines() or [""])[0])
         finally:
             if page is not None:
                 with contextlib.suppress(Exception):
                     page.close()
+        if items is None:
+            return None, "the cart page did not show afterwards how many items the cart holds"
+        if not items:
+            if not order:
+                # Read, and empty, and naming no order: there is no row to
+                # report, and nothing failed to be read either.
+                return None, "the cart read empty and named no order, so this run created none"
+            return {"model": "sale.order", "id": order, "items": 0,
+                    "how": "created empty by the failed cart step"}, None
+        return ({"model": "sale.order", "id": order, "items": items,
+                 "how": "the cart holds %d item(s) after the cart step failed" % items}, None)
 
     def _cart(self, page) -> tuple[int | None, str | None]:
         """The number of items in the session's cart, and the order it is.
@@ -1456,7 +1513,11 @@ class SurfaceDriver:
             "() => { const n = document.querySelector('.my_cart_quantity');"
             " return (n && n.getAttribute('data-order-id')) || null; }"
         )
-        return page.evaluate(_CART_QUANTITY_JS), (str(order) if order else None)
+        # An absent attribute, and the "0" the templates render before the
+        # session has an order, are both "no order": a write row naming
+        # `sale.order:0` would claim a record nobody created, and the empty-cart
+        # reading in `_cart_after_failure` turns on telling those apart.
+        return page.evaluate(_CART_QUANTITY_JS), (str(order) if order and str(order) != "0" else None)
 
     def _open(
         self, route: str, *, backend: bool, expect_action: str | None = None,
