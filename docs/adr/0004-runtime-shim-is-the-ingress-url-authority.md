@@ -497,17 +497,34 @@ anything.
   ships (`html_editor`'s and the legacy `web_editor`'s), so the frontend editor
   gets it too. It is a no-op on a value with no prefix.
 
-**Why `IN` looks only inside a start tag.** Record HTML holds prose and escaped
-code samples, and a single attribute regex over the whole string would prefix
-`src="/x.png"` wherever it appeared -- which `OUT` would have to undo, and
-which would be visible in the editor meanwhile. So one pattern selects a start
-tag (`<`, a letter, then no `<` or `>`) and the attribute pattern runs only
-inside one. Two shapes stay outside it and both fail safely: a start tag
-holding a `>` inside an attribute value is not recognised as a tag, so its URLs
-keep escaping rather than being corrupted; and markup nested inside another
-attribute's value, or a start tag written inside a comment, is prefixed --
-visible in the editor until the next load, never in the record, because `OUT`
-removes the prefix from the whole string.
+**Why `IN` looks only inside a start tag, and then walks it.** Record HTML
+holds prose and escaped code samples, and a single attribute regex over the
+whole string would prefix `src="/x.png"` wherever it appeared -- which `OUT`
+would have to undo, and which would be visible in the editor meanwhile. So one
+pattern selects a start tag (`<`, a letter, then no `<` or `>`).
+
+Inside that tag the second pattern does not *search* for an attribute, it
+**walks** the tag, consuming each `name="value"` whole and prefixing only the
+names it wants. The difference is not cosmetic. A searching pattern opens its
+value at the first quote after `src=`, so a tag whose *earlier* attribute value
+contains the other quote character followed by the literal text ` src="` --
+`<img alt='a" src="/x' src="/y">` -- misaligns and restructures the tag,
+leaving the `<img>` with no `src` at all. `OUT` removes a prefix; it cannot put
+a tag back together, so that value is what the record would have kept, broken
+on both surfaces. Walking makes the `alt` value one token, so the `src` inside
+it is never seen and the real `src` is the one prefixed. The shape is in the
+Static-tier test, named for what it is.
+
+Three shapes stay outside the pair, and all three fail safely -- the URL keeps
+escaping rather than being corrupted. A start tag holding a `>` inside an
+attribute value is not recognised as a tag. An unquoted value has no closing
+delimiter to consume. And an unquoted value that swallows the attribute after
+it (`alt=a"src="/x"`, which is how a browser parses it too) leaves the inner
+`src` preceded by a quote rather than by whitespace, which the walk requires.
+What *is* reached and is not really an attribute is markup nested inside
+another attribute's value, and a start tag written inside a comment: both are
+prefixed -- visible in the editor until the next load, never in the record,
+because `OUT` removes the prefix from the whole string.
 
 **Why `OUT` is wider than `IN` rather than its mirror.** It is not only that
 `IN` can reach the two shapes above. The shim's own wrappers prefix attributes
@@ -530,11 +547,14 @@ there. The value runs to the *matching* quote -- the class excludes whichever
 quote opened it, not both -- so a `'` inside a double-quoted `src` is part of
 the URL, which an attachment called `Mary's photo.png` needs it to be.
 
-The pattern is case-insensitive, because `<IMG SRC="...">` is legal HTML and
-the tag pattern already accepts it; an **unquoted** value (`src=/a.png`) is
-not covered, because there is no closing delimiter to anchor the match on, and
-it keeps escaping rather than being corrupted. Neither shape is what Odoo's
-HTML serialiser writes, so both arrive only by hand through the code view.
+The name test is case-insensitive, because `<IMG SRC="...">` is legal HTML and
+the tag pattern already accepts it, and it is an *exact* name, so
+`data-original-src` is not a `data-src`. It is a comma-delimited `indexOf`
+rather than an anchored regex for a reason worth writing down: an anchored
+regex needs a `$`, nginx reads a `$` in a quoted parameter as a variable, and
+`$/i` is not a valid one -- `nginx -t` refuses the whole config. The
+Static-tier test renders the template through a real nginx, which is how that
+was caught rather than shipped.
 
 The leading `/` leaves a relative value alone, because prefixing it would
 *resolve* it and the resolved path is not what the record held; an absolute

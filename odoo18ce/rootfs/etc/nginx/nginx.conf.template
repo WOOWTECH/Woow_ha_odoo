@@ -175,16 +175,31 @@ http {
     # `data:`, `#`, cross-origin, protocol-relative, a value that is already
     # prefixed and a non-string all behave as they do everywhere else.
     #
-    # It matches in two steps, and the first one is what keeps it off the
-    # rest of the markup: `mT` selects a **start tag** (`<`, a letter, then
-    # no `<` or `>`), and `mR` runs only inside one. So an attribute-shaped
-    # run of text -- an escaped code sample, prose, an end tag -- is not a
-    # candidate, which a single attribute regex over the whole string could
-    # not promise. Two shapes are still outside it and both fail safely: a
-    # start tag holding a `>` inside an attribute value is not recognised as
-    # a tag, so its URLs keep escaping rather than being corrupted; and
-    # markup nested inside another attribute's value, or a start tag written
-    # inside a comment, is prefixed -- which the strip undoes on the way to
+    # It matches in two steps, and both of them are about *not* matching the
+    # wrong thing. `mT` selects a **start tag** (`<`, a letter, then no `<`
+    # or `>`), so an attribute-shaped run of text -- an escaped code sample,
+    # prose, an end tag -- is not a candidate, which a single attribute regex
+    # over the whole string could not promise. Then `mA` walks that tag
+    # *attribute by attribute*, consuming each `name="value"` whole, and only
+    # a name in `mU` with a value beginning `/` is handed to `path()`. Walking
+    # rather than searching is what keeps an earlier attribute's contents out
+    # of it: in `<img alt='a" src="/x' src="/y">` the `alt` value is consumed
+    # as one token, so the `src=` inside it is never seen and the real `src`
+    # is still the one prefixed. A pattern that searched for `src="` would
+    # open its value at the wrong quote and restructure the tag -- losing the
+    # real `src` -- and the strip cannot undo that, because it only removes
+    # the prefix.
+    #
+    # Three shapes stay outside the pair, and all three fail safely -- the
+    # URL keeps escaping rather than being corrupted. A start tag holding a
+    # `>` inside an attribute value is not recognised as a tag. An unquoted
+    # value has no closing delimiter for `mA` to consume, so the attribute is
+    # not a token. And an attribute whose unquoted value swallows the next
+    # one (`alt=a"src="/x"`, which is how a browser parses it too) leaves the
+    # inner `src` preceded by a quote rather than by whitespace, which `mA`
+    # requires. What *is* reached and is not really an attribute is markup
+    # nested inside another attribute's value, and a start tag written inside
+    # a comment: both are prefixed, and the strip undoes that on the way to
     # the record.
     #
     # Only the four attributes whose whole value is one URL are prefixed:
@@ -194,12 +209,15 @@ http {
     # covers page HTML). The value runs to the *matching* quote -- the class
     # excludes whichever quote opened it and not both, so a `'` in a
     # double-quoted `src` (`Mary's photo.png`) is part of the URL and not the
-    # end of it. The pattern is case-insensitive, because `mT` accepts an
+    # end of it. The name test is case-insensitive, because `mT` accepts an
     # uppercase tag name and `<IMG SRC="...">` is legal HTML somebody can
-    # paste into the code view; an **unquoted** value (`src=/a.png`), also
-    # legal and also never what Odoo's serialiser writes, is not covered --
-    # it keeps escaping rather than being corrupted, and covering it needs a
-    # second branch with no closing delimiter to anchor on.
+    # paste into the code view, and it is an *exact* name, so
+    # `data-original-src` is not a `data-src`. It is a comma-delimited
+    # `indexOf` and not an anchored regex, because an anchored regex needs a
+    # `$` and nginx reads a `$` in a quoted parameter as a variable -- with
+    # `/i` after it, as an invalid one, which `nginx -t` refuses. The
+    # Static-tier test renders the whole template through a real nginx, which
+    # is how that was found rather than shipped.
     #
     # A value is a candidate only if its first byte is `/` and its second is
     # not. The leading `/` leaves a relative value alone, because prefixing
@@ -234,7 +252,7 @@ http {
     # before this line otherwise, and every rewritten expression falls back to
     # the untouched value when the globals are absent.
     map $upstream_http_content_type $ingress_markup_global_shim {
-        default 'var mT=/<[A-Za-z][^<>]*>/g,mR=/(\s(?:data-src|src|href|action)=)([\x22\x27])(\/(?!\/)(?:(?!\2)[^<>])*)\2/gi,mF=function(m,a,q,v){return a+q+path(v)+q},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mR,mF)}):h},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
+        default 'var mT=/<[A-Za-z][^<>]*>/g,mA=/(^|\s)([A-Za-z][A-Za-z0-9-]*)=([\x22\x27])((?:(?!\3)[^<>])*)\3/g,mU=function(n){return ",src,href,action,data-src,".indexOf(","+n.toLowerCase()+",")>=0},mF=function(m,s,n,q,v){return mU(n)&&v.charAt(0)==="/"&&v.charAt(1)!=="/"?s+n+"="+q+path(v)+q:m},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mA,mF)}):h},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
     }
 
     map $upstream_http_content_type $ingress_runtime_shim {

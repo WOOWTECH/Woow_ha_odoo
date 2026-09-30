@@ -25,11 +25,13 @@ What is pinned here:
 - **The two globals.** The rendered Runtime shim publishes
   ``__WOOW_INGRESS_MARKUP_IN__`` and ``__WOOW_INGRESS_MARKUP_OUT__``,
   read-only, only when the Ingress prefix is non-empty. ``IN`` prefixes
-  through the shim's own ``path()``, and only inside a start tag, so an
-  attribute-shaped run of text is not a candidate. ``OUT`` removes every
-  occurrence of the prefix from a string: wider than ``IN`` on purpose,
-  because that is what makes the record safe whatever ``IN`` reached and
-  whatever the shim's own wrappers prefixed afterwards.
+  through the shim's own ``path()``, only inside a start tag -- so an
+  attribute-shaped run of text is not a candidate -- and only by walking that
+  tag attribute by attribute, so an earlier value's contents are never read as
+  an attribute of their own. ``OUT`` removes every occurrence of the prefix
+  from a string: wider than ``IN`` on purpose, because that is what makes the
+  record safe whatever ``IN`` reached and whatever the shim's own wrappers
+  prefixed afterwards.
 - **Where each one is called**, five sites. ``IN`` at ``Editor.attachTo``,
   before the markup is parsed, because a picture is fetched the moment it is,
   and ``IN`` again at the collaboration plugin's
@@ -376,12 +378,35 @@ assert.equal(
 // Single-quoted attributes are the same attributes.
 assert.equal(markupIn("<img src='" + PICTURE + "'/>"), "<img src='" + P + PICTURE + "'/>");
 // An uppercase tag and attribute is legal HTML and somebody can paste it into
-// the code view; an unquoted value has no closing delimiter to anchor on and
-// is not covered, so it keeps escaping rather than being corrupted.
+// the code view; an unquoted value has no closing delimiter to consume and is
+// not covered, so it keeps escaping rather than being corrupted; and the name
+// test is exact, so `data-original-src` is not a `data-src`.
 assert.equal(markupIn('<IMG SRC="' + PICTURE + '">'), '<IMG SRC="' + P + PICTURE + '">');
 assert.equal(markupIn('<img Data-Src="' + PICTURE + '"/>'),
   '<img Data-Src="' + P + PICTURE + '"/>');
 assert.equal(markupIn('<img src=' + PICTURE + '>'), '<img src=' + PICTURE + '>');
+assert.equal(markupIn('<img data-original-src="' + PICTURE + '"/>'),
+  '<img data-original-src="' + PICTURE + '"/>');
+
+// The tag is walked attribute by attribute, so an earlier value's contents are
+// never read as an attribute of their own. A pattern that searched for `src="`
+// would open its value at the wrong quote and restructure the tag -- the real
+// `src` would be gone, and the strip cannot undo that, because it only removes
+// the prefix. This is the shape that says so.
+assert.equal(
+  markupIn('<img alt=' + "'" + 'a" src="/x' + "'" + ' src="' + PICTURE + '">'),
+  '<img alt=' + "'" + 'a" src="/x' + "'" + ' src="' + P + PICTURE + '">'
+);
+// And an unquoted value that swallows the next attribute (which is how a
+// browser parses it too) leaves the inner `src` preceded by a quote rather
+// than whitespace, so it is not a token either.
+assert.equal(markupIn('<img alt=a"src="' + PICTURE + '" >'),
+  '<img alt=a"src="' + PICTURE + '" >');
+// Attributes separated by a newline are still attributes.
+assert.equal(
+  markupIn('<img\n  src="' + PICTURE + '"\n  alt="x"/>'),
+  '<img\n  src="' + P + PICTURE + '"\n  alt="x"/>'
+);
 // The value runs to the *matching* quote, so the other one is part of the URL
 // -- an attachment called "Mary's photo.png" is a real filename.
 assert.equal(
