@@ -417,6 +417,24 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 片段）。**這一列的 verdict 要等 Live 重跑才改**：兩面 `route_escape`／`http_4xx_5xx`／`console_error`
 > 皆為 0，且在 Ingress 下用編輯器存一次待辦後 `project.task.description` 的 `src` 仍是 root-relative。
 
+> **網站頁「Edit this content」連結的前綴重複（`U-A2`）已於 2026-09-30 修正（#211），Live 重跑待
+> Deploy。** `/@/<website path>` 是 Odoo 18 從網站頁進後台的 route，也是唯一一條**尾段本身就是網站
+> 路徑**的 route。Odoo 把已經帶前綴的 `location.pathname` 接進那個尾段，shim 的 `path()` 只認第 0 位
+> 的前綴，於是又加一次，得到 `<INGRESS_PREFIX>/@<INGRESS_PREFIX>/shop/payment`。修法是 Ingress
+> asset location 上的兩條 Literal rewrite：連結改用 canonical path 組，前綴只在最前面加一次。前綴由
+> 改寫本身加而不是交給 shim，是因為同一個 `currentUrl` 還餵給三個 shim 攔不到的消費點——redirect.js
+> 的兩個 `window.location.replace(currentUrl.href)`（寫 `location`，ADR 0004 明言 shim 攔不到），以及
+> 網站編輯器連結 popover 的 `browser.open(currentUrl)`，傳的是 `URL` 物件，shim 的 `window.open`
+> 包裝只處理字串。第二條規則是 popover 自己那個「這條連結已經是後台形式」的判斷：它拿帶前綴的
+> pathname 去比對裸的 `/@/`，在 Ingress 下永遠不成立。`sub_filter` 的 pattern 不能含 `${`（nginx 會
+> 讀成變數，且 `$` 無從跳脫），所以 pattern 停在反引號，replacement 再補一個，讓沒被吃掉的尾段變成
+> **tagged template** 的引數。該運算式在 `web.assets_frontend_minimal`、`web.assets_frontend`、
+> `website.assets_wysiwyg` 三個 bundle 各出現一次，一條 `sub_filter_once off` 規則全數涵蓋。靜態層
+> 契約在 `odoo18ce/tests/test_ingress_at_route_links.py`（含以真正的 nginx 依樣板本身的規則行送出
+> 兩段 bundle 再比對位元組）。**這一列的 verdict 要等 Live 重跑才改**：`/shop/payment` 在帶此修正的
+> Release 上兩面重跑，Ingress 記錄的 `url_literals` 要讀到 `<INGRESS_PREFIX>/@/shop/payment` 且判定
+> `PARITY`。
+
 ---
 
 ## 10. 待安裝 app 的預先風險登記
@@ -484,7 +502,7 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 | `sale_management` | 經 `sale` 選單，23 `PARITY`；自有畫面 3 `PARITY`（#163 以 `open` 直接開報價單表單的選購商品頁、報價範本清單與表單） | `U-E3`／`U-E2`／`U-C20`／`U-D5` → #145 |
 | `website_sale` | 15 `PARITY` | `U-D1`–`U-D6`、`U-B2` → #143；`U-D7`、`U-E6` 為 `STRUCTURAL`（RC-10） |
 | `point_of_sale` | 19 `PARITY` | `U-C27` 離線銷售、斷網重整各 1 `PARITY`（#161，見 10.1）；`U-F5` 收據列印、`U-C25` 商品掃描各 1 `PARITY`（#143，見 10.6）；`U-C24` 未測 |
-| ECPay 4 模組 | `ecpay_invoice_tw`、`payment_ecpay` 各 1 `PARITY`；另兩個無自有選單 | `U-E6`（#146，2026-09-27）：Public origin 上一筆 stage 信用卡付款（`S00022`），綠界的回呼經 Cloudflare tunnel 抵達 `/payment/ecpay/result_notify`，交易 `done`，電子發票 `LO22046163` 已開立；回呼網址、付款回呼 2 項 `STRUCTURAL`（Structural gap），後台 4 項（金流服務商、交易、訂單表單，與發票表單上的電子發票號碼）兩端 `PARITY`；`account`／`sale` 選單爬蟲 51 `PARITY`。見 `docs/testing/evidence/2026-09-27-issue-146/`。`ecpay_invoice_website` 於 2026-09-29 由 #163 以 `open` 補上自有判定：它掛在 `website_sale.payment`，電子發票區塊（電子發票／紙本／捐贈與載具）在 `/shop/payment` 兩面都算出來、五項訊號皆 0，但該頁的「Edit this content」連結在 Ingress 下前綴重複（`<INGRESS_PREFIX>/@<INGRESS_PREFIX>/shop/payment`，`U-A2`），故記 **`GAP`（important）**；該連結不限結帳頁，每個可編輯的網站頁都有。見 `docs/testing/evidence/2026-09-29-issue-163/` |
+| ECPay 4 模組 | `ecpay_invoice_tw`、`payment_ecpay` 各 1 `PARITY`；另兩個無自有選單 | `U-E6`（#146，2026-09-27）：Public origin 上一筆 stage 信用卡付款（`S00022`），綠界的回呼經 Cloudflare tunnel 抵達 `/payment/ecpay/result_notify`，交易 `done`，電子發票 `LO22046163` 已開立；回呼網址、付款回呼 2 項 `STRUCTURAL`（Structural gap），後台 4 項（金流服務商、交易、訂單表單，與發票表單上的電子發票號碼）兩端 `PARITY`；`account`／`sale` 選單爬蟲 51 `PARITY`。見 `docs/testing/evidence/2026-09-27-issue-146/`。`ecpay_invoice_website` 於 2026-09-29 由 #163 以 `open` 補上自有判定：它掛在 `website_sale.payment`，電子發票區塊（電子發票／紙本／捐贈與載具）在 `/shop/payment` 兩面都算出來、五項訊號皆 0，但該頁的「Edit this content」連結在 Ingress 下前綴重複（`<INGRESS_PREFIX>/@<INGRESS_PREFIX>/shop/payment`，`U-A2`），故記 **`GAP`（important）**；該連結不限結帳頁，每個可編輯的網站頁都有。見 `docs/testing/evidence/2026-09-29-issue-163/`。**該 `GAP` 已於 2026-09-30 修正（#211），Live 重跑待 Deploy**（見 9 的附記）：連結改成 `<INGRESS_PREFIX>/@/shop/payment`，前綴只加一次；測試主機在 0.4.6、最新 Release 是 0.4.8，兩者都不含此修正，所以今天重跑量到的仍是舊字面，這一列的 verdict 要等帶修正的 Release 重跑後才改 |
 | `survey` | 4 `PARITY`、**2 `GAP`**（同一動作） | 範例圖片逃逸 → **#158**；`U-E3`／`U-C4` → #145 |
 | `im_livechat` | 8 `PARITY` | 外嵌 script 為 `STRUCTURAL`（RC-10）；`U-C26` → #143 |
 | `event` | 7 `PARITY`、**1 `GAP`** | 報到台條碼音效逃逸 → **#159**；`U-E3`／`U-E4` → #145 |

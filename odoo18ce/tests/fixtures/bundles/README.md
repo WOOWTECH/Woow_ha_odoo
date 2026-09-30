@@ -122,6 +122,52 @@ reports what the browser would fetch, `updateValue` against a record stand-in
 that reports what would be stored, `_commitChanges` on its urgent path to count
 the writes, and the preamble against a fake `<img>`.
 
+Captured 2026-09-28 the same way, for the `/@` links of issue #211, and
+re-derived on 2026-09-30 from the pinned `.deb` (`ODOO_DEB_VERSION`
+18.0.20260930) through Odoo's own serve path -- `transpile_javascript()` then
+`rjsmin.jsmin()` -- which reproduces both excerpts byte for byte, so the
+capture is current for the Odoo this image pins:
+
+| File | Bundle | What it holds |
+|---|---|---|
+| `website_frontend_to_backend_edit.js` | `web.assets_frontend_minimal` | `redirect.js`'s whole `DOMContentLoaded` listener, which builds the "Edit this content" button's `href` and the two `window.location.replace` addresses beside it |
+| `website_link_popover_preview.js` | `website.assets_wysiwyg` | `LinkPopoverWidget._onPreviewLinkClick`, the website editor's "open this link in the backend" handler |
+
+Measured 2026-09-30 across the fourteen bundles the control group serves on
+that route:
+
+| Pattern | Bundles that carry it, once each | Bundles that carry it zero times |
+|---|---|---|
+| ``currentUrl.pathname=`/@`` | `web.assets_frontend_minimal`, `web.assets_frontend`, `website.assets_wysiwyg` | the eleven others below |
+| `!currentUrl.pathname.startsWith('/@/')` | `website.assets_wysiwyg` | the eleven others, plus `web.assets_frontend_minimal` and `web.assets_frontend` |
+
+The eleven others are `web.assets_backend`, `web.assets_backend_lazy`,
+`web.assets_frontend_lazy`, `web.assets_web`, `web.assets_web_print`,
+`web.report_assets_common`, `web_editor.assets_wysiwyg`,
+`web_editor.assets_media_dialog`, `website.assets_editor`,
+`mass_mailing.assets_wysiwyg` and `im_livechat.assets_embed_external`.
+`web.assets_frontend` carries the builder because
+`web.assets_frontend_minimal` is part of it; `web.assets_frontend_lazy`
+removes `redirect.js` again and so carries neither pattern. The two excerpts
+are byte-identical wherever they occur, so each is captured from one bundle
+and stands for the others -- which is what lets a single `sub_filter_once off`
+rule serve all three sites.
+
+Two other `/@` occurrences in those bundles are **not** link builders and no
+rule touches them: `web.assets_backend`, `web.assets_web` and
+`web.assets_web_print` carry `_isTopWindowURL`'s `pathname.startsWith('/@/')`,
+a classifier for the website editor's iframe rather than a URL being built,
+and several bundles carry an `@mediapipe` CDN path. Odoo's two server-side
+`f'/@{action["url"]}'` builders (`website_sale`'s invoice and sale-order
+actions) produce a canonical `/@/...` that reaches `browser.location.assign`
+and is prefixed once by the issue #174 rule above.
+
+The first excerpt is the whole listener and the second the whole method,
+because the tests execute them: the listener against a document whose
+`.o_frontend_to_backend_edit_btn` is an anchor with a real `href` accessor --
+so the Runtime shim's own wrapper decides the address -- and the method
+against a link popover driven with one target.
+
 ## Re-capturing
 
 The bundles are public, so no login is needed; the asset route redirects a
