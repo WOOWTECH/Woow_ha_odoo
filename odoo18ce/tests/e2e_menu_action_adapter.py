@@ -52,6 +52,7 @@ import datetime as dt
 import ipaddress
 import json
 import os
+import posixpath
 import re
 import sys
 import time
@@ -430,10 +431,14 @@ GET_WRITING_ROUTES = {
     # step, so the `shop_warning` writes at :2073-2076 apply.
     "/shop/extra_info": "stores a shop_warning on the cart through _check_cart",
     # controllers/main.py:1931 runs `_check_cart_and_addresses`, so the
-    # `shop_warning` writes at :2073-2076 apply. Under the same prefix,
-    # `/shop/payment/validate` is heavier still: :1978-1979 confirms the draft
-    # order (`_validate_order`), which is not a draft edit but a sale.
-    "/shop/payment": "stores a shop_warning on the cart, and /shop/payment/validate confirms the order",
+    # `shop_warning` writes at :2073-2076 apply.
+    "/shop/payment": "stores a shop_warning on the cart",
+    # Under the same prefix, and its own entry because the longest match is what
+    # a refusal reports and this write is not the one above: controllers/
+    # main.py:1978-1979 confirms the draft order (`_check_cart_is_ready_to_be_paid`
+    # then `_validate_order`), which is a sale and not a draft edit, and
+    # `request.website.sale_reset()` then drops the cart the run was judging.
+    "/shop/payment/validate": "confirms the draft order into a sale and resets the cart",
     # controllers/main.py:737 and :747 set the cart's pricelist and recompute
     # its prices (`_cart_update_pricelist`, `_recompute_prices`).
     "/shop/pricelist": "sets the cart's pricelist and recomputes its prices",
@@ -464,10 +469,11 @@ def get_writing_route(route: str) -> str | None:
     it, and a guard that cannot read the route must not say it is safe.
 
     The path is compared as Odoo routes it, not as it was typed. `normalize_route`
-    deliberately keeps percent-escapes and repeated slashes, because they can
-    route differently; werkzeug unquotes before matching, so `/shop/%63heckout`
-    reaches `/shop/checkout` and has to be refused with it. Both are undone
-    here. So is the language segment: Odoo's frontend takes the first segment of
+    deliberately keeps percent-escapes, repeated slashes and dot segments,
+    because they can route differently; the browser resolves dot segments before
+    it asks and werkzeug unquotes before matching, so `/shop/%63heckout` and
+    `/shop/x/../checkout` both reach `/shop/checkout` and have to be refused with
+    it. All three are undone here. So is the language segment: Odoo's frontend takes the first segment of
     a path it cannot route as a language code and routes what is left
     (`http_routing/models/ir_http.py:390-392` at the pinned Odoo), which makes
     `/zh_TW/shop/checkout` the ordinary spelling of the checkout on a
@@ -478,7 +484,10 @@ def get_writing_route(route: str) -> str | None:
     if parts.netloc or not parts.path.startswith("/"):
         raise ValueError("crawler configuration: %r is not an absolute path, so whether it writes "
                          "on a plain GET cannot be judged" % route)
-    path = re.sub(r"/{2,}", "/", unquote(parts.path))
+    # `normpath` resolves the dot segments the browser would resolve for itself;
+    # it runs after the unquote so a `%2e` is one, and after the collapse so a
+    # leading `//` it would keep is already gone.
+    path = posixpath.normpath(re.sub(r"/{2,}", "/", unquote(parts.path)))
     head, _, rest = path.lstrip("/").partition("/")
     candidates = [path] + (["/" + rest] if head and rest else [])
     found: str | None = None

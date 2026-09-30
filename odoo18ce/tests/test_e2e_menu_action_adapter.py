@@ -545,7 +545,8 @@ class OpenTargetTests(unittest.TestCase):
     def test_a_get_writing_route_is_matched_by_prefix_on_a_segment_boundary(self) -> None:
         # `/shop/payment/validate` is under `/shop/payment` and writes more than
         # it does; a route that only shares its characters is a different route.
-        self.assertEqual(get_writing_route("/shop/payment/validate"), "/shop/payment")
+        self.assertEqual(get_writing_route("/shop/payment/validate"), "/shop/payment/validate")
+        self.assertEqual(get_writing_route("/shop/payment/anything_else"), "/shop/payment")
         self.assertEqual(get_writing_route("/shop/change_pricelist/3"), "/shop/change_pricelist")
         self.assertEqual(get_writing_route("/shop/checkout/"), "/shop/checkout")
         self.assertEqual(get_writing_route("/website/lang/fr_BE"), "/website/lang")
@@ -564,7 +565,9 @@ class OpenTargetTests(unittest.TestCase):
                          "/shop/%70ayment/validate",
                          # A language segment, which Odoo strips before routing:
                          # the ordinary spelling on a multilingual site.
-                         "/zh_TW/shop/checkout", "/fr/shop/cart", "/en/website/lang/fr"):
+                         "/zh_TW/shop/checkout", "/fr/shop/cart", "/en/website/lang/fr",
+                         # Dot segments, which the browser resolves before it asks.
+                         "/shop/./checkout", "/shop/x/../checkout", "/shop/%2e/checkout"):
             with self.subTest(spelling):
                 self.assertIsNotNone(get_writing_route(spelling))
         # `//shop/checkout` never reaches here: `urlsplit` reads `//shop` as an
