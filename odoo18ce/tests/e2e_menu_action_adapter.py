@@ -1162,6 +1162,10 @@ _CART_GREW_JS = """(before) => {
 }"""
 # Every theme the parity plan covers renders one of these.
 _ADD_TO_CART = "#add_to_cart, a[data-action='add_to_cart'], button:has-text('Add to cart')"
+# How long a click that may still be in flight has to show up before the retry
+# clicks again: an add that lands after the reading that called the cart empty
+# would otherwise be doubled by the second click.
+_CART_SETTLE_MS = 2000
 # How many times the add-to-cart button is clicked before the step gives up.
 # Two: one click, and one more for the handler race no wait can see. A third
 # would start guessing at a shop that is simply broken, and a broken shop is
@@ -1219,6 +1223,13 @@ def _shows(page, selector: str, *, timeout: int = 15000) -> bool:
 
 class SurfaceDriver:
     """Logs in on one surface and opens planned visits, reading only."""
+
+    # What `ensure_cart` read before it touched anything, for
+    # `_cart_after_failure` to tell a cart this run created from one it found:
+    # the order the cart page named, and whether there was a reading at all.
+    # Class attributes, so a driver that has opened no cart still answers.
+    cart_before: str | None = None
+    cart_before_read: bool = False
 
     def __init__(
         self, surface: Surface, browser, *, ignore_https_errors: bool, viewport: tuple[int, int] = (1920, 1080),
@@ -1373,6 +1384,7 @@ class SurfaceDriver:
             raise RuntimeError("crawler configuration: the cart write is allowed on %s only; "
                                "the session's database is %r" % (WRITE_DATABASE, self.database))
         page = self.context.new_page()
+        self.cart_before, self.cart_before_read = None, False
         try:
             # Both readings are taken on the cart page: the badge on another
             # page can be a step behind, and a low reading there would let an
@@ -1380,10 +1392,28 @@ class SurfaceDriver:
             before, order = self._cart(page)
             if before is None:
                 raise RuntimeError("the cart page did not show how many items the cart holds")
+            # An order named here is one the run found, not one it made, and
+            # that is what tells a created cart from a reused one if this step
+            # fails further down.
+            self.cart_before, self.cart_before_read = order, True
             if before:
                 return {"model": "sale.order", "id": order, "items": before,
                         "how": "the cart already held %d item(s); nothing was added" % before}
+            late = False
             for attempt in range(1, _CART_CLICK_ATTEMPTS + 1):
+                if attempt > 1:
+                    # The add may still have been in flight when the reading
+                    # above called the cart empty, and clicking again would
+                    # double it: two lines for a one-product step, a cart size
+                    # the plan never meant on the judged screen, and twice the
+                    # rows to account for under ADR 0012. So a cart that filled
+                    # late gets its moment and one more reading, and ends the
+                    # step here instead of growing again.
+                    page.wait_for_timeout(_CART_SETTLE_MS)
+                    after, order = self._cart(page)
+                    if after:
+                        late = True
+                        break
                 self._click_add_to_cart(page, product_route)
                 try:
                     # The button posts to /shop/cart/update and the navbar badge
@@ -1411,31 +1441,34 @@ class SurfaceDriver:
                 # the element was there, its listener was not. The next pass
                 # re-opens the product page and clicks again, and that is the
                 # whole retry -- the bound above is what keeps it one.
-            return {
-                "model": "sale.order",
-                "id": order,
-                "items": after,
-                "how": "added the product on %s to the cart (0 -> %d items)%s"
-                       % (self.masker.text(product_route), after,
-                          "" if attempt == 1 else
-                          "; the first %d click(s) left it empty" % (attempt - 1)),
-            }
+            how = "added the product on %s to the cart (0 -> %d items)" % (self.masker.text(product_route), after)
+            if late:
+                how += "; the click landed after the reading that called the cart empty, so it was not clicked again"
+            elif attempt > 1:
+                how += "; the first %d click(s) left the cart empty" % (attempt - 1)
+            return {"model": "sale.order", "id": order, "items": after, "how": how}
         finally:
             page.close()
 
     def _click_add_to_cart(self, page, product_route: str) -> None:
         """Open the product page and click add-to-cart once it can be clicked.
 
-        `domcontentloaded` is when the button exists, not when it works: on the
-        JS-heavy shop page the handler is attached by the website bundle, which
-        is still loading then, so a click at that moment can land on a dead
-        element and the cart never grows. Waiting for the button to be visible
-        -- attached, and laid out where a click reaches it -- and to say it is
-        enabled is as much of "the page is live" as Playwright can see: it
-        cannot see the listener, which is why the caller clicks again on a cart
-        that stayed empty rather than failing the run on the first miss.
+        `domcontentloaded` is when the button exists, not when it works: the
+        handler is attached by the website bundle, which is still loading then,
+        so a click at that moment can land on a dead element and the cart never
+        grows. This navigation waits for `load` instead -- every bundle script
+        fetched and run, which is the closest thing to "the handlers are on"
+        Playwright can wait for. `networkidle` would wait for more than that and
+        for things that never settle; the button's own state is the rest.
+
+        Being visible is attached and laid out where a click reaches it. Being
+        enabled is worth asking of the `button` some themes render; on the
+        `<a class="a-submit">` Odoo's own template renders there is nothing to
+        disable and Playwright always answers yes. Neither says the listener is
+        attached, which nothing can, and that is why the caller clicks again on
+        a cart that stayed empty rather than failing the run on the first miss.
         """
-        page.goto(self.base + product_route, wait_until="domcontentloaded", timeout=60000)
+        page.goto(self.base + product_route, wait_until="load", timeout=60000)
         button = page.locator(_ADD_TO_CART).first
         button.wait_for(state="visible", timeout=30000)
         deadline = time.monotonic() + 30
@@ -1470,14 +1503,19 @@ class SurfaceDriver:
     def _cart_after_failure(self) -> tuple[dict[str, Any] | None, str | None]:
         """What the cart holds after a cart step that failed part-way, and why not.
 
-        An empty cart and an unreadable cart are not the same thing. Visiting
-        the shop as the logged-in user creates the draft `sale.order` before
-        anything is added to it, so a cart that reads empty and still names its
-        order is a row this run made, and ADR 0012 has it accounted for on this
-        database like any other: it goes into `writes` with `items: 0`. Only a
-        cart nobody could read is no record at all -- then the record is None
-        and the second half of the answer is the reason, which the caller puts
-        on the observation beside the failure that brought us here.
+        An empty cart and an unreadable cart are not the same thing. A cart
+        that reads empty and still names its order is a row the checkout will
+        use, and ADR 0012 has it accounted for on this database like any other:
+        it goes into `writes` with `items: 0`. Whether this run *created* it is
+        a separate question, and the reading `ensure_cart` took before it
+        clicked is the only thing that answers it -- an earlier run can leave
+        an empty draft order behind, and the logged-in user's is revived rather
+        than created on the way in, so `how` says which of the two this is
+        rather than claiming a write that never happened.
+
+        Only a cart nobody could read is no record at all -- then the record is
+        None and the second half of the answer is the reason, which the caller
+        puts on the observation beside the failure that brought us here.
         """
         page = None
         try:
@@ -1497,8 +1535,14 @@ class SurfaceDriver:
                 # Read, and empty, and naming no order: there is no row to
                 # report, and nothing failed to be read either.
                 return None, "the cart read empty and named no order, so this run created none"
-            return {"model": "sale.order", "id": order, "items": 0,
-                    "how": "created empty by the failed cart step"}, None
+            if order == self.cart_before:
+                how = "the empty order the cart already held before the step; nothing was added"
+            elif self.cart_before_read:
+                how = "created empty by the failed cart step"
+            else:
+                how = ("empty after the failed cart step; the step got no reading from before it, "
+                       "so whether this run created it is unknown")
+            return {"model": "sale.order", "id": order, "items": 0, "how": how}, None
         return ({"model": "sale.order", "id": order, "items": items,
                  "how": "the cart holds %d item(s) after the cart step failed" % items}, None)
 

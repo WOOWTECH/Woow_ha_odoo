@@ -675,10 +675,12 @@ class FakePage:
         self.enabled = list(enabled)
         self.grew = grew
         self.log: list[str] = []
+        self.opened: list[tuple[str, str]] = []
         self.clicks = 0
         self.closed = False
 
     def goto(self, url: str, **kwargs) -> None:
+        self.opened.append((urlsplit(url).path, kwargs.get("wait_until")))
         self.log.append("goto:%s" % urlsplit(url).path)
 
     def locator(self, selector: str) -> FakeLocator:
@@ -749,6 +751,12 @@ class CartStepTests(unittest.TestCase):
             "goto:/shop/product/desk-1", "wait:visible", "enabled?False", "slept", "enabled?True", "click",
             "grew?True", "goto:/shop/cart", "cart:1",
         ])
+        # The product page is opened on `load`, not `domcontentloaded`: the
+        # handler comes with the website bundle, and `load` is every bundle
+        # script fetched and run. The cart readings need no bundle.
+        self.assertEqual(page.opened, [("/shop/cart", "domcontentloaded"),
+                                       ("/shop/product/desk-1", "load"),
+                                       ("/shop/cart", "domcontentloaded")])
         self.assertEqual(write, {"model": "sale.order", "id": "7", "items": 1,
                                  "how": "added the product on /shop/product/desk-1 to the cart (0 -> 1 items)"})
         self.assertTrue(page.closed)
@@ -764,17 +772,31 @@ class CartStepTests(unittest.TestCase):
         # The handler race no wait can see: the click landed on a dead element,
         # so the cart reads empty. That is a flake, not a broken screen, and
         # failing the run on it costs a whole two-surface judgement.
-        page = FakePage([0, 0, 2])
+        # The readings: empty before the step, empty after the first click,
+        # empty again just before the second, and filled after it.
+        page = FakePage([0, 0, 0, 2])
         write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
         self.assertEqual(page.clicks, 2)
         self.assertEqual((write["items"], write["id"]), (2, "7"))
         self.assertEqual(write["how"], "added the product on /shop/product/desk-1 to the cart (0 -> 2 items)"
-                                       "; the first 1 click(s) left it empty")
+                                       "; the first 1 click(s) left the cart empty")
         # Two clicks means two passes over the product page, and no third.
         self.assertEqual(page.log.count("goto:/shop/product/desk-1"), 2)
 
+    def test_a_click_that_landed_late_is_not_clicked_again(self) -> None:
+        # The add was still in flight when the reading called the cart empty. A
+        # second click would put a second line in a one-product cart: another
+        # row to account for, and a screen the plan did not mean to judge.
+        page = FakePage([0, 0, 1])
+        write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual(page.clicks, 1)
+        self.assertEqual(write["items"], 1)
+        self.assertEqual(write["how"], "added the product on /shop/product/desk-1 to the cart (0 -> 1 items)"
+                                       "; the click landed after the reading that called the cart empty,"
+                                       " so it was not clicked again")
+
     def test_the_retry_is_bounded_and_the_step_gives_up_saying_how_often_it_tried(self) -> None:
-        page = FakePage([0, 0, 0])
+        page = FakePage([0, 0, 0, 0])
         with self.assertRaisesRegex(RuntimeError, r"the cart is still empty after adding "
                                                  r"/shop/product/desk-1 in 2 click\(s\)") as caught:
             cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
@@ -806,11 +828,11 @@ class CartStepTests(unittest.TestCase):
         self.assertEqual(page.clicks, 0)
 
     def test_an_empty_cart_the_failed_step_created_is_still_a_write(self) -> None:
-        # Visiting the shop as the logged-in user creates the draft sale.order
-        # before anything is added to it. An empty cart that names its order is
-        # a row this run made, and ADR 0012 has every mutation accounted for.
+        # The cart named no order before the step and names one after it, so
+        # the run made that row: ADR 0012 has every mutation accounted for, and
+        # returning None dropped it from the evidence.
         target, = parse_targets([CART_TARGET])
-        filling, after = FakePage([0, 0, 0]), FakePage([0], order="7")
+        filling, after = FakePage([0, 0, 0, 0], order=None), FakePage([0], order="7")
         observation = cart_driver(FakeContext(filling, after)).open_screen(target)
         self.assertFalse(observation.available)
         self.assertIn("cart not filled", observation.result)
@@ -818,14 +840,42 @@ class CartStepTests(unittest.TestCase):
             {"model": "sale.order", "id": "7", "items": 0, "how": "created empty by the failed cart step"},
         ])
 
+    def test_an_empty_order_the_run_only_found_is_not_one_it_created(self) -> None:
+        # An earlier run can leave an empty draft order behind, and the
+        # logged-in user's is revived on the way in rather than created. The
+        # reading `ensure_cart` took before it clicked is what tells them
+        # apart, and claiming a write that never happened is the other way this
+        # evidence can say more than what happened.
+        target, = parse_targets([CART_TARGET])
+        filling, after = FakePage([0, 0, 0, 0], order="2"), FakePage([0], order="2")
+        observation = cart_driver(FakeContext(filling, after)).open_screen(target)
+        self.assertEqual(list(observation.writes), [
+            {"model": "sale.order", "id": "2", "items": 0,
+             "how": "the empty order the cart already held before the step; nothing was added"},
+        ])
+
+    def test_an_empty_cart_with_nothing_read_before_it_says_it_cannot_tell(self) -> None:
+        # The step failed on its own first reading, so there is nothing to
+        # compare against: the row is reported and the record says as much,
+        # rather than crediting this run with a write it may not have made.
+        target, = parse_targets([CART_TARGET])
+        observation = cart_driver(
+            FakeContext(FakePage([None]), FakePage([0], order="2")),
+        ).open_screen(target)
+        self.assertEqual(list(observation.writes), [
+            {"model": "sale.order", "id": "2", "items": 0,
+             "how": "empty after the failed cart step; the step got no reading from before it,"
+                    " so whether this run created it is unknown"},
+        ])
+
     def test_a_cart_that_could_not_be_read_is_no_write_and_the_record_says_why(self) -> None:
         target, = parse_targets([CART_TARGET])
-        unreadable = cart_driver(FakeContext(FakePage([0, 0, 0]), FakePage([None]))).open_screen(target)
+        unreadable = cart_driver(FakeContext(FakePage([0, 0, 0, 0]), FakePage([None]))).open_screen(target)
         self.assertEqual(list(unreadable.writes), [])
         self.assertIn("did not show afterwards how many items", unreadable.result)
         # A cart page that could not even be opened is the same answer, with the
         # reason it gave: the failure that brought us here is still the headline.
-        gone = cart_driver(FakeContext(FakePage([0, 0, 0]), fail_after=1)).open_screen(target)
+        gone = cart_driver(FakeContext(FakePage([0, 0, 0, 0]), fail_after=1)).open_screen(target)
         self.assertEqual(list(gone.writes), [])
         self.assertIn("could not be read afterwards", gone.result)
         self.assertIn("cart not filled", gone.result)
@@ -837,7 +887,7 @@ class CartStepTests(unittest.TestCase):
         target, = parse_targets([CART_TARGET])
         for missing in (None, "0", ""):
             observation = cart_driver(
-                FakeContext(FakePage([0, 0, 0]), FakePage([0], order=missing)),
+                FakeContext(FakePage([0, 0, 0, 0]), FakePage([0], order=missing)),
             ).open_screen(target)
             self.assertEqual(list(observation.writes), [], msg=repr(missing))
             self.assertIn("named no order", observation.result)
@@ -846,7 +896,7 @@ class CartStepTests(unittest.TestCase):
         target, = parse_targets([CART_TARGET])
         # The click landed and something later in the step failed: the line is
         # this run's and the other surface will reuse it.
-        observation = cart_driver(FakeContext(FakePage([0, 0, 0]), FakePage([1]))).open_screen(target)
+        observation = cart_driver(FakeContext(FakePage([0, 0, 0, 0]), FakePage([1]))).open_screen(target)
         self.assertEqual(list(observation.writes), [
             {"model": "sale.order", "id": "7", "items": 1,
              "how": "the cart holds 1 item(s) after the cart step failed"},
