@@ -370,16 +370,21 @@ def session_database(reported: str | None) -> str:
 # every `@route` of `controllers/`, including the bare `@route()` overrides of
 # `website`'s own routes, whose route is the parent's: one not listed here is
 # either unreachable by that navigation (`methods=['POST']`, `type='json'`) or
-# was read and writes nothing -- `readonly=True` (`/shop/<product>`), nothing
-# but `request.session` (`/shop`), or nothing at all (`/shop/confirmation`,
-# `/shop/print`, `/shop/product/<id>`).
+# its controller was read and writes nothing -- `readonly=True`
+# (`/shop/<product>`), nothing but `request.session` (`/shop`), or nothing at
+# all (`/shop/confirmation`, `/shop/print`, `/shop/product/<id>`).
 #
-# "Reachable by the navigation" is the target's own GET and not everything the
-# browser then does: the page's JavaScript posts on its own account, and
+# Two limits on what that buys, both of them about the page rather than the
+# route, and neither of them something a route list can bound. The controller is
+# not the whole request: `views/templates.xml:13` calls
+# `website.sale_get_order()` from the cart link of every page header, which
+# writes the same way `/shop/checkout` does (models/website.py:457), so a page
+# whose controller writes nothing can still write. And the target's GET is not
+# the whole navigation: the page's own JavaScript posts on its own account, and
 # `/shop/products/recently_viewed_update` (controllers/main.py:2288) writes a
-# `website.visitor` from a product page nobody asked to write. A route list
-# cannot bound that -- the target does not name it -- and it is the same
-# cross-cutting write as the visitor tracking below.
+# `website.visitor` from a product page nobody asked to write. The target names
+# neither, so the seam cannot see them; they are the same cross-cutting write as
+# the visitor tracking below.
 #
 # The list is `website_sale`'s routes and no others, and it is not the whole of
 # what Odoo writes on a GET. Two writes outside it were read and left where they
@@ -469,13 +474,17 @@ def get_writing_route(route: str) -> str | None:
 
 
 def require_write_database(targets: Iterable[OpenTarget], database: str | None) -> None:
-    """A target that writes -- a cart, or a route that writes on GET -- is bounded.
+    """A target that writes the two ways a target can say so is bounded.
 
-    ADR 0012 allows the write on one database only, and a target writes two
-    ways: it declares a `cart:`, or it names a route Odoo writes on while
-    rendering a plain GET. Both are refused here, before the first screen is
-    opened, so a misaimed run is a configuration error and not a mutated
-    database.
+    ADR 0012 allows the write on one database only, and a target says it writes
+    two ways: it declares a `cart:`, or it names a route on `GET_WRITING_ROUTES`.
+    Both are refused here, before the first screen is opened, so a misaimed run
+    is a configuration error and not a mutated database.
+
+    Not every write a run can make is one of those two -- the list is the
+    `website_sale` audit and no wider, and a page writes through its own
+    templates and JavaScript as well. `GET_WRITING_ROUTES` says what is outside
+    it and why. This guard is as good as that list, not better.
 
     `database` is what the session reported it is on. `None` -- it reported
     nothing -- refuses the write like any other wrong answer: a run that cannot
