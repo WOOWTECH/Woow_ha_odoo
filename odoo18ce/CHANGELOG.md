@@ -9,7 +9,7 @@
   never publish, and on aarch64 it held a different blob for the
   stable-packages layer than the one 0.4.6 shipped; the 0.4.7 build took
   that blob, so updating to 0.4.7 on aarch64 re-sent the layer (720.9 MiB
-  instead of about 380). No version bump. Issue #219, parent #153.
+  instead of about 380 MiB). No version bump. Issue #219, parent #153.
 
 ## 0.4.7 — 2026-09-30
 

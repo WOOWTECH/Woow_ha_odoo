@@ -200,7 +200,7 @@ runs.
 
 The first consequence above needs a condition it did not state: a cache
 hit keeps a layer's digest only when every cache the build reads holds
-the same blob for that step. Through 0.4.7 the Release build read two --
+the same blob for that step. Through 0.4.7 the Release build read two —
 the registry `:buildcache` and, behind it, the GitHub Actions cache that
 CI writes and never publishes from. When 0.4.6 merged, the Release and
 main's CI built aarch64 cold in parallel and each compressed its own
