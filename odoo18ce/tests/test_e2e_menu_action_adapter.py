@@ -935,6 +935,12 @@ class CartStepTests(unittest.TestCase):
         self.assertEqual(write["items"], 1)
         self.assertTrue(write["how"].endswith("; the cart page stopped saying how many items it holds,"
                                              " so this size is the last reading that did"), write["how"])
+        # A cart already seen moving is the bigger news, so a reading that says
+        # nothing after one that said more does not take its place.
+        grew = FakePage([0, 0, 0, 1, 2, None])
+        write = cart_driver(FakeContext(grew)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual(write["items"], 2)
+        self.assertTrue(write["how"].endswith("; the cart was still changing when the run left it"), write["how"])
 
     def test_a_session_that_will_not_refresh_inside_the_loop_stops_the_run(self) -> None:
         # Anything the cart step raises but a configuration error becomes
@@ -970,7 +976,8 @@ class CartStepTests(unittest.TestCase):
         self.assertEqual(page.clicks, 1)
         # The grace reading before the second click is the other one.
         grace = FakePage([0, 0, None])
-        with self.assertRaisesRegex(RuntimeError, "did not show its item count before clicking"):
+        with self.assertRaisesRegex(RuntimeError, r"did not show its item count before clicking "
+                                                  r"/shop/product/desk-1 again \(1 click\(s\) so far\)"):
             cart_driver(FakeContext(grace)).ensure_cart("/shop/product/desk-1")
         self.assertEqual(grace.clicks, 1)
 

@@ -1379,7 +1379,7 @@ class SurfaceDriver:
         order and its size instead, and it carries the run id.
 
         The click is bounded but not quick: with every wait in it timing out,
-        one cart target costs about eleven minutes -- two passes of a `load`
+        one cart target costs about twelve minutes -- two passes of a `load`
         navigation, the button waits, the badge wait and the cart readings,
         including the ones that confirm a two-click cart settled -- against
         about four before the retry existed. A run that sizes a timeout around
@@ -1418,7 +1418,9 @@ class SurfaceDriver:
             if before:
                 return {"model": "sale.order", "id": order, "items": before,
                         "how": "the cart already held %d item(s); nothing was added" % before}
-            clicks, filled_first, unsettled = 0, False, ""
+            # `confirmed` starts true because one click has nothing to confirm.
+            clicks, filled_first = 0, False
+            moved, unread, confirmed = False, False, True
             for attempt in range(1, _CART_CLICK_ATTEMPTS + 1):
                 if self.ingress:
                     # Minutes of waits live in this loop, against the
@@ -1457,8 +1459,9 @@ class SurfaceDriver:
                     if after is None:
                         # Not empty -- unreadable, the same answer the reading
                         # after a click gives, and no reason to click again.
-                        raise RuntimeError("the cart page did not show its item count before clicking "
-                                           "%s a second time" % self.masker.text(product_route))
+                        raise RuntimeError("the cart page did not show its item count before clicking %s again "
+                                           "(%d click(s) so far)"
+                                           % (self.masker.text(product_route), clicks))
                     if after:
                         filled_first = True
                         break
@@ -1495,7 +1498,7 @@ class SurfaceDriver:
                     raise RuntimeError("the cart page did not show its item count after adding %s in %d click(s)"
                                        % (self.masker.text(product_route), clicks))
                 if after and clicks > 1:
-                    unsettled = "changing"
+                    moved, unread, confirmed = False, False, False
                     # More than one click means the record has to name the
                     # quantity the cart settled at. A reading taken while the
                     # second update was still committing names the smaller one;
@@ -1508,13 +1511,14 @@ class SurfaceDriver:
                         if again is None:
                             # Not a cart that moved -- a page that stopped
                             # saying, which is the distinction the whole step
-                            # turns on. Another reading may still settle it.
-                            unsettled = "unreadable"
+                            # turns on. Another reading may still settle it, and
+                            # a cart already seen moving stays the bigger news.
+                            unread = True
                             continue
                         if again == after:
-                            unsettled = ""
+                            confirmed = True
                             break
-                        after, order, unsettled = again, again_order, "changing"
+                        after, order, moved = again, again_order, True
                 if after:
                     break
                 # The badge that said otherwise was wrong, or what it saw is
@@ -1553,13 +1557,13 @@ class SurfaceDriver:
                     if after > 1:
                         how += (", and the cart holds more than the one item the step meant to add"
                                 " -- a product that adds several, or a click that was not lost after all")
-                    if unsettled == "changing":
+                    if not confirmed and moved:
                         # Read as "this size is the last reading, not a settled
                         # one": an update still committing lands after it, and
                         # the other surface reading the larger cart is then a
                         # difference in the evidence and not in the screens.
                         how += "; the cart was still changing when the run left it"
-                    elif unsettled == "unreadable":
+                    elif not confirmed and unread:
                         how += ("; the cart page stopped saying how many items it holds,"
                                 " so this size is the last reading that did")
             return {"model": "sale.order", "id": order, "items": after, "how": how}
@@ -1596,11 +1600,12 @@ class SurfaceDriver:
             return False
         button = page.locator(_ADD_TO_CART).first
         # A button that is not there 15s after `load` is a shop the run should
-        # report on, not wait for; the poll after it is shorter still, since a
-        # `button[disabled]` on a loaded page is waiting on an XHR and not on
-        # the bundle. Both bound what the retry doubles -- see `ensure_cart`.
+        # report on, not wait for. The poll after it keeps the 30s a bare
+        # `click()` would have auto-waited: a themed `button[disabled]` waiting
+        # on its own combination XHR takes seconds, and nothing retries a step
+        # this aborts -- only an empty cart is clicked at again.
         button.wait_for(state="visible", timeout=15000)
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 30
         # The reading carries its own timeout: Playwright's default is 30s, and
         # a button that stopped resolving would blow the poll's bound and report
         # a raw Playwright timeout instead of what happened here.
