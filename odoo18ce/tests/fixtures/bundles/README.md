@@ -71,6 +71,32 @@ alone: `browser.location.assign(_url.href)` and `browser.location.assign(href)`
 already cover) and `window.location.assign(response.url)` (session expiry, an
 absolute URL). Neither matches either pattern.
 
+Captured 2026-09-30 the same way, for the HTML editor's content round trip of
+issue #210:
+
+| File | Bundle | What it holds |
+|---|---|---|
+| `html_editor_attach_content.js` | `web.assets_backend` | `Editor.attachTo`, whose `editable.innerHTML=fixInvalidHTML(this.config.content)` is where an html field's stored value becomes DOM |
+| `html_editor_save_content.js` | `web.assets_backend` | `Editor.getContent` and `Editor.getElContent`, the one way content leaves the editor: a deep clone of the editable, the `clean_for_save_handlers` over it, and the element both `getContent()` and the field's `_commitChanges` read |
+
+Measured on 2026-09-30 across every bundle the control group serves on that
+route. `editable.innerHTML=fixInvalidHTML(this.config.content)` and
+`getElContent(){const el=this.editable.cloneNode(true);` occur **once each** in
+`web.assets_backend`, `web.assets_web` and `web.assets_web_print`, and zero
+times in `web.assets_frontend`, `web.assets_frontend_lazy`,
+`web.assets_frontend_minimal`, `web.assets_backend_lazy`,
+`web.report_assets_common`, `web_editor.assets_wysiwyg`,
+`web_editor.assets_media_dialog`, `website.assets_wysiwyg`,
+`website.assets_editor`, `mass_mailing.assets_wysiwyg`,
+`im_livechat.assets_embed_external` and `html_builder.assets` — so the pair
+reaches the backend web client and no frontend or website-editor bundle. Both
+excerpts are byte-identical in the three bundles that carry them, so each is
+captured from `web.assets_backend` and stands for the others.
+
+Each excerpt is a whole method, because the test executes it: `attachTo`
+against an editable that reports what the browser would fetch, and
+`getElContent` against a DOM stand-in whose clone is serialised.
+
 ## Re-capturing
 
 The bundles are public, so no login is needed; the asset route redirects a

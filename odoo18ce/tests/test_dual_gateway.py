@@ -222,10 +222,16 @@ def test_nginx_template_contract() -> None:
     assert 'prop(window.HTMLSourceElement&&HTMLSourceElement.prototype,"src")' in n
     # They are the tail of the prefix script's closure, spliced in by variable
     # reference because that script nearly fills nginx's parameter buffer -- and
-    # so is the URL helper the shim publishes for the `location` writes a
-    # Literal rewrite has to prefix itself (#174), which closes the closure.
-    assert "$ingress_injection_hooks_shim$ingress_url_global_shim})()" in n
+    # so are the URL helper the shim publishes for the `location` writes a
+    # Literal rewrite has to prefix itself (#174) and the markup helpers the
+    # HTML editor's content goes through (#210), which close the closure.
+    assert (
+        "$ingress_injection_hooks_shim$ingress_url_global_shim"
+        "$ingress_markup_global_shim})()"
+    ) in n
     assert 'Object.defineProperty(window,"__WOOW_INGRESS_URL__"' in n
+    assert 'mP("__WOOW_INGRESS_MARKUP_IN__",mIn)' in n
+    assert 'mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)' in n
     assert "return 302 $safe_ingress_path/odoo" not in n
     assert n.count("proxy_set_header X-Forwarded-Proto $ingress_proto;") >= 3
     assert "proxy_set_header Origin $ingress_proto://$http_host;" in n

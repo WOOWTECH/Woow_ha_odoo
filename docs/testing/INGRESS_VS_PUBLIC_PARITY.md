@@ -396,11 +396,20 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 
 > `project_todo` 的畫面於 2026-09-29 由 #163 補判（0.4.5）：改用爬蟲新增的 `open` 子指令，直接開那個
 > server action 回傳的 window action（`project_todo.project_task_action_todo`，不執行 server action），
-> 兩面各判三個畫面——待辦看板、待辦清單兩面 `PARITY`；**待辦表單是 `GAP`（blocker）**：待辦自己的說明 HTML
-> （`project.task.description`，由 `todo_user_onboarding` 複製而來）內的兩張圖在 Ingress 下向 HA 根網址要，
-> 404、`route_escape=2`。與 #158 同型但不是同一個修法：#158 的 Literal rewrite 只綁 `/web/action/load`，
-> 而待辦說明走 `/web/dataset/call_kw`，正是 ADR 0004 的 2026-09-28 附記拒絕改寫的紀錄內容。
-> 這一輪的證據在 `docs/testing/evidence/2026-09-29-issue-163/`。
+> 兩面各判三個畫面——待辦看板、待辦清單兩面 `PARITY`；**待辦表單當時是 `GAP`（blocker）**：待辦自己的說明
+> HTML（`project.task.description`，由 `todo_user_onboarding` 複製而來）內的兩張圖在 Ingress 下向 HA
+> 根網址要，404、`route_escape=2`。與 #158 同型但不是同一個修法：#158 的 Literal rewrite 只綁
+> `/web/action/load`，而待辦說明走 `/web/dataset/call_kw`，正是 ADR 0004 的 2026-09-28 附記拒絕改寫的
+> 紀錄內容。這一輪的證據在 `docs/testing/evidence/2026-09-29-issue-163/`。
+>
+> **待辦表單的 `GAP` 已於 2026-09-30 修正（#210），Live 重跑待 Deploy。** 依 ADR 0004 的 2026-09-30
+> 附記，修法不是改寫 `call_kw` 回應，而是 HTML 編輯器內容的一組「進／出」Literal rewrite：Runtime shim
+> 另外發佈 `__WOOW_INGRESS_MARKUP_IN__`／`__WOOW_INGRESS_MARKUP_OUT__` 兩個唯讀 helper（前綴一律走
+> shim 自己的 `path()`），`Editor.attachTo` 把值變成 DOM 之前先上前綴，`Editor.getElContent` 在交出
+> 存檔用的複製節點時再把前綴拿掉——所以資料庫存的仍是 root-relative，不會把 Supervisor token 寫進記錄。
+> 靜態層契約在 `odoo18ce/tests/test_ingress_todo_description.py`（含 2026-09-30 重新擷取的 bundle
+> 片段）。**這一列的 verdict 要等 Live 重跑才改**：兩面 `route_escape`／`http_4xx_5xx`／`console_error`
+> 皆為 0，且在 Ingress 下用編輯器存一次待辦後 `project.task.description` 的 `src` 仍是 root-relative。
 
 ---
 

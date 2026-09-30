@@ -402,3 +402,108 @@ parity plan, so the rerun checks it by opening
 `<ingress>/odoo/action-website.action_website` — `website.action_website` is a
 shipped `ir.actions.act_url` with `url: /` and `target: self` — which today
 sends the frame to the Home Assistant root and afterwards to the Ingress root.
+
+## Postscript (2026-09-30, the HTML editor's content)
+
+The third screen filed against the uncovered group is the one the decision was
+*written about*, and it is the first that cannot be answered by a rewrite in one
+direction alone. The rule the snippet-thumbnail postscript states gains its
+second half:
+
+> Rewrite a URL where it is *delivered* only when nothing writes it back.
+> Otherwise rewrite it where it is *rendered*, and leave the delivered value
+> alone -- and where the render site is also the save site, take the prefix off
+> again where the content leaves it.
+
+The #163 `open` run found the To-do form (`project.task` 5, the onboarding
+to-do Odoo creates for every user) asking the Home Assistant root for two
+pictures and getting 404: `route_escape=2`, `http_4xx_5xx=2`,
+`console_error=2`, with the Public origin clean (#210, blocker by parity plan
+section 1.3). `project_todo`'s `todo_user_onboarding` template is copied into
+`project.task.description` by `_ensure_onboarding_todo()`, and it carries
+`<img class="img-fluid d-none d-sm-block" src="/project_todo/static/img/todo_access.png"/>`
+and one more like it. So the URLs are **record content in the database**, not a
+bundle asset, and the html field inserts them as markup.
+
+**Why neither shape above reaches it.** The Runtime shim wraps APIs, not markup
+insertion, so it never sees the URL -- the same as #158. #158's Literal rewrite
+is an exact-match `location = /web/action/load`, a stored action's `help`; a
+to-do description arrives on `/web/dataset/call_kw/project.task/web_read`, and
+`call_kw` is the response this decision named as the one it refuses, *because*
+it is how the HTML editor both loads a field and saves it. #170's rewrite goes
+to the render site, but there the render site was an OWL template with a
+one-way value in it; here the render site hands the value straight back.
+
+**What the render site is.** `Editor.attachTo` runs
+`editable.innerHTML = fixInvalidHTML(this.config.content)`. The prefix has to be
+on the *string*, before the assignment: the browser begins fetching an `<img>`
+the moment the markup is parsed, so a fix-up of the resulting DOM would still
+cost the 404 that was measured.
+
+**What the save site is, and why there is exactly one.** `Editor.getElContent`
+clones the editable, runs the `clean_for_save_handlers` over the clone and
+returns it. Every way content leaves the editor reads that clone:
+`Editor.getContent`, and the field's `_commitChanges` for both the value it
+saves and the `comparisonValue` it checks against `lastValue`. Stripping on the
+clone therefore keeps those two consistent -- a strip further downstream would
+make a saved value and its comparison disagree and save on every blur -- and
+the clone is outside the document, so nothing is re-fetched. The strip runs
+*after* the handlers, so a prefix one of them put on through the shim's own
+`setAttribute` wrapper comes off as well.
+
+**Two helpers, published and not hooked.** `__WOOW_INGRESS_MARKUP_IN__(html)`
+prefixes the URL attributes of a markup string through the shim's own `path()`,
+the way #174's `__WOOW_INGRESS_URL__` does, so there is still one URL helper
+and one set of rules about `blob:`, `data:`, `#`, cross-origin, a protocol-
+relative reference and a value already prefixed.
+`__WOOW_INGRESS_MARKUP_OUT__(root)` is the inverse on the clone, and it writes
+through the native `setAttribute` the shim captured before wrapping it, because
+the wrapper would put the prefix straight back. Both are read-only,
+non-configurable and defined only when the Ingress prefix is non-empty; both
+rewritten expressions fall back to the untouched value when they are absent, so
+an Ingress page whose shim did not run still renders and still saves.
+
+**This is not a Group B hook, and the distinction is the whole decision.** A
+hook on `innerHTML` prefixes every markup insertion in the page, including the
+ones whose value is written back, and the token reaches the database. A
+published helper is called by one rewritten expression at one measured site,
+and that site is matched by a second rewrite that undoes it. The Static-tier
+test that asserts the shim has none of Group B's hooks keeps passing and keeps
+meaning what it said; a second test asserts the helpers themselves hook
+nothing.
+
+**Four attributes, and only a value beginning `/`.** `src`, `href`, `action`
+and `data-src` -- the ones whose whole value is one URL. `srcset` is a
+candidate list that needs a parse rather than a substitution and belongs to
+#166 with every other attribute rule; a `style` background inside record HTML
+stays as it is (#194 covers page HTML). Requiring the first byte to be `/`
+excludes a protocol-relative reference, which is the limit every other prefix
+rule in the template has and #166 owns -- here it is excluded rather than
+broken -- and it leaves an absolute same-origin URL alone: Odoo writes
+root-relative URLs into record HTML, so one somebody pasted is unmeasured
+rather than fixed.
+
+**What is not closed, said rather than left implicit.** The code view's
+`editable.innerHTML = this.value` on toggling back (the `codeview` option,
+which the To-do field does not set), images `savePendingImages` writes after
+`getElContent` has returned, and a collaborative peer applying a snapshot. None
+has been measured escaping; each is its own issue if one is.
+
+Both patterns were measured on 2026-09-30 across every bundle the control group
+serves: once each in `web.assets_backend`, `web.assets_web` and
+`web.assets_web_print`, and nowhere in any frontend or website-editor bundle --
+so this reaches the backend web client and leaves the website editor's own
+round trip exactly where the snippet-thumbnail postscript left it, as a stated
+tension belonging to #194 and #166. The Public origin is untouched, and so is
+the Rewrite scan: record content is not in a bundle, so no Generated rewrite
+could ever derive it.
+
+`U-A6`'s probe list is *not* extended; its `innerHTML` probe still records the
+escape as the decision it is. What proves this fix is the Static-tier contract
+(`odoo18ce/tests/test_ingress_todo_description.py`: the two globals executed
+against the rendered shim, both patterns counted in captured bundle excerpts,
+and each rewritten expression run in node with the globals present and absent)
+plus the Live rerun, which is the maintainer's after Deploy: the To-do form at
+`route_escape=0`/`http_4xx_5xx=0`/`console_error=0` on both surfaces, and the
+stored `project.task.description` still root-relative after saving the to-do in
+the editor under Ingress.

@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Under Ingress, the **To-do** form's description now shows its two
+  pictures instead of two broken images. The onboarding to-do Odoo creates
+  for every user carries
+  `<img src="/project_todo/static/img/todo_access.png">` and one more like
+  it inside `project.task.description`, the browser resolved both against
+  the Home Assistant root, and Home Assistant answered 404 --
+  `route_escape=2`, `http_4xx_5xx=2` and `console_error=2` on a screen that
+  is clean on the Public origin (a Prefix escape, root cause `RC-1`). Those
+  URLs are record content in the database, not a bundle asset, and the HTML
+  editor inserts them as markup -- the one path the Runtime shim leaves
+  alone on purpose, because the editor saves the same value back and a hook
+  there would write the token-bearing Ingress prefix into the record. So
+  the shim now publishes two markup helpers,
+  `__WOOW_INGRESS_MARKUP_IN__` and `__WOOW_INGRESS_MARKUP_OUT__` (read-only,
+  Ingress-only, prefixing through the same `path()` the `fetch`, XHR and
+  attribute wrappers already use), and two rewrites on the Ingress
+  listener's asset location put the prefix on where the editor renders its
+  content and take it off again on the clone it saves. The value that
+  reaches the database is the value the Public origin would have saved, so
+  a to-do edited under Ingress still shows its pictures on both surfaces;
+  the same round trip covers every `html` field in the backend web client,
+  and no frontend or website-editor bundle carries either expression. The
+  Public origin gets neither the shim nor the rules and is unchanged. No
+  version bump. Issue #210, parent #148.
+
 ## 0.4.8 — 2026-09-30
 
 ### Fixed
