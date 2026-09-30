@@ -363,7 +363,10 @@ def session_database(reported: str | None) -> str:
 # member of `Operation`, so nothing named there is ever refused).
 #
 # A key is a route prefix: it bounds the route itself and everything under it,
-# so `/shop/payment` also covers `/shop/payment/validate`. The value cites the
+# so `/shop/change_pricelist` covers the `/shop/change_pricelist/<id>` the route
+# is actually spelled as, and a route under a prefix needs its own key only when
+# its write is not the one the prefix cites -- `/shop/payment/validate` has one
+# for that reason, and the longest key is the one a refusal names. The value cites the
 # write in upstream `website_sale` at the pinned Odoo -- 18.0.20260930, the
 # `ODOO_DEB_VERSION` of odoo18ce/Dockerfile -- read from that `.deb` under
 # `usr/lib/python3/dist-packages/odoo/addons/website_sale/`. The audit covers
