@@ -547,10 +547,24 @@ class OpenTargetTests(unittest.TestCase):
         self.assertEqual(get_writing_route("/shop/payment/validate"), "/shop/payment")
         self.assertEqual(get_writing_route("/shop/change_pricelist/3"), "/shop/change_pricelist")
         self.assertEqual(get_writing_route("/shop/checkout/"), "/shop/checkout")
+        self.assertEqual(get_writing_route("/website/lang/fr_BE"), "/website/lang")
         for reading in ("/shop", "/shop/cartons", "/shop/checkouts", "/my/orders/7",
                         "/odoo/action-project_todo.project_task_action_todo"):
             with self.subTest(reading):
                 self.assertIsNone(get_writing_route(reading))
+
+    def test_a_get_writing_route_is_matched_as_odoo_routes_it(self) -> None:
+        # `normalize_route` keeps percent-escapes and repeated slashes on
+        # purpose, and werkzeug unquotes the path before matching, so a target
+        # can spell a writing route in a way the literal prefix misses.
+        for spelling in ("/shop/%63heckout", "/shop//checkout", "/shop/checkout%2F",
+                         "/shop/%70ayment/validate"):
+            with self.subTest(spelling):
+                self.assertIsNotNone(get_writing_route(spelling))
+        # `//shop/checkout` never reaches here: `urlsplit` reads `//shop` as an
+        # origin, and `parse_targets` refuses a target that carries one.
+        with self.assertRaisesRegex(ValueError, "not a usable route"):
+            parse_targets(['{"module": "m", "target": "//shop/checkout", "expect_selector": "#x"}'])
 
     def test_the_get_writing_guard_did_not_move_into_the_operation_enum(self) -> None:
         # The enum only ever names reads: NON_MUTATING_OPERATIONS is every

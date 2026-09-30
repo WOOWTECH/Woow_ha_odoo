@@ -57,7 +57,7 @@ import sys
 import time
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping, NamedTuple, Sequence
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from e2e_menu_action_crawler import (
     MAX_TRAVERSAL_DEPTH,
@@ -366,9 +366,11 @@ def session_database(reported: str | None) -> str:
 # write in upstream `website_sale` at the pinned Odoo -- 18.0.20260930, the
 # `ODOO_DEB_VERSION` of odoo18ce/Dockerfile -- read from that `.deb` under
 # `usr/lib/python3/dist-packages/odoo/addons/website_sale/`. The audit covers
-# every `type='http'` route of that module a GET can reach: one not listed here
-# either declares `methods=['POST']`, is `readonly=True`, or its controller was
-# read and writes nothing but `request.session`, which is not the database
+# every `type='http'` route of that module a GET can reach -- every `@route` of
+# `controllers/`, including the bare `@route()` overrides of `website`'s own
+# routes, whose route is the parent's: one not listed here either declares
+# `methods=['POST']`, is `readonly=True`, is `type='json'`, or its controller
+# was read and writes nothing but `request.session`, which is not the database
 # (`/shop`) -- or renders without writing (`/shop/confirmation`, `/shop/print`,
 # `/shop/product/<id>`).
 #
@@ -411,6 +413,12 @@ GET_WRITING_ROUTES = {
     # controllers/main.py:721 sets the cart's pricelist for the pricelist the
     # route names (`_cart_update_pricelist`).
     "/shop/change_pricelist": "sets the cart's pricelist and recomputes its prices",
+    # `website`'s route, and `website_sale` overrides it to write: controllers/
+    # website.py:72-79 is a bare `@route()` over `/website/lang/<lang>`
+    # (website/controllers/main.py:210, `type='http'` and not `readonly`), and
+    # its body marks the cart's order lines for a recompute of their `name` in
+    # the new language, which the request flushes onto `sale.order.line`.
+    "/website/lang": "recomputes the cart's order line names in the chosen language",
 }
 
 
@@ -421,8 +429,15 @@ def get_writing_route(route: str) -> str | None:
     boundary: `/shop/payment/validate` is under `/shop/payment`, and a route
     that merely starts with the same characters (`/shop/cartons`) is not. The
     query is ignored -- it cannot make a writing route a reading one.
+
+    The path is compared as Odoo routes it, not as it was typed. `normalize_route`
+    deliberately keeps percent-escapes and repeated slashes, because they can
+    route differently; werkzeug unquotes before matching, so `/shop/%63heckout`
+    reaches `/shop/checkout` and has to be refused with it. Both are undone
+    here, which can only ever refuse more than the literal spelling would.
     """
-    path = urlsplit(route).path.rstrip("/") or "/"
+    path = unquote(urlsplit(route).path)
+    path = re.sub(r"/{2,}", "/", path).rstrip("/") or "/"
     for prefix in GET_WRITING_ROUTES:
         if path == prefix or path.startswith(prefix + "/"):
             return prefix
