@@ -19,10 +19,10 @@
   recorded -- by writing it again, because a forwarded attribute has no
   deleter. A request that refuses the assignment, or accepts it and goes on
   reporting the old address, is recorded as it arrived and said so in the log,
-  as before. Every pull request's in-image check now also performs that
-  replacement on the request class the image itself ships, instead of only
-  reading the flag the patch sets: reading the flag is what called this green
-  while the host was unfixed. Nothing else changes -- the stored URL is still
+  as before. Every pull request's in-image check now also builds the request
+  Odoo itself builds in that image and performs the replacement on it, instead
+  of only reading the flag the patch sets: reading the flag is what called this
+  green while the host was unfixed. Nothing else changes -- the stored URL is still
   built on `website.get_base_url()`, a visit that already arrives on the
   Canonical URL still stores exactly what it stored before, and **page views
   stored before this version keep the Home Assistant host**: they are not

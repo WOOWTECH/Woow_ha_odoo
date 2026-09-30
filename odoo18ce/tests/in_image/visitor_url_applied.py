@@ -22,12 +22,12 @@ adds:
 * the wrapper still fits upstream. ``functools.wraps`` keeps the original
   under ``__wrapped__``; if a nightly changed its parameters the patch still
   installs and every tracked page view raises ``TypeError``;
-* the swap the wrapper performs takes on the request Odoo builds. This is the
+* the swap the patch performs takes on the request Odoo builds. This is the
   half issue #160 was reopened over: the flag was on the host and every
   Ingress page view still recorded the Home Assistant host, because
   ``odoo.http.HTTPRequest`` forwards ``url`` through a plain ``property`` that
-  never reads the instance ``__dict__``. A flag cannot see that; performing
-  the swap on this image's own request class can.
+  never reads the instance ``__dict__``. A flag cannot see that; building this
+  image's own ``request`` and replacing the url on it can.
 
 Prints one of ``visitor-url: applied``, ``visitor-url: not applied``,
 ``visitor-url: signature mismatch (...)`` or
@@ -143,23 +143,50 @@ def signature_mismatch(website_visitor):
     return upstream_fit(forwarded_names(wrapper), original)
 
 
+def probe_request(http):
+    """``(request, None)``, or ``(None, sentence)`` saying why it cannot be built.
+
+    The two steps Odoo's WSGI application takes: the werkzeug request is
+    wrapped in an ``odoo.http.HTTPRequest``, and that wrapper is handed to
+    ``odoo.http.Request``, which is the object every module reads as
+    ``odoo.http.request``. Building both is what lets the swap below run on
+    the expression the patch evaluates -- ``request.httprequest`` -- rather
+    than on a class this file names. Nothing here needs a database, a session
+    or the network, and every step is reported rather than raised, because a
+    probe that dies prints no ``visitor-url:`` line and the build then blames
+    the container instead of what it found.
+    """
+    for attribute in ("HTTPRequest", "Request"):
+        if not hasattr(http, attribute):
+            return None, f"odoo.http has no {attribute}; the request it builds cannot be read here"
+    try:
+        return http.Request(http.HTTPRequest(dict(PROBE_ENVIRON))), None
+    except Exception as exc:
+        return None, f"odoo.http.Request could not be built over a bare environ: {exc!r}"
+
+
 def url_not_replaceable(http):
     """A sentence naming why the patch cannot replace this Odoo request's
     ``url``, or None when the swap it performs takes.
 
-    ``http`` is Odoo's ``odoo.http``. Its ``HTTPRequest`` is what the dispatch
-    is handed: a wrapper that installs one plain ``property`` per forwarded
-    attribute, ``url`` included, whose getter and setter reach the werkzeug
-    request it wraps (``make_request_wrap_methods``). The patch assigns to
-    that attribute, so this builds the wrapper over a bare environ and asks it
-    to read the assignment back. Nothing here touches the patch, a database or
-    the network; a failure is this image's request class, not the module.
+    ``http`` is Odoo's ``odoo.http``. What the dispatch reads is
+    ``request.httprequest``, an ``odoo.http.HTTPRequest``: a wrapper that
+    installs one plain ``property`` per forwarded attribute, ``url`` included,
+    whose getter and setter reach the werkzeug request it wraps
+    (``make_request_wrap_methods``). The patch assigns to that attribute, so
+    this builds the request over a bare environ and asks it to read the
+    assignment back.
+
+    What it does not read is Odoo's WSGI application putting that wrapper on
+    the request in the first place. If a nightly interposes something else
+    there, this stays green and the module's own read-back guard catches it at
+    runtime -- a warning per page view, which is what the host logged on 0.4.6.
     """
-    name = f"{http.HTTPRequest.__module__}.{http.HTTPRequest.__qualname__}"
-    try:
-        httprequest = http.HTTPRequest(dict(PROBE_ENVIRON))
-    except Exception as exc:
-        return f"{name} could not be built over a bare environ: {exc!r}"
+    request, unbuildable = probe_request(http)
+    if unbuildable is not None:
+        return unbuildable
+    httprequest = request.httprequest
+    name = f"request.httprequest ({type(httprequest).__module__}.{type(httprequest).__qualname__})"
     try:
         arrived = getattr(httprequest, URL_ATTRIBUTE)
     except Exception as exc:

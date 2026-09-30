@@ -500,10 +500,27 @@ def load_probe():
     return module
 
 
-def odoo_http_module(request_class=None):
-    """Odoo's ``odoo.http`` as the probe reads it: the request class in it."""
+def odoo_request_class():
+    """``odoo.http.Request``, as far as the probe reads it.
+
+    Transcribed from ``odoo/http.py`` of Odoo 18.0 (``class Request``): the
+    application builds the ``HTTPRequest`` wrapper and hands it in, and the
+    request keeps it under ``httprequest``, which is the expression every
+    module -- this patch included -- reads.
+    """
+
+    class Request:
+        def __init__(self, httprequest):
+            self.httprequest = httprequest
+
+    return Request
+
+
+def odoo_http_module(httprequest_class=None, request_class=None):
+    """Odoo's ``odoo.http`` as the probe reads it: the two classes in it."""
     module = types.ModuleType("odoo.http")
-    module.HTTPRequest = request_class or odoo_http_request_class()
+    module.HTTPRequest = httprequest_class or odoo_http_request_class()
+    module.Request = request_class or odoo_request_class()
     return module
 
 
@@ -970,6 +987,43 @@ def test_the_probe_fails_when_the_request_class_cannot_be_built_over_an_environ(
             self.environ = environ
 
     assert "could not be built" in load_probe().url_not_replaceable(odoo_http_module(HTTPRequest))
+
+
+def test_the_probe_reports_an_odoo_http_that_no_longer_has_what_it_reads() -> None:
+    """A renamed or removed class must come back as a sentence. Raising here
+    would leave the probe printing no visitor-url: line at all, and the build
+    step then blames the container rather than what the probe found."""
+    probe = load_probe()
+    for missing in ("HTTPRequest", "Request"):
+        http = odoo_http_module()
+        delattr(http, missing)
+        assert probe.url_not_replaceable(http) == (
+            f"odoo.http has no {missing}; the request it builds cannot be read here"
+        )
+
+
+def test_the_probe_swaps_through_the_request_and_not_through_a_class_it_names() -> None:
+    """A nightly whose Request keeps something else under httprequest: the
+    wrapper class is still replaceable and the expression the patch evaluates
+    is not, which is the reading that matters."""
+
+    class Request:
+        def __init__(self, httprequest):
+            self.httprequest = _ReadOnlyHttprequest(httprequest.url)
+
+    http = odoo_http_module(request_class=Request)
+    unreplaceable = load_probe().url_not_replaceable(http)
+    assert "takes no assignment" in unreplaceable
+    assert "_ReadOnlyHttprequest" in unreplaceable
+
+
+class _ReadOnlyHttprequest:
+    """Whatever a future Request might put there, refusing the swap."""
+
+    url = property(lambda self: self.arrived)
+
+    def __init__(self, url):
+        self.arrived = url
 
 
 def test_the_probe_reports_an_unreplaceable_url_with_a_non_zero_status() -> None:
