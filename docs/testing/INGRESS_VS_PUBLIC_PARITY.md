@@ -480,9 +480,13 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 
 第 9 節的 13 個 app 同一輪已比對的選單全為 `PARITY`（`project_todo` 只有一個跳過的 server action，其畫面於 2026-09-29 由 #163 的 `open` 另判：2 `PARITY` + 1 `GAP`），唯一例外是 `website` 的訪客清單：經 Ingress 瀏覽網站時，
 訪客紀錄把 HA 根網址存成頁面 URL（`U-C5`，#160）。
-> #160 已在 add-on 修好：server-wide module `woow_visitor_url` 把訪客追蹤存下的網址改建在 **Canonical URL** 上（`website.get_base_url()`），
-> 路徑與查詢字串照舊。這是 0.4.5 之後的變更，測試主機上的重跑（經 Ingress 瀏覽一次網站後看最新一筆 `website.track`，
-> 並確認動作 596 的爬蟲比對回到 `PARITY`）要等下一個 Release 部署後補做。既有紀錄不回填，仍帶 HA 根網址。
+> #160 的修正（server-wide module `woow_visitor_url`，把訪客追蹤存下的網址改建在 **Canonical URL** 上，`website.get_base_url()`）
+> 在 Static 與 Build tier 通過，但 **2026-09-30 於 0.4.6 測試主機的 Live 重跑判定 `FAIL`**：經 Ingress 開一次首頁後，
+> 新存的 `website.track` 仍記錄完整的 HA 根網址（`http://192.168.50.192:8123/`，重啟後重測一致），動作 596 的爬蟲比對仍是 `GAP`。
+> 存的是**未修改的完整** `request.httprequest.url`，即模組 `import website` 失敗時的「原樣放行」fallback ——
+> patch 在真實主機啟動時未生效（姊妹模組 `woow_base_url_guard` 不 import `website`，正常運作）。這是 Build-tier in-image probe 與真實主機的
+> 環境差異，正是 Live tier（ADR 0012）存在的理由。證據：`docs/testing/evidence/2026-09-30-issue-160/`。**#160 已 reopen**，
+> 待修的是讓 `woow_visitor_url` 在真實啟動時撐過 `website` 的 server-wide import（或改用不 import 的 patch 方式），並以 Live-tier 檢查為證。既有紀錄不回填。
 
 ### 10.5 本輪未覆蓋的已知風險（明列，不假裝測過）
 
