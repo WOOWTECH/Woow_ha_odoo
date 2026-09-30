@@ -1160,6 +1160,8 @@ _CART_GREW_JS = """(before) => {
   const node = document.querySelector('.my_cart_quantity');
   return !!node && Number((node.textContent || '').trim()) > before;
 }"""
+
+
 def _is_cart_update(response) -> bool:
     """Whether a response is the cart answering an add.
 
@@ -1379,7 +1381,7 @@ class SurfaceDriver:
         order and its size instead, and it carries the run id.
 
         The click is bounded but not quick: with every wait in it timing out,
-        one cart target costs about twelve minutes -- two passes of a `load`
+        one cart target costs about thirteen minutes -- two passes of a `load`
         navigation, the button waits, the badge wait and the cart readings,
         including the ones that confirm a two-click cart settled -- against
         about four before the retry existed. A run that sizes a timeout around
@@ -1438,13 +1440,21 @@ class SurfaceDriver:
                         # a cart in: a line the first click already committed
                         # would go unaccounted for. The message carries it, on
                         # the one database ADR 0012 allows the write on.
-                        left = self._cart_after_failure()[0] if clicks else None
+                        left, unread = self._cart_after_failure() if clicks else (None, None)
+                        if left:
+                            # Its own `how` says whether the run made this cart
+                            # or found it; claiming either here would be the
+                            # guess the rest of the step refuses to make.
+                            detail = ("; no record will name the cart: %s:%s holding %s item(s), %s"
+                                      % (left["model"], left["id"], left["items"], left["how"]))
+                        elif clicks:
+                            detail = ("; %d click(s) had been sent and the cart could not be read afterwards"
+                                      " (%s), so what it holds is unaccounted for" % (clicks, unread))
+                        else:
+                            detail = ""
                         raise RuntimeError("crawler configuration: the ingress session could not be refreshed "
                                            "during the cart step (%s)%s"
-                                           % ((str(error).splitlines() or [""])[0],
-                                              "" if not left else
-                                              "; this run left %s:%s holding %s item(s), which no record names"
-                                              % (left["model"], left["id"], left["items"]))) from None
+                                           % ((str(error).splitlines() or [""])[0], detail)) from None
                 if attempt > 1:
                     # The add may still have been in flight when the reading
                     # above called the cart empty, and clicking again would add
@@ -1595,7 +1605,14 @@ class SurfaceDriver:
         attached, which nothing can, and that is why the caller clicks again on
         a cart that stayed empty rather than failing the run on the first miss.
         """
-        page.goto(self.base + product_route, wait_until="load", timeout=60000)
+        try:
+            page.goto(self.base + product_route, wait_until="load", timeout=60000)
+        except Exception:  # noqa: BLE001 -- retried below, and raised from there if it is real
+            # One sub-resource that never finishes would otherwise cost the whole
+            # target a blocker GAP, and the bundle has very likely run by then.
+            # `domcontentloaded` is where this started and the click's own retry
+            # is the guard behind it, so the step goes on from there.
+            page.goto(self.base + product_route, wait_until="domcontentloaded", timeout=60000)
         if (page.evaluate(_CART_QUANTITY_JS) or 0) > 0:
             return False
         button = page.locator(_ADD_TO_CART).first
@@ -1609,7 +1626,13 @@ class SurfaceDriver:
         # The reading carries its own timeout: Playwright's default is 30s, and
         # a button that stopped resolving would blow the poll's bound and report
         # a raw Playwright timeout instead of what happened here.
-        while not button.is_enabled(timeout=5000):
+        while True:
+            # A reading that raises -- a button detached while the page hydrates
+            # -- is not the button answering "disabled", and it must not end the
+            # poll before the deadline it promises.
+            with contextlib.suppress(Exception):
+                if button.is_enabled(timeout=5000):
+                    break
             if time.monotonic() >= deadline:
                 raise RuntimeError("the add-to-cart button on %s never became enabled"
                                    % self.masker.text(product_route))

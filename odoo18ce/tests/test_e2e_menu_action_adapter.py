@@ -656,6 +656,8 @@ class FakeLocator:
     def is_enabled(self, **kwargs) -> bool:
         enabled = self.page.enabled.pop(0) if self.page.enabled else True
         self.page.log.append("enabled?%s" % enabled)
+        if isinstance(enabled, Exception):
+            raise enabled
         return enabled
 
     def click(self) -> None:
@@ -676,13 +678,15 @@ class FakePage:
     Every call lands in `log`, so a test can say what happened in what order.
     """
 
-    def __init__(self, carts, *, order="7", enabled=(), grew=True, badges=(), answered=True) -> None:
+    def __init__(self, carts, *, order="7", enabled=(), grew=True, badges=(), answered=True,
+                 load_error=None) -> None:
         self.carts = list(carts)
         self.order = order
         self.enabled = list(enabled)
         self.grew = grew
         self.badges = list(badges)
         self.answered = answered
+        self.load_error = load_error
         self.click_error: Exception | None = None
         self.path = ""
         self.log: list[str] = []
@@ -694,6 +698,8 @@ class FakePage:
         self.path = urlsplit(url).path
         self.opened.append((self.path, kwargs.get("wait_until")))
         self.log.append("goto:%s" % self.path)
+        if self.load_error is not None and kwargs.get("wait_until") == "load":
+            raise self.load_error
 
     def locator(self, selector: str) -> FakeLocator:
         return FakeLocator(self, selector)
@@ -784,6 +790,22 @@ class CartStepTests(unittest.TestCase):
         self.assertEqual(write, {"model": "sale.order", "id": "7", "items": 1,
                                  "how": "added the product on /shop/product/desk-1 to the cart (0 -> 1 items)"})
         self.assertTrue(page.closed)
+
+    def test_a_reading_that_will_not_resolve_does_not_end_the_enabled_poll(self) -> None:
+        # A button detached while the page hydrates makes the reading raise; that
+        # is not the button answering "disabled", and the poll keeps its deadline.
+        page = FakePage([0, 1], enabled=(RuntimeError("element is not attached"), True))
+        write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual((page.clicks, write["items"]), (1, 1))
+
+    def test_a_product_page_whose_load_never_fires_is_opened_the_old_way(self) -> None:
+        # One sub-resource that never finishes would cost the target a blocker
+        # GAP; the bundle has very likely run, and the click's retry is behind it.
+        page = FakePage([0, 1], load_error=RuntimeError("Timeout 60000ms exceeded"))
+        write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual((page.clicks, write["items"]), (1, 1))
+        self.assertEqual([wait for path, wait in page.opened if path == "/shop/product/desk-1"],
+                         ["load", "domcontentloaded"])
 
     def test_a_button_that_never_becomes_enabled_fails_the_step_not_the_click(self) -> None:
         page = FakePage([0], enabled=(False, False))
@@ -924,8 +946,21 @@ class CartStepTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as caught:
             driver.open_screen(target)
         self.assertTrue(is_configuration_error(caught.exception))
-        self.assertIn("this run left sale.order:7 holding 1 item(s), which no record names",
+        self.assertIn("no record will name the cart: sale.order:7 holding 1 item(s), "
+                      "the cart holds 1 item(s) after the cart step failed", str(caught.exception))
+
+    def test_a_run_stopped_by_the_session_says_when_it_could_not_read_the_cart(self) -> None:
+        # The reading it would have named the cart with failed too, so what the
+        # click left is unknown -- and saying nothing would be the worse answer.
+        target, = parse_targets([CART_TARGET])
+        driver = cart_driver(FakeContext(FakePage([0, 0]), fail_after=1))
+        driver.ingress = mock.Mock()
+        driver.ingress.keep_alive.side_effect = [None, RuntimeError("the websocket went away")]
+        with self.assertRaises(RuntimeError) as caught:
+            driver.open_screen(target)
+        self.assertIn("1 click(s) had been sent and the cart could not be read afterwards",
                       str(caught.exception))
+        self.assertIn("so what it holds is unaccounted for", str(caught.exception))
 
     def test_a_cart_page_that_stops_answering_the_confirming_reading_says_that(self) -> None:
         # Two confirming readings that said nothing are not a cart that changed:
