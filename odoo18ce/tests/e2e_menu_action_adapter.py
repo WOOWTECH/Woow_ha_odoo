@@ -366,25 +366,38 @@ def session_database(reported: str | None) -> str:
 # write in upstream `website_sale` at the pinned Odoo -- 18.0.20260930, the
 # `ODOO_DEB_VERSION` of odoo18ce/Dockerfile -- read from that `.deb` under
 # `usr/lib/python3/dist-packages/odoo/addons/website_sale/`. The audit covers
-# every `type='http'` route of that module a GET can reach -- every `@route` of
-# `controllers/`, including the bare `@route()` overrides of `website`'s own
-# routes, whose route is the parent's: one not listed here either declares
-# `methods=['POST']`, is `readonly=True`, is `type='json'`, or its controller
-# was read and writes nothing but `request.session`, which is not the database
-# (`/shop`) -- or renders without writing (`/shop/confirmation`, `/shop/print`,
-# `/shop/product/<id>`).
+# every `type='http'` route of that module the navigation itself can reach --
+# every `@route` of `controllers/`, including the bare `@route()` overrides of
+# `website`'s own routes, whose route is the parent's: one not listed here is
+# either unreachable by that navigation (`methods=['POST']`, `type='json'`) or
+# was read and writes nothing -- `readonly=True` (`/shop/<product>`), nothing
+# but `request.session` (`/shop`), or nothing at all (`/shop/confirmation`,
+# `/shop/print`, `/shop/product/<id>`).
+#
+# "Reachable by the navigation" is the target's own GET and not everything the
+# browser then does: the page's JavaScript posts on its own account, and
+# `/shop/products/recently_viewed_update` (controllers/main.py:2288) writes a
+# `website.visitor` from a product page nobody asked to write. A route list
+# cannot bound that -- the target does not name it -- and it is the same
+# cross-cutting write as the visitor tracking below.
 #
 # The list is `website_sale`'s routes and no others, and it is not the whole of
-# what Odoo writes on a GET. Two writes outside it, both read and both left
-# where they are: `website/models/ir_http.py:203` creates or touches a
-# `website.visitor` on any tracked page's GET, whichever module serves it, and
-# `sale/controllers/portal.py` writes on `/my/orders/<id>` -- `:270`
+# what Odoo writes on a GET. Two writes outside it were read and left where they
+# are, for two different reasons.
+#
+# `website/models/ir_http.py:203` creates or touches a `website.visitor` on any
+# tracked page's GET, whichever module serves it. Bounding that here would
+# refuse the read-only runs the parity plan is built on -- every page `crawl`
+# visits makes the same write -- while leaving `crawl` as it is, so it belongs
+# to whoever takes the read-only guarantee up as a whole and not to this seam.
+#
+# `sale/controllers/portal.py` writes on `/my/orders/<id>`: `:270`
 # `_portal_ensure_token()` stores an `access_token` on an order still to be
-# paid, and `:168` posts a "Quotation viewed by customer" note. Neither is a
-# checkout write, and the first is made by every page `crawl` visits, so
-# bounding them at this seam would refuse the read-only runs the parity plan is
-# built on while leaving `crawl` as it is. They belong to whoever takes the
-# read-only guarantee up as a whole.
+# paid, and `:168` posts a "Quotation viewed by customer" note. That one is
+# bounded by nothing and would fit a list entry, but it is a `sale` write, and
+# this list is the `website_sale` audit #212 asked for; adding it would claim an
+# audit of `sale` that nobody has done, and `sale`'s portal has more routes than
+# this one. It is recorded here so the next audit starts from it.
 GET_WRITING_ROUTES = {
     # controllers/main.py:796 unlinks the cart lines of archived products, and
     # :785-786 rewrites an abandoned cart's lines onto the session cart and
@@ -1198,8 +1211,16 @@ class SurfaceDriver:
         return self._open(visit.route, backend=True, expect_action=visit.action_id)
 
     def open_screen(self, target: OpenTarget) -> SurfaceObservation:
-        """Open one named screen, the way `observe` opens a planned menu action."""
+        """Open one named screen, the way `observe` opens a planned menu action.
+
+        A target whose route writes on a plain GET is refused off
+        `WRITE_DATABASE`, the way `ensure_cart` refuses the declared cart write:
+        `open_screens` checks the whole target list before the first screen so a
+        misaimed run stops at once, and this is the check for every other caller
+        of this driver.
+        """
         READ_ONLY_POLICY.require(Operation.NAVIGATE)
+        require_write_database((target,), self.database)
         writes: tuple[Mapping[str, Any], ...] = ()
         if target.cart:
             try:
