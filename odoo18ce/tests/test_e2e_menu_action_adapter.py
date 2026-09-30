@@ -3,6 +3,7 @@
 
 Nothing here opens a browser, a websocket or reads credentials.
 """
+import contextlib
 import itertools
 import json
 import unittest
@@ -652,13 +653,15 @@ class FakeLocator:
     def wait_for(self, **kwargs) -> None:
         self.page.log.append("wait:%s" % kwargs.get("state"))
 
-    def is_enabled(self) -> bool:
+    def is_enabled(self, **kwargs) -> bool:
         enabled = self.page.enabled.pop(0) if self.page.enabled else True
         self.page.log.append("enabled?%s" % enabled)
         return enabled
 
     def click(self) -> None:
         self.page.log.append("click")
+        if self.page.click_error is not None:
+            raise self.page.click_error
         self.page.clicks += 1
 
 
@@ -673,12 +676,14 @@ class FakePage:
     Every call lands in `log`, so a test can say what happened in what order.
     """
 
-    def __init__(self, carts, *, order="7", enabled=(), grew=True, badges=()) -> None:
+    def __init__(self, carts, *, order="7", enabled=(), grew=True, badges=(), answered=True) -> None:
         self.carts = list(carts)
         self.order = order
         self.enabled = list(enabled)
         self.grew = grew
         self.badges = list(badges)
+        self.answered = answered
+        self.click_error: Exception | None = None
         self.path = ""
         self.log: list[str] = []
         self.opened: list[tuple[str, str]] = []
@@ -703,6 +708,13 @@ class FakePage:
         badge = self.badges.pop(0) if self.badges else 0
         self.log.append("badge:%s" % badge)
         return badge
+
+    @contextlib.contextmanager
+    def expect_response(self, matcher, **kwargs):
+        yield
+        self.log.append("answered?%s" % self.answered)
+        if not self.answered:
+            raise RuntimeError("Timeout 30000ms exceeded")
 
     def wait_for_function(self, script: str, **kwargs) -> None:
         self.log.append("grew?%s" % self.grew)
@@ -760,7 +772,7 @@ class CartStepTests(unittest.TestCase):
         self.assertEqual(page.log, [
             "goto:/shop/cart", "cart:0",
             "goto:/shop/product/desk-1", "badge:0",
-            "wait:visible", "enabled?False", "slept", "enabled?True", "click",
+            "wait:visible", "enabled?False", "slept", "enabled?True", "click", "answered?True",
             "grew?True", "goto:/shop/cart", "cart:1",
         ])
         # The product page is opened on `load`, not `domcontentloaded`: the
@@ -840,6 +852,31 @@ class CartStepTests(unittest.TestCase):
         self.assertEqual(write["how"], "added the product on /shop/product/desk-1 to the cart (0 -> 1 items)"
                                        "; the click landed after the reading that called the cart empty,"
                                        " so it was not clicked again")
+
+    def test_a_click_whose_update_never_answers_still_reaches_the_cart_reading(self) -> None:
+        # A theme that adds by another route, or the dead element the retry is
+        # for: no answer to wait for is not a failure of the click, and the cart
+        # reading is what judges it either way.
+        page = FakePage([0, 1], answered=False)
+        write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual((page.clicks, write["items"]), (1, 1))
+
+    def test_a_click_that_could_not_be_made_at_all_is_the_step_failing(self) -> None:
+        # The suppression around the answer must not swallow the click itself.
+        page = FakePage([0, 1])
+        page.click_error = RuntimeError("element is not attached to the DOM")
+        with self.assertRaisesRegex(RuntimeError, "not attached to the DOM"):
+            cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+
+    def test_a_product_page_that_contradicts_the_cart_page_clicks_nothing(self) -> None:
+        # The badge says the cart holds something, the cart page says it is
+        # empty, every pass. The step never clicked, so it does not report an
+        # add that failed -- it reports the two readings disagreeing.
+        page = FakePage([0, 0, 0, 0], badges=(1, 1, 1, 1))
+        with self.assertRaisesRegex(RuntimeError, "the cart page reads empty and the product page for "
+                                                 "/shop/product/desk-1 says otherwise"):
+            cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual(page.clicks, 0)
 
     def test_a_cart_that_was_never_empty_records_that_nothing_was_added(self) -> None:
         # Nothing was clicked at all, so the record must not say a product was

@@ -1160,6 +1160,15 @@ _CART_GREW_JS = """(before) => {
   const node = document.querySelector('.my_cart_quantity');
   return !!node && Number((node.textContent || '').trim()) > before;
 }"""
+def _is_cart_update(response) -> bool:
+    """Whether a response is the cart answering an add.
+
+    The product page's form posts to `/shop/cart/update`; the themes that add
+    over XHR post to `/shop/cart/update_json`, so the prefix matches both.
+    """
+    return "/shop/cart/update" in response.url
+
+
 # Every theme the parity plan covers renders one of these.
 _ADD_TO_CART = "#add_to_cart, a[data-action='add_to_cart'], button:has-text('Add to cart')"
 # How long a click that may still be in flight has to show up before the retry
@@ -1501,6 +1510,13 @@ class SurfaceDriver:
                 if attempt == _CART_CLICK_ATTEMPTS:
                     # Without this the run would judge a checkout the cart never
                     # made reachable, or record a write that never happened.
+                    if not clicks:
+                        # Every pass found the product page's badge holding
+                        # something the cart page then said was not there. The
+                        # step cannot add to a cart it cannot read the size of,
+                        # and it never clicked, so it does not say it added.
+                        raise RuntimeError("the cart page reads empty and the product page for %s says otherwise, "
+                                           "so nothing was clicked" % self.masker.text(product_route))
                     raise RuntimeError("the cart is still empty after adding %s in %d click(s)"
                                        % (self.masker.text(product_route), clicks))
                 # An empty cart after a click Playwright delivered to an enabled
@@ -1569,12 +1585,29 @@ class SurfaceDriver:
         # the bundle. Both bound what the retry doubles -- see `ensure_cart`.
         button.wait_for(state="visible", timeout=15000)
         deadline = time.monotonic() + 5
-        while not button.is_enabled():
+        # The reading carries its own timeout: Playwright's default is 30s, and
+        # a button that stopped resolving would blow the poll's bound and report
+        # a raw Playwright timeout instead of what happened here.
+        while not button.is_enabled(timeout=5000):
             if time.monotonic() >= deadline:
                 raise RuntimeError("the add-to-cart button on %s never became enabled"
                                    % self.masker.text(product_route))
             page.wait_for_timeout(250)
-        button.click()
+        clicked = False
+        try:
+            # The badge rising says some add landed, not that this click's did:
+            # on a retry the first click's late add satisfies that wait at once
+            # and the second add then has no wait of its own. This click's own
+            # POST answering is what says its add committed before the cart is
+            # read. A click that draws no such answer -- a theme that adds by
+            # another route, or the dead element this retry exists for -- falls
+            # back to the badge wait and the cart reading in `ensure_cart`.
+            with page.expect_response(_is_cart_update, timeout=30000):
+                button.click()
+                clicked = True
+        except Exception:  # noqa: BLE001 -- see above; a click that failed is re-raised
+            if not clicked:
+                raise
         return True
 
     def check_selectors(self, targets: Iterable[OpenTarget]) -> None:
