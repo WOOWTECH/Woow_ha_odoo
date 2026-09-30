@@ -102,11 +102,12 @@ The twelve others are `web.assets_frontend`, `web.assets_frontend_lazy`,
 four rewrites reach the backend web client and no frontend or website-editor
 bundle.
 
-The third reaches more, and that is wanted: `loadImageInfo` exists twice in
-Odoo 18, once in `html_editor` (`docHref.startsWith("about:")`, calling
-`/html_editor/get_image_info`) and once in the legacy `web_editor`
-(`docHref==="about:srcdoc"`, calling `/web_editor/get_image_info`). The pattern
-is the one line they share, both routes are the same controller method, and
+The fifth row, `const relativeSrc=srcUrl.pathname;`, reaches more, and that is
+wanted: `loadImageInfo` exists twice in Odoo 18, once in `html_editor`
+(`docHref.startsWith("about:")`, calling `/html_editor/get_image_info`) and
+once in the legacy `web_editor` (`docHref==="about:srcdoc"`, calling
+`/web_editor/get_image_info`). The pattern is the one line they share, both
+routes are the same controller method, and
 both need the same root-relative path — so one rule covers the backend and the
 frontend editor alike. Only the `html_editor` variant is captured here, since
 it is the one the To-do form loads; `test_the_fixtures_are_verbatim_regions`

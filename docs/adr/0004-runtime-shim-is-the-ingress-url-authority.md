@@ -597,7 +597,7 @@ Generated rewrite could ever derive it.
 `U-A6`'s probe list is *not* extended; its `innerHTML` probe still records the
 escape as the decision it is. What proves this fix is the Static-tier contract
 (`odoo18ce/tests/test_ingress_todo_description.py`: the two globals executed
-against the rendered shim, all three patterns counted in captured bundle
+against the rendered shim, all five patterns counted in captured bundle
 excerpts, and each rewritten expression run in node with the globals present
 and absent) plus the Live rerun, which is the maintainer's after Deploy: the
 To-do form at `route_escape=0`/`http_4xx_5xx=0`/`console_error=0` on both
