@@ -1418,7 +1418,7 @@ class SurfaceDriver:
             if before:
                 return {"model": "sale.order", "id": order, "items": before,
                         "how": "the cart already held %d item(s); nothing was added" % before}
-            clicks, filled_first, settled = 0, False, True
+            clicks, filled_first, unsettled = 0, False, ""
             for attempt in range(1, _CART_CLICK_ATTEMPTS + 1):
                 if self.ingress:
                     # Minutes of waits live in this loop, against the
@@ -1432,9 +1432,17 @@ class SurfaceDriver:
                     try:
                         self.ingress.keep_alive()
                     except Exception as error:  # noqa: BLE001 -- turned into the harness error it is
+                        # This stops the run, so there will be no record to put
+                        # a cart in: a line the first click already committed
+                        # would go unaccounted for. The message carries it, on
+                        # the one database ADR 0012 allows the write on.
+                        left = self._cart_after_failure()[0] if clicks else None
                         raise RuntimeError("crawler configuration: the ingress session could not be refreshed "
-                                           "during the cart step (%s)"
-                                           % (str(error).splitlines() or [""])[0]) from None
+                                           "during the cart step (%s)%s"
+                                           % ((str(error).splitlines() or [""])[0],
+                                              "" if not left else
+                                              "; this run left %s:%s holding %s item(s), which no record names"
+                                              % (left["model"], left["id"], left["items"]))) from None
                 if attempt > 1:
                     # The add may still have been in flight when the reading
                     # above called the cart empty, and clicking again would add
@@ -1487,7 +1495,7 @@ class SurfaceDriver:
                     raise RuntimeError("the cart page did not show its item count after adding %s in %d click(s)"
                                        % (self.masker.text(product_route), clicks))
                 if after and clicks > 1:
-                    settled = False
+                    unsettled = "changing"
                     # More than one click means the record has to name the
                     # quantity the cart settled at. A reading taken while the
                     # second update was still committing names the smaller one;
@@ -1497,11 +1505,16 @@ class SurfaceDriver:
                     for _ in range(2):
                         page.wait_for_timeout(_CART_SETTLE_MS)
                         again, again_order = self._cart(page)
+                        if again is None:
+                            # Not a cart that moved -- a page that stopped
+                            # saying, which is the distinction the whole step
+                            # turns on. Another reading may still settle it.
+                            unsettled = "unreadable"
+                            continue
                         if again == after:
-                            settled = True
+                            unsettled = ""
                             break
-                        if again is not None:
-                            after, order = again, again_order
+                        after, order, unsettled = again, again_order, "changing"
                 if after:
                     break
                 # The badge that said otherwise was wrong, or what it saw is
@@ -1540,12 +1553,15 @@ class SurfaceDriver:
                     if after > 1:
                         how += (", and the cart holds more than the one item the step meant to add"
                                 " -- a product that adds several, or a click that was not lost after all")
-                    if not settled:
+                    if unsettled == "changing":
                         # Read as "this size is the last reading, not a settled
                         # one": an update still committing lands after it, and
                         # the other surface reading the larger cart is then a
                         # difference in the evidence and not in the screens.
                         how += "; the cart was still changing when the run left it"
+                    elif unsettled == "unreadable":
+                        how += ("; the cart page stopped saying how many items it holds,"
+                                " so this size is the last reading that did")
             return {"model": "sale.order", "id": order, "items": after, "how": how}
         finally:
             page.close()

@@ -914,6 +914,28 @@ class CartStepTests(unittest.TestCase):
         self.assertEqual([write["items"] for write in observation.writes], [1])
         self.assertIn("cart not filled", observation.result)
 
+    def test_a_run_stopped_by_the_session_names_the_line_it_had_already_added(self) -> None:
+        # The run stops, so no record will be written and the line the first
+        # click committed would go unaccounted for. The message carries it.
+        target, = parse_targets([CART_TARGET])
+        driver = cart_driver(FakeContext(FakePage([0, 0]), FakePage([1])))
+        driver.ingress = mock.Mock()
+        driver.ingress.keep_alive.side_effect = [None, RuntimeError("the websocket went away")]
+        with self.assertRaises(RuntimeError) as caught:
+            driver.open_screen(target)
+        self.assertTrue(is_configuration_error(caught.exception))
+        self.assertIn("this run left sale.order:7 holding 1 item(s), which no record names",
+                      str(caught.exception))
+
+    def test_a_cart_page_that_stops_answering_the_confirming_reading_says_that(self) -> None:
+        # Two confirming readings that said nothing are not a cart that changed:
+        # that is the distinction the whole step turns on.
+        page = FakePage([0, 0, 0, 1, None, None])
+        write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual(write["items"], 1)
+        self.assertTrue(write["how"].endswith("; the cart page stopped saying how many items it holds,"
+                                             " so this size is the last reading that did"), write["how"])
+
     def test_a_session_that_will_not_refresh_inside_the_loop_stops_the_run(self) -> None:
         # Anything the cart step raises but a configuration error becomes
         # `cart not filled` on the observation -- a blocker GAP on a screen
