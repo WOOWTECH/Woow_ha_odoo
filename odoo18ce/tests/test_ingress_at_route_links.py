@@ -494,6 +494,23 @@ def test_a_cross_host_link_is_left_alone() -> None:
     )])
 
 
+def test_a_link_to_another_origin_on_the_same_host_keeps_odoos_own_value() -> None:
+    """The popover admits a link by *hostname*, which is not an origin.
+
+    An absolute link to the add-on's own 8069 listener shares the Home
+    Assistant hostname and so reaches the builder, with a path that has no
+    Ingress prefix and wants none. It must come out as Odoo built it.
+    """
+    other = "http://ha.example:8069"
+    node([popover_case(
+        "popover, the same host on another port",
+        INGRESS_PREFIX,
+        rewritten(POPOVER),
+        other + LINK,
+        {"opened": [other + "/@" + LINK], "prevented": 1},
+    )])
+
+
 def test_the_popover_on_the_public_origin_is_unchanged() -> None:
     node([
         popover_case("popover, no prefix", "", rewritten(POPOVER, ""),

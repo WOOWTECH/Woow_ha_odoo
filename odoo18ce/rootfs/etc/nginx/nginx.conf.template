@@ -802,9 +802,19 @@ http {
             # used rather than stranded. The tag takes the interpolated pathname
             # as its second parameter, the way any tag does.
             #
-            # With no Ingress prefix `P` is empty and the tag returns `"/@"+p`,
-            # which is what Odoo wrote; this rule is ingress-only in any case.
-            sub_filter 'currentUrl.pathname=`/@' 'currentUrl.pathname=function(s,p){var P="$safe_ingress_path";if(P&&p.indexOf(P)===0)p=p.slice(P.length)||"/";return P+"/@"+p}`';
+            # Two ways out with Odoo's own value, both returning `"/@"+p`. With
+            # no Ingress prefix there is nothing to move, and this rule is
+            # ingress-only in any case. And the prefix belongs on a path of
+            # *this* origin only: the popover admits a link by hostname, which
+            # says nothing about the port or the scheme, so an absolute link to
+            # the add-on's own 8069 listener reaches this builder with a path
+            # that has no Ingress prefix and wants none. `path()` refuses the
+            # same case with `x.origin===location.origin`; the tag reads
+            # `currentUrl` from the scope it is written into, where both
+            # builders hold it, because a tag is handed the interpolation and
+            # not the URL it came from. redirect.js's `currentUrl` is
+            # `location.href`, so it always passes.
+            sub_filter 'currentUrl.pathname=`/@' 'currentUrl.pathname=function(s,p){var P="$safe_ingress_path";if(!P||currentUrl.origin!==location.origin)return "/@"+p;if(p.indexOf(P)===0)p=p.slice(P.length)||"/";return P+"/@"+p}`';
             # The popover's guard, which the rewrite above needs. `_onPreviewLinkClick`
             # leaves a link that is already in backend form alone, and it tests
             # the raw pathname against `/@/` -- under Ingress that pathname reads
