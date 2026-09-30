@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.8 — 2026-09-30
 
 ### Fixed
 - The Release build no longer reads the GitHub Actions cache, only the
