@@ -1407,8 +1407,14 @@ class SurfaceDriver:
             if before:
                 return {"model": "sale.order", "id": order, "items": before,
                         "how": "the cart already held %d item(s); nothing was added" % before}
-            late = False
+            clicks, filled_first = 0, False
             for attempt in range(1, _CART_CLICK_ATTEMPTS + 1):
+                if self.ingress:
+                    # Up to nine minutes of waits live in this loop, against the
+                    # Supervisor's fifteen-minute ingress window (U-B6): a
+                    # session that lapses here makes every request after it read
+                    # as a product GAP.
+                    self.ingress.keep_alive()
                 if attempt > 1:
                     # The add may still have been in flight when the reading
                     # above called the cart empty, and clicking again would add
@@ -1426,25 +1432,32 @@ class SurfaceDriver:
                         raise RuntimeError("the cart page did not show its item count before clicking "
                                            "%s a second time" % self.masker.text(product_route))
                     if after:
-                        late = True
+                        filled_first = True
                         break
-                self._click_add_to_cart(page, product_route)
-                try:
-                    # The button posts to /shop/cart/update and the navbar badge
-                    # rises when that answers. Some themes navigate to the cart
-                    # first; the badge is on that page too. Leaving before it
-                    # answers would cancel the write and leave the cart empty.
-                    page.wait_for_function(_CART_GREW_JS, arg=0, timeout=30000)
-                except Exception:  # noqa: BLE001 -- the cart page below is the real check
-                    pass
-                if attempt > 1:
-                    # A badge that rose cannot say which of the two clicks
-                    # raised it, so the second click gets the same grace the
-                    # reading before it got and the cart is read after that.
-                    # What that reading says is what the record says: a cart
-                    # that took both clicks is reported at the quantity both
-                    # left it, not the one the wait happened to see.
-                    page.wait_for_timeout(_CART_SETTLE_MS)
+                if self._click_add_to_cart(page, product_route):
+                    clicks += 1
+                    try:
+                        # The button posts to /shop/cart/update and the navbar badge
+                        # rises when that answers. Some themes navigate to the cart
+                        # first; the badge is on that page too. Leaving before it
+                        # answers would cancel the write and leave the cart empty.
+                        page.wait_for_function(_CART_GREW_JS, arg=0, timeout=30000)
+                    except Exception:  # noqa: BLE001 -- the cart page below is the real check
+                        pass
+                    if clicks > 1:
+                        # A badge that rose cannot say which of the two clicks
+                        # raised it, so the second click gets the same grace the
+                        # reading before it got and the cart is read after that.
+                        # What that reading says is what the record says: a cart
+                        # that took both clicks is reported at the quantity both
+                        # left it, not the one the wait happened to see.
+                        page.wait_for_timeout(_CART_SETTLE_MS)
+                else:
+                    # The product page came up with a cart already holding
+                    # something, so there was nothing to click: the add landed
+                    # while that navigation was loading, which is the same late
+                    # add the grace above catches and the same doubling.
+                    filled_first = True
                 after, order = self._cart(page)
                 if after is None:
                     # The page could not say, which is not the same as empty and
@@ -1452,33 +1465,51 @@ class SurfaceDriver:
                     # in the message: what the run clicked is what it has to
                     # account for, whatever the page would not say.
                     raise RuntimeError("the cart page did not show its item count after adding %s in %d click(s)"
-                                       % (self.masker.text(product_route), attempt))
+                                       % (self.masker.text(product_route), clicks))
                 if after:
                     break
+                # The badge that said otherwise was wrong, or what it saw is
+                # gone; either way this is the empty cart the retry is for.
+                filled_first = False
                 if attempt == _CART_CLICK_ATTEMPTS:
                     # Without this the run would judge a checkout the cart never
                     # made reachable, or record a write that never happened.
                     raise RuntimeError("the cart is still empty after adding %s in %d click(s)"
-                                       % (self.masker.text(product_route), attempt))
+                                       % (self.masker.text(product_route), clicks))
                 # An empty cart after a click Playwright delivered to an enabled
                 # button is the handler race `_click_add_to_cart` cannot see:
                 # the element was there, its listener was not. The next pass
                 # re-opens the product page and clicks again, and that is the
                 # whole retry -- the bound above is what keeps it one.
-            how = "added the product on %s to the cart (0 -> %d items)" % (self.masker.text(product_route), after)
-            if late:
-                how += "; the click landed after the reading that called the cart empty, so it was not clicked again"
-            elif attempt > 1:
-                how += "; the first %d click(s) read as lost, so it was clicked %d times" % (attempt - 1, attempt)
-                if after > 1:
-                    how += (", and the cart holds more than the one item the step meant to add,"
-                            " because one of those clicks had landed after all")
+            if not clicks:
+                # Nothing was clicked, so nothing here added anything: the cart
+                # filled between the reading that called it empty and the page
+                # that would have been clicked.
+                how = ("the cart held %d item(s) by the time the product page for %s was up; nothing was added"
+                       % (after, self.masker.text(product_route)))
+            else:
+                how = "added the product on %s to the cart (0 -> %d items)" % (self.masker.text(product_route), after)
+                if filled_first:
+                    how += ("; the click landed after the reading that called the cart empty,"
+                            " so it was not clicked again")
+                elif clicks > 1:
+                    how += "; the first %d click(s) read as lost, so it was clicked %d times" % (clicks - 1, clicks)
+                    if after > 1:
+                        how += (", and the cart holds more than the one item the step meant to add"
+                                " -- a product that adds several, or a click that was not lost after all")
             return {"model": "sale.order", "id": order, "items": after, "how": how}
         finally:
             page.close()
 
-    def _click_add_to_cart(self, page, product_route: str) -> None:
+    def _click_add_to_cart(self, page, product_route: str) -> bool:
         """Open the product page and click add-to-cart once it can be clicked.
+
+        False when it found nothing to click for: the badge on the page this
+        navigation just rendered already shows a cart with something in it, so
+        an add landed while it was loading and clicking would add the quantity
+        twice. A badge on a page other than the cart can be a step behind, so a
+        low reading proves nothing and is not trusted -- a reading above zero is
+        the cart saying it is not empty, and that is all this asks of it.
 
         `domcontentloaded` is when the button exists, not when it works: the
         handler is attached by the website bundle, which is still loading then,
@@ -1496,6 +1527,8 @@ class SurfaceDriver:
         a cart that stayed empty rather than failing the run on the first miss.
         """
         page.goto(self.base + product_route, wait_until="load", timeout=60000)
+        if (page.evaluate(_CART_QUANTITY_JS) or 0) > 0:
+            return False
         button = page.locator(_ADD_TO_CART).first
         # A button that is not there 15s after `load` is a shop the run should
         # report on, not wait for; the poll after it is shorter still, since a
@@ -1509,6 +1542,7 @@ class SurfaceDriver:
                                    % self.masker.text(product_route))
             page.wait_for_timeout(250)
         button.click()
+        return True
 
     def check_selectors(self, targets: Iterable[OpenTarget]) -> None:
         """Refuse an `expect_selector` Playwright cannot read, before judging.
@@ -1550,6 +1584,8 @@ class SurfaceDriver:
         """
         page = None
         try:
+            if self.ingress:
+                self.ingress.keep_alive()
             page = self.context.new_page()
             items, order = self._cart(page)
         except Exception as error:  # noqa: BLE001 -- the failure that brought us here is the story

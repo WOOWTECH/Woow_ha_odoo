@@ -667,22 +667,28 @@ class FakePage:
 
     `carts` is what each `/shop/cart` reading reports, in order -- None for a
     page that did not say -- and `order` is the `data-order-id` on the badge.
+    `badges` is what the badge on a product page reports, in order, 0 once they
+    run out: on any page but the cart that reading can be a step behind, and the
+    code treats it as a reading only when it is above zero.
     Every call lands in `log`, so a test can say what happened in what order.
     """
 
-    def __init__(self, carts, *, order="7", enabled=(), grew=True) -> None:
+    def __init__(self, carts, *, order="7", enabled=(), grew=True, badges=()) -> None:
         self.carts = list(carts)
         self.order = order
         self.enabled = list(enabled)
         self.grew = grew
+        self.badges = list(badges)
+        self.path = ""
         self.log: list[str] = []
         self.opened: list[tuple[str, str]] = []
         self.clicks = 0
         self.closed = False
 
     def goto(self, url: str, **kwargs) -> None:
-        self.opened.append((urlsplit(url).path, kwargs.get("wait_until")))
-        self.log.append("goto:%s" % urlsplit(url).path)
+        self.path = urlsplit(url).path
+        self.opened.append((self.path, kwargs.get("wait_until")))
+        self.log.append("goto:%s" % self.path)
 
     def locator(self, selector: str) -> FakeLocator:
         return FakeLocator(self, selector)
@@ -690,9 +696,13 @@ class FakePage:
     def evaluate(self, script: str, *args):
         if "data-order-id" in script:
             return self.order
-        count = self.carts.pop(0) if self.carts else None
-        self.log.append("cart:%s" % count)
-        return count
+        if self.path == "/shop/cart":
+            count = self.carts.pop(0) if self.carts else None
+            self.log.append("cart:%s" % count)
+            return count
+        badge = self.badges.pop(0) if self.badges else 0
+        self.log.append("badge:%s" % badge)
+        return badge
 
     def wait_for_function(self, script: str, **kwargs) -> None:
         self.log.append("grew?%s" % self.grew)
@@ -749,7 +759,8 @@ class CartStepTests(unittest.TestCase):
         write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
         self.assertEqual(page.log, [
             "goto:/shop/cart", "cart:0",
-            "goto:/shop/product/desk-1", "wait:visible", "enabled?False", "slept", "enabled?True", "click",
+            "goto:/shop/product/desk-1", "badge:0",
+            "wait:visible", "enabled?False", "slept", "enabled?True", "click",
             "grew?True", "goto:/shop/cart", "cart:1",
         ])
         # The product page is opened on `load`, not `domcontentloaded`: the
@@ -792,14 +803,16 @@ class CartStepTests(unittest.TestCase):
         # it, so the reading taken after the grace that follows is the record.
         # `/shop/cart/update` increments the line it finds, so both clicks
         # landing leaves qty 2 -- a bigger cart than the other surface will
-        # judge, and reporting one item would hide it.
+        # judge, and reporting one item would hide it. A product that adds
+        # several at once looks the same from here, so the record names both
+        # readings of it rather than asserting the one it cannot tell.
         page = FakePage([0, 0, 0, 2])
         write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
         self.assertEqual((page.clicks, write["items"]), (2, 2))
         self.assertEqual(write["how"], "added the product on /shop/product/desk-1 to the cart (0 -> 2 items)"
                                        "; the first 1 click(s) read as lost, so it was clicked 2 times,"
-                                       " and the cart holds more than the one item the step meant to add,"
-                                       " because one of those clicks had landed after all")
+                                       " and the cart holds more than the one item the step meant to add"
+                                       " -- a product that adds several, or a click that was not lost after all")
 
     def test_a_click_that_landed_late_is_not_clicked_again(self) -> None:
         # The add was still in flight when the reading called the cart empty. A
@@ -812,6 +825,26 @@ class CartStepTests(unittest.TestCase):
         self.assertEqual(write["how"], "added the product on /shop/product/desk-1 to the cart (0 -> 1 items)"
                                        "; the click landed after the reading that called the cart empty,"
                                        " so it was not clicked again")
+
+    def test_a_cart_that_filled_while_the_product_page_loaded_is_not_clicked(self) -> None:
+        # The grace reading is taken before a navigation that can take a minute,
+        # so the add can land during it. The badge on the page that comes up
+        # says the cart is not empty, and clicking would add the quantity twice.
+        page = FakePage([0, 0, 0, 1], badges=(0, 1))
+        write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual((page.clicks, write["items"]), (1, 1))
+        self.assertEqual(write["how"], "added the product on /shop/product/desk-1 to the cart (0 -> 1 items)"
+                                       "; the click landed after the reading that called the cart empty,"
+                                       " so it was not clicked again")
+
+    def test_a_cart_that_was_never_empty_records_that_nothing_was_added(self) -> None:
+        # Nothing was clicked at all, so the record must not say a product was
+        # added: the cart filled between the reading and the page.
+        page = FakePage([0, 4], badges=(4,))
+        write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual((page.clicks, write["items"]), (0, 4))
+        self.assertEqual(write["how"], "the cart held 4 item(s) by the time the product page"
+                                       " for /shop/product/desk-1 was up; nothing was added")
 
     def test_the_retry_is_bounded_and_the_step_gives_up_saying_how_often_it_tried(self) -> None:
         page = FakePage([0, 0, 0, 0])
