@@ -32,6 +32,22 @@ touches. The
 478 MiB around it moves when Debian or PostgreSQL moves, which is a
 quarterly event, and the small additions are a few MiB each.
 
+What a host downloads is the compressed layer, not the `.deb`, and the
+two differ: the `.deb` is xz, the layer is gzip of the installed tree.
+Measured on the published 0.4.6 and 0.4.7 images, both architectures:
+
+| layer | amd64 | aarch64 |
+|---|---:|---:|
+| (a) the stable packages and the `.deb`'s `Depends` | 346.6 MiB | 342.4 MiB |
+| (b) the Odoo `.deb` alone | 344.8 MiB | 344.8 MiB |
+| (c) `python3-yaml`, `python3-pycryptodome` | 2.4 MiB | 2.4 MiB |
+| the add-ons clone / rootfs overlay / chmod | 31.0 / 0.1 / 0.0 MiB | same |
+
+So (b) is 345 MiB on the wire, not 235, and (a) is 347 MiB, not 478. The
+split still takes an Odoo bump from the whole 690 MiB layer to about
+380 MiB — (b) and the layers under it — and 0.4.7, the first bump on this
+layout, measured 378.5 MiB against 0.4.6 on amd64.
+
 We decided that **the image is built as three layers — (a) the stable
 packages including the Odoo `.deb`'s own `Depends`, (b) the `.deb` alone,
 (c) small apt additions — and a small apt addition goes in (c).** The two
@@ -39,9 +55,9 @@ big layers change only for a named event:
 
 - an Odoo bump — (b), and the layers under it: the two `ODOO_DEB_*` ARGs
   sit above (c), so a bump re-sends (c), the add-ons clone, the rootfs
-  overlay and the chmod step as well — about 33 MiB on top of the 235 MiB
-  package, almost all of it the clone. Layer (a) is what it does not
-  touch.
+  overlay and the chmod step as well — about 33 MiB on top of the 345 MiB
+  layer (b), about 380 MiB in all, almost all of the 33 the clone. Layer
+  (a) is what it does not touch.
 - a base-image bump
 - a PostgreSQL major version change
 - a change to the pgdg repository setup
@@ -129,15 +145,17 @@ runs.
   re-runs apt. The rootfs is what changes on nearly every Release;
   `WOOW_ADDONS_REF` has moved once, and the clone is below (c) because
   that is the order #154 settled, not because it moves.
-- **The saving is only as durable as the CI build cache.** Both build jobs
-  use `type=gha` with a scope per architecture, and GitHub evicts a cache
-  entry that has not been read for seven days. `build-aarch64` runs only
-  when the version changes (`ci.yml`), so an aarch64 Release more than a
-  week after the previous one finds no cache, rebuilds layer (a) and
-  re-sends all of it — the #153 failure, in the one place this ADR is
-  supposed to prevent it. A cache that does not expire is the sibling
-  issue's to choose; this ADR only records that the layout does not help
-  without one.
+- **The saving is only as durable as the Release build's layer cache.**
+  When this ADR was written that cache was the GitHub Actions one, which
+  GitHub evicts after seven days unused, and `build-aarch64` runs only
+  when the version changes (`ci.yml`), so an aarch64 Release a week after
+  the previous one found no cache, rebuilt layer (a) and re-sent all of it
+  — the #153 failure, in the one place this ADR is supposed to prevent
+  it. The sibling issue (#155) moved the Release build's cache to
+  `ghcr.io/woowtech/woow-ha-odoo-<arch>:buildcache`, written only from
+  `main` and never evicted, and #219 made it the Release build's only
+  cache source (postscript below). What is left is a cache that is lost
+  or overwritten, which is on the event list above.
 - **Base-image bumps are split from Odoo bumps.** The weekly `odoo-bump`
   opens one pull request that can carry both (ADR 0002); a base bump is
   merged quarterly or when a security notice needs it, and an Odoo bump on
@@ -172,11 +190,12 @@ runs.
   that proves the new SHA256 and the new package — the gate
   [ADR 0002](0002-odoo-nightly-bumps-are-human-merged.md) rests on — to
   catch a staleness that costs layer (b) size and nothing else.
-- **The exact compressed size of each layer** is measured by this pull
-  request's CI build, for amd64, and recorded in the pull request
-  description. The agent container that wrote this ADR has no Docker and
-  could not measure it; the numbers above are `.deb` download sizes, which
-  are what the split was decided on.
+- **The exact compressed size of each layer** could not be measured by
+  the pull request that landed this layout (#208): its agent container had
+  no Docker, and CI prints no per-layer figure. The table of compressed
+  sizes above was read from the published 0.4.6 and 0.4.7 manifests on
+  2026-09-30; the `.deb` download sizes are what the split was decided
+  on.
 
 ## When to revisit
 
