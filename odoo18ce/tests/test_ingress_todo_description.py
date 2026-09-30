@@ -400,7 +400,7 @@ assert.equal(
 // The name the walk consumes may hold a `:`, a `.` or a `_`, because an
 // attribute it cannot tokenise is one whose value it would search inside --
 // which is the misalignment above, reached by another spelling.
-for (const name of ["xlink:title", "data-x_y", "ns:a.b"]) {
+for (const name of ["xlink:title", "data-x_y", "ns:a.b", "_a", "2a", "-a", "a%b", "a~b"]) {
   assert.equal(
     markupIn('<img ' + name + '=' + "'" + 'a" src="/x' + "'" + ' src="' + PICTURE + '">'),
     '<img ' + name + '=' + "'" + 'a" src="/x' + "'" + ' src="' + P + PICTURE + '">'
@@ -421,9 +421,18 @@ for (const eq of [" = ", "\t=\t", "\n=\n", "= ", " ="]) {
 // strip would store `/x`, moving the link to another host.
 assert.equal(markupIn('<img src="/' + String.fromCharCode(92) + 'ha.example:8123/x.png"/>'),
   '<img src="/' + String.fromCharCode(92) + 'ha.example:8123/x.png"/>');
-// And an unquoted value that swallows the next attribute (which is how a
-// browser parses it too) leaves the inner `src` preceded by a quote rather
-// than whitespace, so it is not a token either.
+// An unquoted value is consumed as a token too, so an attribute written that
+// way cannot make the walk restructure the tag either -- and what gets
+// prefixed in `<img alt= href='/a src="/q"' >` is the `src` a browser also
+// reads there, because it ends `alt`'s unquoted value at the whitespace.
+assert.equal(
+  markupIn('<img alt= href=' + "'" + '/a src="' + PICTURE + '"' + "'" + ' >'),
+  '<img alt= href=' + "'" + '/a src="' + P + PICTURE + '"' + "'" + ' >'
+);
+// An unquoted value that is itself a URL is not prefixed: there is no
+// delimiter to put back. It keeps escaping rather than being corrupted, and so
+// does one that swallows the attribute after it, which is how a browser parses
+// `alt=a"src="/x"` as well.
 assert.equal(markupIn('<img alt=a"src="' + PICTURE + '" >'),
   '<img alt=a"src="' + PICTURE + '" >');
 // Attributes separated by a newline are still attributes.

@@ -515,28 +515,32 @@ on both surfaces. Walking makes the `alt` value one token, so the `src` inside
 it is never seen and the real `src` is the one prefixed. The shape is in the
 Static-tier test, named for what it is.
 
-Which is why the walk takes more than it prefixes: any attribute it cannot
-tokenise is one whose value it searches inside, and that is the same defect
-again. So the *name* it consumes may hold a `:`, a `.` or a `_`
-(`xlink:title`), and whitespace around the `=` is consumed and put back
-unchanged (`alt = '...'`), even though neither is a name or a spelling anything
-will ever be prefixed for. Each of those spellings reached the misalignment in
-its own review round, which is the reason to state the principle and not only
-the cases.
+Which is why the walk **consumes more than it prefixes**, and that is the rule
+rather than a list of cases: any attribute it cannot tokenise is one whose
+value it searches inside, and that is the same defect again. So the name it
+consumes is the HTML attribute-name shape -- anything but whitespace, `=`,
+`/`, `<`, `>` or a quote -- and not the four names anything is prefixed for;
+the whitespace around the `=` is consumed and put back unchanged; and an
+unquoted value is consumed as a token too, even though nothing unquoted is
+ever prefixed, because there is no delimiter to put back. Four review rounds
+each found the same defect through a different spelling -- a `:` in the name,
+a `.` or `_`, `alt = '...'`, `alt= href='...'` -- which is why the principle
+is written here and not only the shapes it has been reached by.
 
-Three shapes stay outside the pair, and all three fail safely -- the URL keeps
+Two shapes stay outside the pair, and both fail safely -- the URL keeps
 escaping rather than being corrupted. A start tag holding a `>` inside an
-attribute value is not recognised as a tag. An unquoted value has no closing
-delimiter to consume, whatever surrounds its `=`. And an unquoted value that swallows the attribute after
-it (`alt=a"src="/x"`, which is how a browser parses it too) leaves the inner
-`src` preceded by a quote rather than by whitespace, which the walk requires.
+attribute value is not recognised as a tag at all. And an unquoted value that
+is itself a URL is not prefixed, whatever surrounds its `=`, including the one
+that swallows the attribute after it (`alt=a"src="/x"`, which is how a browser
+parses it too).
+
 What *is* reached and is not really an attribute is markup nested inside
 another attribute's value, and a start tag written inside a comment: both are
 prefixed -- visible in the editor until the next load, never in the record,
 because `OUT` removes the prefix from the whole string.
 
 **Why `OUT` is wider than `IN` rather than its mirror.** It is not only that
-`IN` can reach the two shapes above. The shim's own wrappers prefix attributes
+`IN` reaches the two not-really-attribute shapes above. The shim's own wrappers prefix attributes
 `IN` never touches -- `xlink:href` through `setAttribute`, `srcset` through the
 property setter -- and `savePendingImages` prefixes an image after the editor
 is done. Removing every occurrence is the only rule that covers all of them,

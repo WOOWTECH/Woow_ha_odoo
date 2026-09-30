@@ -180,27 +180,35 @@ http {
     # or `>`), so an attribute-shaped run of text -- an escaped code sample,
     # prose, an end tag -- is not a candidate, which a single attribute regex
     # over the whole string could not promise. Then `mA` walks that tag
-    # *attribute by attribute*, consuming each `name="value"` whole, and only
-    # a name in `mU` with a value beginning `/` is handed to `path()`. Walking
-    # rather than searching is what keeps an earlier attribute's contents out
-    # of it: in `<img alt='a" src="/x' src="/y">` the `alt` value is consumed
-    # as one token, so the `src=` inside it is never seen and the real `src`
-    # is still the one prefixed. A pattern that searched for `src="` would
-    # open its value at the wrong quote and restructure the tag -- losing the
-    # real `src` -- and the strip cannot undo that, because it only removes
-    # the prefix.
+    # *attribute by attribute*, and only a name in `mU` with a quoted value
+    # beginning `/` is handed to `path()`.
     #
-    # Three shapes stay outside the pair, and all three fail safely -- the
-    # URL keeps escaping rather than being corrupted. A start tag holding a
-    # `>` inside an attribute value is not recognised as a tag. An unquoted
-    # value has no closing delimiter for `mA` to consume, so the attribute is
-    # not a token. And an attribute whose unquoted value swallows the next
-    # one (`alt=a"src="/x"`, which is how a browser parses it too) leaves the
-    # inner `src` preceded by a quote rather than by whitespace, which `mA`
-    # requires. What *is* reached and is not really an attribute is markup
-    # nested inside another attribute's value, and a start tag written inside
-    # a comment: both are prefixed, and the strip undoes that on the way to
-    # the record.
+    # Walking rather than searching is what keeps an earlier attribute's
+    # contents out of it: in `<img alt='a" src="/x' src="/y">` the `alt` value
+    # is consumed as one token, so the `src=` inside it is never seen and the
+    # real `src` is still the one prefixed. A pattern that searched for
+    # `src="` would open its value at the wrong quote and restructure the tag
+    # -- losing the real `src` -- and the strip cannot undo that, because it
+    # only removes a prefix.
+    #
+    # Which is why the walk **consumes more than it prefixes**, and that is
+    # the rule rather than the list: any attribute it cannot tokenise is an
+    # attribute whose value it then searches inside, which is the same defect
+    # again. So the name is anything but whitespace, `=`, `/`, `<`, `>` or a
+    # quote -- the HTML attribute-name shape, not the four names -- the
+    # whitespace around the `=` is taken and put back unchanged, and an
+    # **unquoted** value is consumed as a token too, even though nothing
+    # unquoted is ever prefixed (there is no delimiter to put back). Four
+    # review rounds each found this defect through a different spelling: a
+    # `:` in the name, a `.` or `_`, `alt = '...'`, and `alt= href='...'`.
+    #
+    # Two shapes stay outside the pair and both fail safely -- the URL keeps
+    # escaping rather than being corrupted. A start tag holding a `>` inside
+    # an attribute value is not recognised as a tag at all. And an unquoted
+    # value that is itself a URL is not prefixed. What *is* reached and is
+    # not really an attribute is markup nested inside another attribute's
+    # value, and a start tag written inside a comment: both are prefixed, and
+    # the strip undoes that on the way to the record.
     #
     # Only the four attributes whose whole value is one URL are prefixed:
     # `src`, `href`, `action`, `data-src`. `srcset` is a candidate list
@@ -212,15 +220,8 @@ http {
     # end of it. The name test is case-insensitive, because `mT` accepts an
     # uppercase tag name and `<IMG SRC="...">` is legal HTML somebody can
     # paste into the code view, and it is an *exact* name, so
-    # `data-original-src` is not a `data-src`. The *name* class the walk
-    # consumes is wider than the four on purpose -- it takes a `:`, a `.`
-    # and a `_` as well -- because an attribute the walk cannot tokenise is
-    # one whose value it would then search inside, which is the misalignment
-    # above: `<img xlink:title='a src="/x' src="/y">` needs `xlink:title` to
-    # be one token even though nothing will ever prefix it. Whitespace around
-    # the `=` is taken for the same reason and put back unchanged, because
-    # `alt = '...'` is legal HTML and an attribute the walk skips is an
-    # attribute whose value it searches inside. It is a comma-delimited
+    # `data-original-src` is not a `data-src`. The name the *walk* consumes is
+    # a different and much wider thing, for the reason given above. It is a comma-delimited
     # `indexOf` and not an anchored regex, because an anchored regex needs a
     # `$` and nginx reads a `$` in a quoted parameter as a variable -- with
     # `/i` after it, as an invalid one, which `nginx -t` refuses. The
@@ -266,7 +267,7 @@ http {
     # before this line otherwise, and every rewritten expression falls back to
     # the untouched value when the globals are absent.
     map $upstream_http_content_type $ingress_markup_global_shim {
-        default 'var mT=/<[A-Za-z][^<>]*>/g,mA=/(^|\s)([A-Za-z][-A-Za-z0-9:._]*)(\s*=\s*)([\x22\x27])((?:(?!\4)[^<>])*)\4/g,mU=function(n){return ",src,href,action,data-src,".indexOf(","+n.toLowerCase()+",")>=0},mF=function(m,s,n,e,q,v){return mU(n)&&v.charAt(0)==="/"&&v.charCodeAt(1)!==47&&v.charCodeAt(1)!==92?s+n+e+q+path(v)+q:m},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mA,mF)}):h},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
+        default 'var mT=/<[A-Za-z][^<>]*>/g,mA=/(^|\s)([^\s=\/<>\x22\x27]+)(\s*=\s*)(?:([\x22\x27])((?:(?!\4)[^<>])*)\4|[^\s<>\x22\x27]+)/g,mU=function(n){return ",src,href,action,data-src,".indexOf(","+n.toLowerCase()+",")>=0},mF=function(m,s,n,e,q,v){return q&&mU(n)&&v.charAt(0)==="/"&&v.charCodeAt(1)!==47&&v.charCodeAt(1)!==92?s+n+e+q+path(v)+q:m},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mA,mF)}):h},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
     }
 
     map $upstream_http_content_type $ingress_runtime_shim {
