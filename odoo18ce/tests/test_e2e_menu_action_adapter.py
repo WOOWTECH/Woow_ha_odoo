@@ -5,10 +5,14 @@ Nothing here opens a browser, a websocket or reads credentials.
 """
 import json
 import unittest
+from unittest import mock
+from urllib.parse import urlsplit
 
 from e2e_menu_action_adapter import (
     EVIDENCE_SCHEMA,
+    GET_WRITING_ROUTES,
     WRITE_DATABASE,
+    get_writing_route,
     is_configuration_error,
     session_database,
     Masker,
@@ -42,6 +46,7 @@ from e2e_menu_action_crawler import (
     Manifest,
     MenuRecord,
     NON_MUTATING_OPERATIONS,
+    Operation,
     Surface,
 )
 
@@ -484,8 +489,11 @@ class OpenTargetTests(unittest.TestCase):
         # is every member of that enum, so a WRITE member would be permitted by
         # the read-only policy instead of refused. ADR 0012 bounds it instead.
         self.assertEqual(WRITE_DATABASE, "odoo_parity")
-        reading = parse_targets(['{"module": "m", "target": "/shop/checkout", "expect_selector": "#x"}'])
-        writing = parse_targets(['{"module": "m", "target": "/shop/checkout", "expect_selector": "#x",'
+        # `/shop` is the listing page: its controller writes nothing but the
+        # session, so it is the reading half of this pair. A target that writes
+        # on GET is the subject of the next test, not of this one.
+        reading = parse_targets(['{"module": "m", "target": "/shop", "expect_selector": "#x"}'])
+        writing = parse_targets(['{"module": "m", "target": "/shop", "expect_selector": "#x",'
                                  ' "cart": "/shop/product/desk-1"}'])
         require_write_database(reading, "odoo_test")
         require_write_database(reading, None)
@@ -495,6 +503,133 @@ class OpenTargetTests(unittest.TestCase):
             # that cannot say where it would write may not write.
             with self.assertRaisesRegex(RuntimeError, "odoo_parity"):
                 require_write_database(writing, unknown)
+
+    def test_a_route_that_writes_on_a_get_is_held_to_the_same_database(self) -> None:
+        # `open` navigates with a plain GET, and Odoo's checkout writes while
+        # rendering one, so a target naming such a route writes with no `cart:`
+        # of its own. The bound is the cart's bound, and it is read off the
+        # target list before any page is opened.
+        checkout = parse_targets(['{"module": "m", "target": "/shop/checkout", "expect_selector": "#x"}'])
+        for unknown in ("odoo_test", None):
+            with self.assertRaisesRegex(RuntimeError, "/shop/checkout.*odoo_parity") as caught:
+                require_write_database(checkout, unknown)
+            self.assertTrue(is_configuration_error(caught.exception))
+        # On the bound the same file runs, cart or no cart.
+        require_write_database(checkout, WRITE_DATABASE)
+        with_cart = parse_targets(['{"module": "m", "target": "/shop/checkout", "expect_selector": "#x",'
+                                   ' "cart": "/shop/product/desk-1"}'])
+        require_write_database(with_cart, WRITE_DATABASE)
+
+    def test_the_guard_reads_a_target_list_it_can_only_walk_once(self) -> None:
+        # The guard walks the targets twice -- once for a declared cart, once
+        # for a writing route -- and it takes an `Iterable`, so a generator
+        # would arrive empty at the second walk and permit the write.
+        checkout = parse_targets(['{"module": "m", "target": "/shop/checkout", "expect_selector": "#x"}'])
+        with self.assertRaisesRegex(RuntimeError, "/shop/checkout"):
+            require_write_database((target for target in checkout), "odoo_test")
+
+    def test_a_file_that_writes_both_ways_is_told_both(self) -> None:
+        # Refusing one of them sends the operator back for another browser
+        # launch and login, to be refused for the other.
+        both = parse_targets([
+            '{"module": "m", "target": "/shop", "expect_selector": "#x", "cart": "/shop/desk-1"}',
+            '{"module": "m", "target": "/shop/confirm_order", "expect_selector": "#y"}',
+        ])
+        with self.assertRaises(RuntimeError) as caught:
+            require_write_database(both, "odoo_test")
+        self.assertIn("fills a cart", str(caught.exception))
+        self.assertIn("/shop/confirm_order", str(caught.exception))
+        self.assertIn(WRITE_DATABASE, str(caught.exception))
+
+    def test_every_get_writing_route_is_named_with_where_its_write_was_read(self) -> None:
+        # The list is the guard, so an entry with no citation is an entry nobody
+        # can check against upstream `website_sale`.
+        self.assertLessEqual({"/shop/checkout", "/shop/confirm_order", "/shop/address"},
+                             set(GET_WRITING_ROUTES))
+        # The list is not `website_sale`-only: a known GET write belongs on it
+        # whichever module holds the route.
+        self.assertIn("/my/orders/", GET_WRITING_ROUTES)
+        for prefix, where in GET_WRITING_ROUTES.items():
+            with self.subTest(prefix):
+                # A prefix is matched against a target's path, so it has to be
+                # one: no origin and no query. A trailing slash is allowed and
+                # means "below this, not this" -- and is the only place one can
+                # appear, since `get_writing_route` strips it off a path.
+                self.assertEqual(prefix, urlsplit(prefix).path)
+                self.assertTrue(prefix.startswith("/"))
+                self.assertFalse(prefix.endswith("//"))
+                self.assertTrue(where)
+
+    def test_a_get_writing_route_is_matched_by_prefix_on_a_segment_boundary(self) -> None:
+        # `/shop/payment/validate` is under `/shop/payment` and writes more than
+        # it does; a route that only shares its characters is a different route.
+        self.assertEqual(get_writing_route("/shop/payment/validate"), "/shop/payment/validate")
+        self.assertEqual(get_writing_route("/shop/payment/anything_else"), "/shop/payment")
+        self.assertEqual(get_writing_route("/shop/change_pricelist/3"), "/shop/change_pricelist")
+        self.assertEqual(get_writing_route("/shop/checkout/"), "/shop/checkout")
+        self.assertEqual(get_writing_route("/website/lang/fr_BE"), "/website/lang")
+        # None means "not on this list", not "writes nothing": `/my/orders/<id>`
+        # writes in `sale`, which this list does not cover -- see its comment.
+        # A key ending in a slash bounds what is under it and not the path
+        # itself: the order page writes, the order list page does not.
+        self.assertEqual(get_writing_route("/my/orders/7"), "/my/orders/")
+        self.assertIsNone(get_writing_route("/my/orders"))
+        self.assertIsNone(get_writing_route("/my/orders/"))
+        for outside in ("/shop", "/shop/cartons", "/shop/checkouts", "/my/home",
+                        "/odoo/action-project_todo.project_task_action_todo"):
+            with self.subTest(outside):
+                self.assertIsNone(get_writing_route(outside))
+
+    def test_a_get_writing_route_is_matched_as_odoo_routes_it(self) -> None:
+        # `normalize_route` keeps percent-escapes and repeated slashes on
+        # purpose, and werkzeug unquotes the path before matching, so a target
+        # can spell a writing route in a way the literal prefix misses.
+        for spelling in ("/shop/%63heckout", "/shop//checkout", "/shop/checkout%2F",
+                         "/shop/%70ayment/validate",
+                         # A language segment, which Odoo strips before routing:
+                         # the ordinary spelling on a multilingual site.
+                         "/zh_TW/shop/checkout", "/fr/shop/cart", "/en/website/lang/fr",
+                         # Dot segments, which the browser resolves before it asks.
+                         "/shop/./checkout", "/shop/x/../checkout", "/shop/%2e/checkout",
+                         # A backslash, which the browser folds to a slash.
+                         "/shop\\checkout", "/shop%5Ccheckout", "/shop\\checkout\\..\\checkout"):
+            with self.subTest(spelling):
+                self.assertIsNotNone(get_writing_route(spelling))
+        # `//shop/checkout` never reaches here: `urlsplit` reads `//shop` as an
+        # origin, and `parse_targets` refuses a target that carries one.
+        with self.assertRaisesRegex(ValueError, "not a usable route"):
+            parse_targets(['{"module": "m", "target": "//shop/checkout", "expect_selector": "#x"}'])
+
+    def test_a_route_the_guard_cannot_read_is_refused_not_permitted(self) -> None:
+        # `parse_targets` refuses both of these, so only a caller that skipped it
+        # gets here -- and then a None would read as "this route is safe".
+        for unreadable in ("shop/checkout", "//shop/checkout", "https://host/shop/checkout",
+                           # A scheme with no authority: `urlsplit` leaves the
+                           # path readable and the route is still not one.
+                           "https:/my/orders/7", "mailto:/shop/checkout"):
+            with self.subTest(unreadable):
+                with self.assertRaisesRegex(ValueError, "crawler configuration"):
+                    get_writing_route(unreadable)
+
+    def test_the_longest_matching_prefix_is_the_one_reported(self) -> None:
+        # Two entries can nest -- `/shop/payment` already reads as the wider one
+        # over `/shop/payment/validate` -- and the narrower is what a reader
+        # needs. Dict order must not decide it.
+        wide, narrow = "/shop/payment", "/shop/payment/validate"
+        for order in ((wide, narrow), (narrow, wide)):
+            with self.subTest(order):
+                with mock.patch.dict(
+                    "e2e_menu_action_adapter.GET_WRITING_ROUTES",
+                    {name: "cited" for name in order}, clear=True,
+                ):
+                    self.assertEqual(get_writing_route("/shop/payment/validate"), narrow)
+                    self.assertEqual(get_writing_route("/shop/payment"), wide)
+
+    def test_the_get_writing_guard_did_not_move_into_the_operation_enum(self) -> None:
+        # The enum only ever names reads: NON_MUTATING_OPERATIONS is every
+        # member of it, so a WRITE member would be permitted rather than
+        # refused. The guard stays at the target seam for that reason.
+        self.assertEqual(NON_MUTATING_OPERATIONS, frozenset(Operation))
 
 
 TODO_TARGET = OpenTarget(module="project_todo", target="project_todo.project_task_action_todo",
