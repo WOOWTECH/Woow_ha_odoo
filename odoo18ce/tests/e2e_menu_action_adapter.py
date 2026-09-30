@@ -416,10 +416,11 @@ GET_WRITING_ROUTES = {
     # cancels it when `?access_token=` revives one.
     "/shop/cart": "unlinks the cart lines of archived products",
     # controllers/main.py:1056 persists a delivery method and its price on the
-    # draft order (`_set_delivery_method`); :1039 runs `_check_cart`, which at
-    # :2073-2076 stores a `shop_warning` on the order and its zero-priced
-    # lines. `sale_get_order` itself writes too: models/website.py:457 moves
-    # the order onto the logged-in partner when the two disagree.
+    # draft order (`_set_delivery_method`); :1039 runs `_check_cart_and_addresses`,
+    # which reaches `_check_cart` at :2038, which at :2073-2076 stores a
+    # `shop_warning` on the order and its zero-priced lines. `sale_get_order`
+    # itself writes too: models/website.py:457 moves the order onto the
+    # logged-in partner when the two disagree.
     "/shop/checkout": "persists a delivery method on the draft sale.order",
     # controllers/main.py:1133 runs the same `_check_cart` before rendering the
     # address form, so the `shop_warning` writes at :2073-2076 apply here too.
@@ -468,17 +469,19 @@ def get_writing_route(route: str) -> str | None:
     `parse_targets` refuses one too, so reaching this is a caller that skipped
     it, and a guard that cannot read the route must not say it is safe.
 
-    The path is compared as Odoo routes it, not as it was typed. `normalize_route`
-    deliberately keeps percent-escapes, repeated slashes and dot segments,
-    because they can route differently; the browser resolves dot segments before
-    it asks and werkzeug unquotes before matching, so `/shop/%63heckout` and
-    `/shop/x/../checkout` both reach `/shop/checkout` and have to be refused with
-    it. All three are undone here. So is the language segment: Odoo's frontend takes the first segment of
-    a path it cannot route as a language code and routes what is left
-    (`http_routing/models/ir_http.py:390-392` at the pinned Odoo), which makes
-    `/zh_TW/shop/checkout` the ordinary spelling of the checkout on a
-    multilingual site. Every one of those can only refuse more than the literal
-    spelling would, which is the safe direction for a guard.
+    The path is compared as Odoo routes it, not as it was typed, three ways.
+    Percent-escapes and repeated slashes: `normalize_route` keeps both on purpose
+    because they can route differently, and werkzeug unquotes before matching, so
+    `/shop/%63heckout` reaches `/shop/checkout`. Dot segments: the browser
+    resolves them before it asks, so `/shop/x/../checkout` asks for
+    `/shop/checkout` -- `normalize_route` refuses a dot segment outright
+    (`_safe_path`), so only a target nobody parsed brings one here, which is the
+    caller this helper cannot rely on. And the language segment: Odoo's frontend
+    takes the first segment of a path it cannot route as a language code and
+    routes what is left (`http_routing/models/ir_http.py:390-392` at the pinned
+    Odoo), which makes `/zh_TW/shop/checkout` the ordinary spelling of the
+    checkout on a multilingual site. Every one of them can only refuse more than
+    the literal spelling would, which is the safe direction for a guard.
     """
     parts = urlsplit(route)
     if parts.netloc or not parts.path.startswith("/"):
