@@ -131,15 +131,14 @@ group was changed.
 
 ## The two `GAP`s
 
-Neither has a GitHub issue yet: the process that produced this evidence may not
-write on the tracker. The full text of both issues is in the Iteration's
-`withheld-writes.md`, and the pull request asks for them to be filed; this table
-is to be filled in with their numbers when they are.
+Both were filed on 2026-09-30 from the full text the Iteration left in its
+`withheld-writes.md` (the process that produced this evidence may not write on
+the tracker).
 
 | `GAP` | Issue |
 |---|---|
-| To-do form: the onboarding description's two images load from the Home Assistant root under Ingress (404) | (to file — `withheld-writes.md`) |
-| Website pages: the frontend "Edit this content" link doubles the Ingress prefix (`/@` + a second prefix) | (to file — `withheld-writes.md`) |
+| To-do form: the onboarding description's two images load from the Home Assistant root under Ingress (404) | #210 |
+| Website pages: the frontend "Edit this content" link doubles the Ingress prefix (`/@` + a second prefix) | #211 |
 
 ### To-do form, `project.task` 5 — blocker
 
@@ -194,6 +193,10 @@ prefix escape), so acceptance criterion 4 of the issue lands on `GAP`, not on
 
 - `sale.order` `S00002` is a draft cart holding one line (1 item) of
   `WOOW-PARITY-20260929T045315Z Service`; nothing confirms it. The lines
-  earlier website runs had left in it are gone.
+  earlier website runs had left in it are gone. *Cleaned 2026-09-30: the
+  `WOOW-PARITY` line was removed over JSON-RPC; the cart is empty and still
+  a draft.*
 - `res.partner` 3 (Administrator) keeps the address and phone above.
+  *Cleaned 2026-09-30: `street`, `city`, `zip`, `country_id` and `phone` were
+  cleared over JSON-RPC, back to the unset state the run found them in.*
 - Nothing was installed, restarted or reconfigured.
