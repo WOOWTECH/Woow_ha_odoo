@@ -16,20 +16,29 @@
   alone on purpose, because the editor saves the same value back and a hook
   there would write the token-bearing Ingress prefix into the record. So
   the shim now publishes two markup helpers,
-  `__WOOW_INGRESS_MARKUP_IN__` and `__WOOW_INGRESS_MARKUP_OUT__` (read-only,
-  Ingress-only, prefixing through the same `path()` the `fetch`, XHR and
-  attribute wrappers already use), and two rewrites on the Ingress
-  listener's asset location put the prefix on where the editor renders its
-  content and take it off again on the clone it saves. The prefix goes only
-  on URL attributes inside a start tag, so prose and escaped code samples
-  keep their bytes, and it comes off again from every attribute and every
-  piece of text, so nothing the prefixing reached can end up in the record.
-  The value that reaches the database is the value the Public origin would
-  have saved, so a to-do edited under Ingress still shows its pictures on
-  both surfaces; the same round trip covers every `html` field in the
-  backend web client, and no frontend or website-editor bundle carries
-  either expression. The Public origin gets neither the shim nor the rules
-  and is unchanged. No version bump. Issue #210, parent #148.
+  `__WOOW_INGRESS_MARKUP_IN__` and `__WOOW_INGRESS_MARKUP_OUT__` (string
+  functions, read-only, Ingress-only, prefixing through the same `path()`
+  the `fetch`, XHR and attribute wrappers already use), and three rewrites
+  on the Ingress listener's asset location call them: the prefix goes on
+  where the editor renders its content, comes off again on every value the
+  field writes to the record, and comes off the `src` the image tools send
+  to `/html_editor/get_image_info`, which only recognises an attachment
+  from a path beginning `/web/image`. The prefix goes only on URL
+  attributes inside a start tag, so prose and escaped code samples keep
+  their bytes, and it comes off every occurrence in the stored string, so
+  neither the editor nor a pasted image can put an Ingress URL -- token and
+  all -- into a record. The value that reaches the database is the value
+  the Public origin would have saved, so a to-do edited under Ingress still
+  shows its pictures on both surfaces. Two consequences worth knowing: a
+  URL in record HTML that was not already in normal form comes back
+  percent-encoded or with a `..` segment collapsed the first time it is
+  edited under Ingress (the same address, different bytes), and text that
+  looks like an Ingress prefix is removed when the field is saved, because
+  that prefix carries the Supervisor token. The same round trip covers
+  every `html` field in the backend web client; no frontend or
+  website-editor bundle carries the first two expressions. The Public
+  origin gets neither the shim nor the rules and is unchanged. No version
+  bump. Issue #210, parent #148.
 
 ## 0.4.8 — 2026-09-30
 

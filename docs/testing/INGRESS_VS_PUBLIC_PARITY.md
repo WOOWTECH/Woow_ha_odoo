@@ -404,9 +404,12 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 >
 > **待辦表單的 `GAP` 已於 2026-09-30 修正（#210），Live 重跑待 Deploy。** 依 ADR 0004 的 2026-09-30
 > 附記，修法不是改寫 `call_kw` 回應，而是 HTML 編輯器內容的一組「進／出」Literal rewrite：Runtime shim
-> 另外發佈 `__WOOW_INGRESS_MARKUP_IN__`／`__WOOW_INGRESS_MARKUP_OUT__` 兩個唯讀 helper（前綴一律走
-> shim 自己的 `path()`），`Editor.attachTo` 把值變成 DOM 之前先上前綴，`Editor.getElContent` 在交出
-> 存檔用的複製節點時再把前綴拿掉——所以資料庫存的仍是 root-relative，不會把 Supervisor token 寫進記錄。
+> 另外發佈 `__WOOW_INGRESS_MARKUP_IN__`／`__WOOW_INGRESS_MARKUP_OUT__` 兩個唯讀的**字串** helper
+> （前綴一律走 shim 自己的 `path()`）。三個改寫點：`Editor.attachTo` 在值變成 DOM 之前先上前綴（圖片
+> 一被解析就會發請求，所以必須改字串而不是改 DOM）；`HtmlField.updateValue` 是欄位寫回記錄的唯一出口，
+> 在那裡把前綴全部拿掉——比在編輯器裡拿掉更晚，所以連 `savePendingImages` 事後改寫的貼上圖片也涵蓋；
+> 以及 `/html_editor/get_image_info` 的 `src`，那個 route 只認 `/web/image` 開頭的路徑，不還原前綴
+> 裁圖會報「外部圖片」。所以資料庫存的仍是 root-relative，不會把 Supervisor token 寫進記錄。
 > 靜態層契約在 `odoo18ce/tests/test_ingress_todo_description.py`（含 2026-09-30 重新擷取的 bundle
 > 片段）。**這一列的 verdict 要等 Live 重跑才改**：兩面 `route_escape`／`http_4xx_5xx`／`console_error`
 > 皆為 0，且在 Ingress 下用編輯器存一次待辦後 `project.task.description` 的 `src` 仍是 root-relative。

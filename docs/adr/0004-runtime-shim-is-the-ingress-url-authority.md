@@ -412,8 +412,8 @@ second half:
 
 > Rewrite a URL where it is *delivered* only when nothing writes it back.
 > Otherwise rewrite it where it is *rendered*, and leave the delivered value
-> alone -- and where the render site is also the save site, take the prefix off
-> again where the content leaves it.
+> alone -- and where the thing that renders it is also the thing that saves it,
+> take the prefix off again on every value it stores.
 
 The #163 `open` run found the To-do form (`project.task` 5, the onboarding
 to-do Odoo creates for every user) asking the Home Assistant root for two
@@ -434,124 +434,135 @@ it is how the HTML editor both loads a field and saves it. #170's rewrite goes
 to the render site, but there the render site was an OWL template with a
 one-way value in it; here the render site hands the value straight back.
 
-**What the render site is.** `Editor.attachTo` runs
-`editable.innerHTML = fixInvalidHTML(this.config.content)`. The prefix has to be
-on the *string*, before the assignment: the browser begins fetching an `<img>`
-the moment the markup is parsed, so a fix-up of the resulting DOM would still
-cost the 404 that was measured.
+**Two helpers, published and not hooked, and both of them string functions.**
+`__WOOW_INGRESS_MARKUP_IN__(html)` prefixes URL attributes in a markup string
+through the shim's own `path()`, the way #174's `__WOOW_INGRESS_URL__` does, so
+there is still one URL helper and one set of rules about `blob:`, `data:`, `#`,
+cross-origin, a protocol-relative reference and a value already prefixed.
+`__WOOW_INGRESS_MARKUP_OUT__(value)` removes **every** occurrence of the prefix
+from a string. Both are read-only, non-configurable and defined only when the
+Ingress prefix is non-empty; every rewritten expression falls back to the
+untouched value when they are absent, so an Ingress page whose shim did not run
+still renders and still saves.
 
-**What the save site is, and why there is exactly one.** `Editor.getElContent`
-clones the editable, runs the `clean_for_save_handlers` over the clone and
-returns it. Every way content leaves the editor reads that clone:
-`Editor.getContent`, and the field's `_commitChanges` for both the value it
-saves and the `comparisonValue` it checks against `lastValue`. Stripping on the
-clone therefore keeps those two consistent -- a strip further downstream would
-make a saved value and its comparison disagree and save on every blur -- and
-the clone is outside the document, so nothing is re-fetched. The strip runs
-*after* the handlers, so a prefix one of them put on through the shim's own
-`setAttribute` wrapper comes off as well.
+**That they are string functions is a decision and not a convenience.** The
+obvious place to strip is the DOM the editor hands over -- `getElContent`
+returns a `cloneNode(true)` of the editable -- and it is the wrong place twice
+over. That clone is detached from the tree but still owned by the live
+document, and a detached `<img>` *loads*: writing the root-relative `src` onto
+it re-requests the picture from the Home Assistant root, so the escape would
+have been moved to every save rather than fixed. And `HtmlMailField` re-inserts
+that very clone into the live document (`editor.editable.after(el)`) to
+measure inlined styles, which would have done it again. A string never loads
+anything.
 
-**Two helpers, published and not hooked.** `__WOOW_INGRESS_MARKUP_IN__(html)`
-prefixes URL attributes in a markup string through the shim's own `path()`, the
-way #174's `__WOOW_INGRESS_URL__` does, so there is still one URL helper and
-one set of rules about `blob:`, `data:`, `#`, cross-origin, a protocol-relative
-reference and a value already prefixed. It matches in two steps, and the first
-is what keeps it off the rest of the markup: one pattern selects a **start
-tag** -- `<`, a letter, then no `<` or `>` -- and the attribute pattern runs
-only inside one. An attribute-shaped run of *text* is therefore not a
-candidate, which a single attribute regex over the whole string could not
-promise, and which matters because record HTML holds prose and escaped code
-samples.
+**Three sites, and each one is where it is for a reason.**
 
-`__WOOW_INGRESS_MARKUP_OUT__(root)` is the inverse, and it is deliberately
-*wider* than `IN` rather than its mirror: it removes every occurrence of the
-prefix from every attribute value and every character-data node in the
-subtree. That is what makes the record safe whatever `IN` touched -- including
-the two shapes `IN` reaches that are not really attributes, markup nested
-inside another attribute's value and a real start tag inside a comment -- and
-it also takes off a prefix the shim's own wrappers applied to an attribute `IN`
-never prefixes, `xlink:href` through `setAttribute` and `srcset` through the
-property setter. Removing the prefix is always the right answer for a value on
-its way to storage: the prefix carries the Supervisor token, so an occurrence
-of it in a record is the harm and not content worth keeping. It writes through
-the native `setAttribute` the shim captured before wrapping it, because the
-wrapper would put the prefix straight back.
+- **In: `Editor.attachTo`**, the `editable.innerHTML = fixInvalidHTML(...)`
+  where the value becomes DOM. The prefix has to be on the *string*, because
+  the browser begins fetching an `<img>` the moment the markup is parsed.
+- **Out: `HtmlField.updateValue`**, the one place the field writes the record.
+  Every save path reaches it -- the editor's content, the urgent
+  `getContent()`, and the code view's textarea -- and `lastValue` is computed
+  from the same argument, so the value stored and the value compared against it
+  cannot disagree. It is also *later* than the editor, which matters: the
+  field's `getEditorContent` calls `savePendingImages` **after**
+  `getElContent` has returned, and `saveB64Image`/`saveModifiedImage` set
+  `src` through the shim's own wrapped setter. A strip inside the editor would
+  have let a pasted image write `.../web/image/...` with the prefix, and the
+  token with it, into the record. This one does not.
+- **And the comparison a prefixed `src` breaks.**
+  `/html_editor/get_image_info` is the route the image tools ask for the
+  attachment behind an `<img>`, and the controller only looks a record up when
+  the `src` it is given starts `/web/image`; anything else falls through to a
+  URL search, and `image_crop` then reports "This image is an external image"
+  and closes. The client builds that argument as `srcUrl.pathname`, which under
+  Ingress carries the prefix -- for an image the media dialog inserted it
+  already did before this change, because the shim's `setAttribute` wrapper
+  prefixes `src`. Handing it through the same strip restores the path the route
+  expects, and the one pattern covers both `loadImageInfo` variants Odoo 18
+  ships (`html_editor`'s and the legacy `web_editor`'s), so the frontend editor
+  gets it too. It is a no-op on a value with no prefix.
 
-Both are read-only, non-configurable and defined only when the Ingress prefix
-is non-empty; both rewritten expressions fall back to the untouched value when
-they are absent, so an Ingress page whose shim did not run still renders and
-still saves.
+**Why `IN` looks only inside a start tag.** Record HTML holds prose and escaped
+code samples, and a single attribute regex over the whole string would prefix
+`src="/x.png"` wherever it appeared -- which `OUT` would have to undo, and
+which would be visible in the editor meanwhile. So one pattern selects a start
+tag (`<`, a letter, then no `<` or `>`) and the attribute pattern runs only
+inside one. Two shapes stay outside it and both fail safely: a start tag
+holding a `>` inside an attribute value is not recognised as a tag, so its URLs
+keep escaping rather than being corrupted; and markup nested inside another
+attribute's value, or a start tag written inside a comment, is prefixed --
+visible in the editor until the next load, never in the record, because `OUT`
+removes the prefix from the whole string.
 
-**The strip works in an inert document, and that is not a detail.** The clone
-`getElContent` makes is detached from the tree but still owned by the live
-document, and a detached `<img>` still loads -- so writing the root-relative
-`src` onto it would fetch it from the Home Assistant root and cost a 404 and a
-console error on *every* save, which is this issue's escape moved rather than
-fixed. `OUT` therefore adopts the clone into a
-`document.implementation.createHTMLDocument()` first: that document has no
-browsing context, so the image-data algorithm stops before requesting
-anything. The document is created once and reused, adoption only changes
-`ownerDocument`, and everything downstream of `getElContent` -- the field's
-serialisation and `savePendingImages` -- reads and queries the clone without
-caring which document owns it. A bonus of the same move: an image
-`savePendingImages` re-points afterwards does not load either.
-
-**This is not a Group B hook, and the distinction is the whole decision.** A
-hook on `innerHTML` prefixes every markup insertion in the page, including the
-ones whose value is written back, and the token reaches the database. A
-published helper is called by one rewritten expression at one measured site,
-and that site is matched by a second rewrite that undoes it. The Static-tier
-test that asserts the shim has none of Group B's hooks keeps passing and keeps
-meaning what it said; a second test asserts the helpers themselves hook
-nothing.
+**Why `OUT` is wider than `IN` rather than its mirror.** It is not only that
+`IN` can reach the two shapes above. The shim's own wrappers prefix attributes
+`IN` never touches -- `xlink:href` through `setAttribute`, `srcset` through the
+property setter -- and `savePendingImages` prefixes an image after the editor
+is done. Removing every occurrence is the only rule that covers all of them,
+and it is the right rule for a value on its way to storage: the prefix carries
+the Supervisor token, so an occurrence of it in a record is the harm and not
+content worth keeping. The cost is stated rather than hidden: prefix-shaped
+text a user typed or pasted into a description is removed on save. That is
+de-tokenising a credential, and the Static-tier test asserts it as a decision.
 
 **Four attributes prefixed, and only a value beginning `/`.** `src`, `href`,
 `action` and `data-src` -- the ones whose whole value is one URL. `srcset` is a
 candidate list that needs a parse rather than a substitution and belongs to
 #166 with every other attribute rule; a `style` background inside record HTML
-stays as it is (#194 covers page HTML). Both are *stripped* on the way out,
-because the shim's own wrappers can have put a prefix there.
+stays as it is (#194 covers page HTML). Both are *stripped* on the way out
+anyway, because the shim's own wrappers can have put a prefix there.
 
-Requiring the first byte to be `/` is what makes the round trip exact:
-`path()` on a root-relative value yields the prefix and nothing else, so
-removing the prefix gives back the byte-identical original. It also excludes a
-protocol-relative reference -- the limit every other prefix rule in the
-template has and #166 owns, excluded here rather than broken -- and it leaves a
-relative value alone, because prefixing it would *resolve* it and the resolved
-path is not what the record held. An absolute same-origin URL is left alone for
-the same round-trip reason: Odoo writes root-relative URLs into record HTML, so
-one somebody pasted is unmeasured rather than fixed, and if the shim's
-`setAttribute` wrapper normalised one during editing the strip takes the prefix
-off again.
+Requiring the first byte to be `/` excludes a protocol-relative reference --
+the limit every other prefix rule in the template has and #166 owns, excluded
+here rather than broken -- and it leaves a relative value alone, because
+prefixing it would *resolve* it and the resolved path is not what the record
+held. An absolute same-origin URL is left alone for the same reason.
 
-Two shapes fall outside the tag pattern and both fail safely. A start tag
-holding a `>` inside an attribute value is not recognised as a tag, so its URLs
-keep escaping rather than being corrupted. Markup nested inside another
-attribute's value, and a start tag written inside a comment, *are* prefixed --
-visible in the editor until the next load, never in the record, because the
-strip removes the prefix from every attribute and every character-data node.
+**What the round trip does not promise.** `path()` normalises through `new
+URL`, so a value already in normal form -- which is what Odoo writes into
+record HTML -- comes back byte for byte, and one that is not comes back as the
+same address in different bytes: `/web/image/1/my photo.png` returns
+percent-encoded, `/a/../b.png` returns collapsed. The record is rewritten that
+far on the first Ingress edit. Using `path()` rather than a hand-rolled
+concatenation is this ADR's own rule -- one URL helper -- and each shape is
+pinned by the Static-tier test so the next reader meets a measurement and not a
+surprise.
+
+**This is not a Group B hook, and the distinction is the whole decision.** A
+hook on `innerHTML` prefixes every markup insertion in the page, including the
+ones whose value is written back, and the token reaches the database. A
+published helper is called by one rewritten expression at one measured site,
+and the value it produces is stripped again before anything stores it. The
+Static-tier test that asserts the shim has none of Group B's hooks keeps
+passing and keeps meaning what it said; a second test asserts the helpers
+themselves touch no DOM at all.
 
 **What is not closed, said rather than left implicit.** The code view's
 `editable.innerHTML = this.value` on toggling back (the `codeview` option,
-which the To-do field does not set), images `savePendingImages` writes after
-`getElContent` has returned, and a collaborative peer applying a snapshot. None
-has been measured escaping; each is its own issue if one is.
+which the To-do field does not set), a collaborative peer applying a snapshot,
+`ImageSelector.isInitialMedia` preselecting by comparing a prefixed `src` with
+`attachment.image_src` -- already true before this change for any image the
+media dialog inserted under Ingress -- and the readonly `HtmlViewer`, which
+renders through `t-out` and is none of the three sites. None has been measured
+escaping; each is its own issue if one is.
 
-Both patterns were measured on 2026-09-30 across every bundle the control group
-serves: once each in `web.assets_backend`, `web.assets_web` and
-`web.assets_web_print`, and nowhere in any frontend or website-editor bundle --
-so this reaches the backend web client and leaves the website editor's own
-round trip exactly where the snippet-thumbnail postscript left it, as a stated
-tension belonging to #194 and #166. The Public origin is untouched, and so is
-the Rewrite scan: record content is not in a bundle, so no Generated rewrite
-could ever derive it.
+All three patterns were measured on 2026-09-30 across every bundle the control
+group serves; `odoo18ce/tests/fixtures/bundles/README.md` carries the counts.
+The first two occur once each in `web.assets_backend`, `web.assets_web` and
+`web.assets_web_print` and nowhere else, so this reaches the backend web client
+and leaves the website editor's own round trip exactly where the
+snippet-thumbnail postscript left it, as a stated tension belonging to #194 and
+#166. The Public origin is untouched, and so is the Rewrite scan: record
+content is not in a bundle, so no Generated rewrite could ever derive it.
 
 `U-A6`'s probe list is *not* extended; its `innerHTML` probe still records the
 escape as the decision it is. What proves this fix is the Static-tier contract
 (`odoo18ce/tests/test_ingress_todo_description.py`: the two globals executed
-against the rendered shim, both patterns counted in captured bundle excerpts,
-and each rewritten expression run in node with the globals present and absent)
-plus the Live rerun, which is the maintainer's after Deploy: the To-do form at
-`route_escape=0`/`http_4xx_5xx=0`/`console_error=0` on both surfaces, and the
-stored `project.task.description` still root-relative after saving the to-do in
-the editor under Ingress.
+against the rendered shim, all three patterns counted in captured bundle
+excerpts, and each rewritten expression run in node with the globals present
+and absent) plus the Live rerun, which is the maintainer's after Deploy: the
+To-do form at `route_escape=0`/`http_4xx_5xx=0`/`console_error=0` on both
+surfaces, and the stored `project.task.description` still root-relative after
+saving the to-do in the editor under Ingress.

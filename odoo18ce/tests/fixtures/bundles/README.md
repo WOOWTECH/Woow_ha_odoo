@@ -77,25 +77,42 @@ issue #210:
 | File | Bundle | What it holds |
 |---|---|---|
 | `html_editor_attach_content.js` | `web.assets_backend` | `Editor.attachTo`, whose `editable.innerHTML=fixInvalidHTML(this.config.content)` is where an html field's stored value becomes DOM |
-| `html_editor_save_content.js` | `web.assets_backend` | `Editor.getContent` and `Editor.getElContent`, the one way content leaves the editor: a deep clone of the editable, the `clean_for_save_handlers` over it, and the element both `getContent()` and the field's `_commitChanges` read |
+| `html_field_update_value.js` | `web.assets_backend` | `HtmlField.updateValue`, the one place the field writes the record — every save path reaches it, and `lastValue` is computed from the same argument |
+| `image_processing_relative_src.js` | `web.assets_backend` | `loadImageInfo`'s preamble, which turns an `<img>`'s `src` into the `relativeSrc` it sends to `/html_editor/get_image_info` |
 
 Measured on 2026-09-30 across every bundle the control group serves on that
-route. `editable.innerHTML=fixInvalidHTML(this.config.content)` and
-`getElContent(){const el=this.editable.cloneNode(true);` occur **once each** in
-`web.assets_backend`, `web.assets_web` and `web.assets_web_print`, and zero
-times in `web.assets_frontend`, `web.assets_frontend_lazy`,
+route:
+
+| Pattern | Bundles that carry it, once each | Bundles that carry it zero times |
+|---|---|---|
+| `editable.innerHTML=fixInvalidHTML(this.config.content)` | `web.assets_backend`, `web.assets_web`, `web.assets_web_print` | the twelve others below |
+| `async updateValue(value,{changeId}={changeId:this.lastChangeId}){` | the same three | the twelve others below |
+| `const relativeSrc=srcUrl.pathname;` | the same three, plus `web.assets_frontend`, `web.assets_frontend_lazy` and `web_editor.assets_wysiwyg` | the nine others |
+
+The twelve others are `web.assets_frontend`, `web.assets_frontend_lazy`,
 `web.assets_frontend_minimal`, `web.assets_backend_lazy`,
 `web.report_assets_common`, `web_editor.assets_wysiwyg`,
 `web_editor.assets_media_dialog`, `website.assets_wysiwyg`,
 `website.assets_editor`, `mass_mailing.assets_wysiwyg`,
-`im_livechat.assets_embed_external` and `html_builder.assets` — so the pair
-reaches the backend web client and no frontend or website-editor bundle. Both
-excerpts are byte-identical in the three bundles that carry them, so each is
-captured from `web.assets_backend` and stands for the others.
+`im_livechat.assets_embed_external` and `html_builder.assets`. So the first two
+rewrites reach the backend web client and no frontend or website-editor bundle.
 
-Each excerpt is a whole method, because the test executes it: `attachTo`
-against an editable that reports what the browser would fetch, and
-`getElContent` against a DOM stand-in whose clone is serialised.
+The third reaches more, and that is wanted: `loadImageInfo` exists twice in
+Odoo 18, once in `html_editor` (`docHref.startsWith("about:")`, calling
+`/html_editor/get_image_info`) and once in the legacy `web_editor`
+(`docHref==="about:srcdoc"`, calling `/web_editor/get_image_info`). The pattern
+is the one line they share, both routes are the same controller method, and
+both need the same root-relative path — so one rule covers the backend and the
+frontend editor alike. Only the `html_editor` variant is captured here, since
+it is the one the To-do form loads; `test_the_fixtures_are_verbatim_regions`
+pins the excerpt's ends so a drift in either shows up.
+
+The first two excerpts are byte-identical in the three bundles that carry them,
+so each is captured from `web.assets_backend` and stands for the others. Each
+is a whole method or a self-contained preamble, because the test executes it:
+`attachTo` against an editable that reports what the browser would fetch,
+`updateValue` against a record stand-in that reports what would be stored, and
+the preamble against a fake `<img>`.
 
 ## Re-capturing
 

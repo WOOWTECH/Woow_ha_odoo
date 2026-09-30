@@ -157,86 +157,68 @@ http {
         default 'try{Object.defineProperty(window,"__WOOW_INGRESS_URL__",{value:path,writable:false,configurable:false,enumerable:true})}catch(e){window.__WOOW_INGRESS_URL__=path}';
     }
 
-    # The markup helpers the shim publishes (issue #210). Two functions, not
-    # a hook: ADR 0004 leaves markup insertion uncovered because the HTML
-    # editor loads *and saves* record content through it, so a shim hook on
-    # `innerHTML` would write the token-bearing Ingress prefix into the
-    # database. The onboarding to-do's description is exactly that case --
-    # `project_todo` copies `todo_user_onboarding` into
+    # The markup helpers the shim publishes (issue #210). Two string
+    # functions, not a hook: ADR 0004 leaves markup insertion uncovered
+    # because the HTML editor loads *and saves* record content through it, so
+    # a shim hook on `innerHTML` would write the token-bearing Ingress prefix
+    # into the database. The onboarding to-do's description is exactly that
+    # case -- `project_todo` copies `todo_user_onboarding` into
     # `project.task.description`, `<img src="/project_todo/static/img/...">`
     # and all, and under Ingress the two pictures were fetched from the Home
     # Assistant root and answered 404. The route the value arrives on is
     # `/web/dataset/call_kw`, which is the one response ADR 0004 refuses to
     # rewrite, so the prefix goes on where the markup is *rendered* and comes
-    # off again where the editor hands its content back.
+    # off again on every value the field hands back.
     #
     # `__WOOW_INGRESS_MARKUP_IN__(html)` prefixes URL attributes in a markup
     # string through the shim's own `path()` -- one URL helper, so `blob:`,
     # `data:`, `#`, cross-origin, protocol-relative, a value that is already
-    # prefixed and a non-string all behave as they do everywhere else. It
-    # returns a string the caller assigns, so nothing is fetched before the
-    # prefix is on.
+    # prefixed and a non-string all behave as they do everywhere else.
     #
     # It matches in two steps, and the first one is what keeps it off the
     # rest of the markup: `mT` selects a **start tag** (`<`, a letter, then
     # no `<` or `>`), and `mR` runs only inside one. So an attribute-shaped
-    # run of text -- an escaped code sample, prose, a comment, an end tag --
-    # is not a candidate, which a single attribute regex over the whole
-    # string could not promise. Two shapes are still outside it, and both
-    # fail safely: a start tag holding a `>` inside an attribute value is not
-    # recognised as a tag, so its URLs keep escaping rather than being
-    # corrupted; and markup nested inside another attribute's value
-    # (`data-bs-content="<img src=...>"`) has a real `<tag>` in it, so the
-    # inner URL is prefixed -- which the strip below undoes on save, so it
-    # never reaches the record. Only the four attributes whose whole value is
-    # one URL are prefixed: `src`, `href`, `action`, `data-src`; `srcset` is
-    # a candidate list needing a parse and belongs to #166 with every other
-    # attribute rule, and `style` backgrounds inside record HTML stay as they
-    # are (#194 covers page HTML). A value is a candidate only if its first
-    # byte is `/`, which makes the round trip exact: `path()` on a
-    # root-relative value yields the prefix and nothing else, so removing the
-    # prefix gives back the byte-identical original. A relative value is left
-    # alone precisely because prefixing it would resolve it, and the resolved
-    # path is not what the record held.
+    # run of text -- an escaped code sample, prose, an end tag -- is not a
+    # candidate, which a single attribute regex over the whole string could
+    # not promise. Two shapes are still outside it and both fail safely: a
+    # start tag holding a `>` inside an attribute value is not recognised as
+    # a tag, so its URLs keep escaping rather than being corrupted; and
+    # markup nested inside another attribute's value, or a start tag written
+    # inside a comment, is prefixed -- which the strip undoes on the way to
+    # the record.
     #
-    # `__WOOW_INGRESS_MARKUP_OUT__(root)` is the inverse, and it is
-    # deliberately *wider* than `IN` rather than its mirror: it removes every
-    # occurrence of the prefix from every attribute value and every character
-    # data node in the subtree. That is what makes the record safe whatever
-    # `IN` touched, including the two shapes above, and it also takes off a
-    # prefix the shim's own wrappers applied to an attribute `IN` never
-    # prefixes -- `xlink:href` through `setAttribute`, `srcset` through the
-    # property setter. Removing the prefix is always the right answer for a
-    # saved value: the prefix carries the Supervisor token, so an occurrence
-    # of it in a record is the harm, not content worth keeping.
+    # Only the four attributes whose whole value is one URL are prefixed:
+    # `src`, `href`, `action`, `data-src`. `srcset` is a candidate list
+    # needing a parse and belongs to #166 with every other attribute rule,
+    # and `style` backgrounds inside record HTML stay as they are (#194
+    # covers page HTML). A value is a candidate only if its first byte is
+    # `/`: that excludes a protocol-relative reference, and it leaves a
+    # relative value alone, because prefixing it would *resolve* it and the
+    # resolved path is not what the record held. `path()` normalises what it
+    # does prefix the way the browser resolves a URL, so a value already in
+    # normal form round-trips byte for byte and one that is not (a literal
+    # space, a non-ASCII filename, a `..` segment) comes back percent-encoded
+    # or collapsed -- the same address, different bytes, and the Static-tier
+    # test pins each shape.
     #
-    # It writes attributes through `A` -- the native `setAttribute` the shim
-    # captured before wrapping it -- because the wrapper would put the prefix
-    # straight back. Its locals are prefixed `m` for the same reason the
-    # helpers are: `O` is already the captured `window.open` in this closure,
-    # and shadowing it here would be a trap for whoever moves the next line.
-    #
-    # **The element is adopted into an inert document first, and that is not
-    # a detail.** The editor hands it the `cloneNode(true)` of the editable:
-    # detached from the tree, but still owned by the live document, and an
-    # `<img>` that is merely detached still loads -- so writing the
-    # root-relative `src` there would fetch it from the Home Assistant root
-    # and cost a 404 and a console error on every save, which is the escape
-    # this issue is about, moved rather than fixed. A document from
-    # `document.implementation.createHTMLDocument()` has no browsing context,
-    # so the image-data algorithm stops before requesting anything. The
-    # document is created once and reused. Adoption only changes
-    # `ownerDocument`; the clone keeps its null parent, and everything
-    # downstream of `getElContent` -- the field's serialisation and
-    # `savePendingImages` -- reads and queries it without caring which
-    # document owns it. The live editable is untouched either way.
+    # `__WOOW_INGRESS_MARKUP_OUT__(value)` removes **every** occurrence of the
+    # prefix from a string. It is deliberately wider than `IN` rather than its
+    # mirror, because that is what makes the record safe whatever `IN`
+    # reached, and because the shim's own wrappers put the prefix on
+    # attributes `IN` never touches (`xlink:href` through `setAttribute`,
+    # `srcset` through the property setter) and on an image
+    # `savePendingImages` re-points after the editor has handed its content
+    # over. Removing the prefix is always the right answer for a value on its
+    # way to storage: the prefix carries the Supervisor token, so an
+    # occurrence of it in a record is the harm and not content worth keeping
+    # -- including one a user typed, which the test says out loud.
     #
     # Read-only and non-configurable like `__WOOW_INGRESS_URL__`, published
     # only when the Ingress prefix is non-empty because the IIFE returns
     # before this line otherwise, and every rewritten expression falls back to
     # the untouched value when the globals are absent.
     map $upstream_http_content_type $ingress_markup_global_shim {
-        default 'var mT=/<[A-Za-z][^<>]*>/g,mR=/(\s(?:data-src|src|href|action)=)([\x22\x27])(\/[^\x22\x27<>]*)\2/g,mD,mF=function(m,a,q,v){return a+q+path(v)+q},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mR,mF)}):h},mS=function(s){return s.split(P).join("")},mW=function(x){var t=x.attributes,c=x.childNodes,i,v,y;if(t)for(i=0;i<t.length;i++){v=t[i].value;if(typeof v==="string"&&v.indexOf(P)>=0)A.call(x,t[i].name,mS(v))}if(c)for(i=0;i<c.length;i++){y=c[i];if(y.nodeValue!=null){if(y.nodeValue.indexOf(P)>=0)y.nodeValue=mS(y.nodeValue)}else mW(y)}},mOut=function(r){if(!r||!r.childNodes)return r;if(!mD)mD=document.implementation.createHTMLDocument("");mD.adoptNode(r);mW(r);return r},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
+        default 'var mT=/<[A-Za-z][^<>]*>/g,mR=/(\s(?:data-src|src|href|action)=)([\x22\x27])(\/[^\x22\x27<>]*)\2/g,mF=function(m,a,q,v){return a+q+path(v)+q},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mR,mF)}):h},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
     }
 
     map $upstream_http_content_type $ingress_runtime_shim {
@@ -645,42 +627,55 @@ http {
             # *rendered*, and leave the delivered value alone -- and adds the
             # half that rule did not need there: because this value comes
             # back through the same component, the prefix is taken off again
-            # at the one place the content leaves the editor.
+            # on every value the field stores.
             #
-            # `Editor.attachTo` is where the value becomes DOM. The prefix
-            # has to be on the string *before* the assignment, because the
-            # browser starts fetching an `<img>` the moment the markup is
-            # parsed -- a fix-up afterwards would still cost the 404.
+            # **In: `Editor.attachTo`**, where the value becomes DOM. The
+            # prefix has to be on the string *before* the assignment, because
+            # the browser starts fetching an `<img>` the moment the markup is
+            # parsed -- a fix-up afterwards would still cost the 404, and a
+            # fix-up on the clone the editor saves would cost it again on
+            # every save, because a detached `<img>` loads too.
             #
-            # `Editor.getElContent` is the one way content leaves: it clones
-            # the editable, runs the `clean_for_save_handlers` over the clone
-            # and returns it, and both `getContent()` and the field's
-            # `_commitChanges` read that clone -- the value it saves and the
-            # value it compares against `lastValue` alike, so stripping here
-            # keeps those two consistent. The strip runs after the handlers,
-            # so a prefix one of them put on through the shim's own
-            # `setAttribute` wrapper comes off as well. The clone is detached
-            # but still owned by the live document, where a detached `<img>`
-            # still loads, so the helper adopts it into an inert document
-            # before writing anything -- see the map above for why that is
-            # the difference between fixing this escape and moving it.
+            # **Out: `HtmlField.updateValue`**, which is the one place the
+            # field writes the record -- every path reaches it: the editor's
+            # content, the urgent `getContent()`, and the code view's
+            # textarea. Stripping the argument rather than the editable means
+            # the live editable keeps the prefix it renders with, `lastValue`
+            # is computed from the value that is actually stored, and an
+            # image `savePendingImages` re-points *after* `getElContent` has
+            # returned is covered as well -- it is not, if the strip happens
+            # inside the editor.
             #
-            # Both patterns were measured on 2026-09-30 across every bundle
-            # the control group serves: exactly once each in
-            # `web.assets_backend`, `web.assets_web` and `web.assets_web_print`
-            # and nowhere else, so this reaches the backend web client and no
-            # frontend or website-editor bundle. The bytes are fixtures under
-            # tests/fixtures/bundles/ and `tests/test_ingress_todo_description.py`
-            # pins the counts, the round trip and the shim's two globals.
+            # **And the path a rewritten `src` has to be undone for.**
+            # `/html_editor/get_image_info` is the route the image tools ask
+            # for an attachment behind an `<img>`, and the controller only
+            # looks up a record when the `src` it is given starts
+            # `/web/image`; anything else falls through to a URL search and
+            # the cropper reports "This image is an external image". The
+            # client builds that argument as `srcUrl.pathname`, which under
+            # Ingress now carries the prefix -- for an image the media dialog
+            # inserted it already did, because the shim's `setAttribute`
+            # wrapper prefixes `src`. Handing it through the same strip
+            # restores the root-relative path the route expects, on both the
+            # backend and the frontend editor, and it is a no-op on a value
+            # that has no prefix.
+            #
+            # All three patterns were measured on 2026-09-30 across every
+            # bundle the control group serves; `tests/fixtures/bundles/README.md`
+            # carries the counts and `tests/test_ingress_todo_description.py`
+            # pins them, the round trip and the shim's two globals.
             #
             # What this does not close, said rather than left implicit: the
             # code view's `editable.innerHTML=this.value` on toggling back
-            # (the `codeview` option, which the To-do field does not set),
-            # images `savePendingImages` writes after `getElContent` has
-            # returned, and a collaborative peer applying a snapshot. None was
-            # measured escaping; each is its own issue if one is.
+            # (the `codeview` option, which the To-do field does not set), a
+            # collaborative peer applying a snapshot, `ImageSelector`'s
+            # preselection comparing a prefixed `src` with `image_src`, and
+            # the readonly `HtmlViewer`, which renders through `t-out` and is
+            # not one of these sites. None was measured escaping; each is its
+            # own issue if one is.
             sub_filter 'editable.innerHTML=fixInvalidHTML(this.config.content)' 'editable.innerHTML=(window.__WOOW_INGRESS_MARKUP_IN__||function(h){return h})(fixInvalidHTML(this.config.content))';
-            sub_filter 'getElContent(){const el=this.editable.cloneNode(true);this.resources["clean_for_save_handlers"].forEach((cb)=>cb({root:el}));return el;}' 'getElContent(){const el=this.editable.cloneNode(true);this.resources["clean_for_save_handlers"].forEach((cb)=>cb({root:el}));(window.__WOOW_INGRESS_MARKUP_OUT__||function(r){return r})(el);return el;}';
+            sub_filter 'async updateValue(value,{changeId}={changeId:this.lastChangeId}){this.lastValue=normalizeHTML(value,this.clearElementToCompare.bind(this));' 'async updateValue(value,{changeId}={changeId:this.lastChangeId}){value=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(value);this.lastValue=normalizeHTML(value,this.clearElementToCompare.bind(this));';
+            sub_filter 'const relativeSrc=srcUrl.pathname;' 'const relativeSrc=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(srcUrl.pathname);';
             # Generated rewrites (ADR 0005). The add-on writes this file from
             # its own Rewrite scan; the config-rendering init step creates it
             # empty so a fresh install starts. It holds prefix rules only, and

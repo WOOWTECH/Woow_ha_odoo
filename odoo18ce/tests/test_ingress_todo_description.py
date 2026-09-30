@@ -17,8 +17,8 @@ the database. The value arrives on ``/web/dataset/call_kw``, which the
 action-help postscript names as the response it refuses to rewrite. So the fix
 follows the rule the snippet-thumbnail postscript states -- rewrite where the
 URL is *rendered*, leave the delivered value alone -- and adds the half that
-rule did not need there: the prefix comes **off** again at the one place
-content leaves the editor.
+rule did not need there: the prefix comes **off** again on every value the
+field stores.
 
 What is pinned here:
 
@@ -26,17 +26,18 @@ What is pinned here:
   ``__WOOW_INGRESS_MARKUP_IN__`` and ``__WOOW_INGRESS_MARKUP_OUT__``,
   read-only, only when the Ingress prefix is non-empty. ``IN`` prefixes
   through the shim's own ``path()``, and only inside a start tag, so an
-  attribute-shaped run of text is not a candidate. ``OUT`` is wider than
-  ``IN`` on purpose: it removes the prefix from every attribute and every
-  character-data node, which is what makes the record safe whatever ``IN``
-  touched.
-- **The strip writes in an inert document.** The editor hands ``OUT`` the
-  ``cloneNode(true)`` of the editable, which is detached but still owned by
-  the live document -- and a detached ``<img>`` still loads, so writing a
-  root-relative ``src`` there would fetch it from the Home Assistant root on
-  every save. The helper adopts the clone into a document with no browsing
-  context first, and the contract asserts that every write it makes happens
-  after that adoption.
+  attribute-shaped run of text is not a candidate. ``OUT`` removes every
+  occurrence of the prefix from a string: wider than ``IN`` on purpose,
+  because that is what makes the record safe whatever ``IN`` reached and
+  whatever the shim's own wrappers prefixed afterwards.
+- **Where each one is called.** ``IN`` at ``Editor.attachTo``, before the
+  markup is parsed, because a picture is fetched the moment it is. ``OUT`` at
+  ``HtmlField.updateValue``, the one place the field writes the record --
+  which also covers the image ``savePendingImages`` re-points after the
+  editor has handed its content over, and the code view's textarea. And
+  ``OUT`` again on the ``src`` the image tools send to
+  ``/html_editor/get_image_info``, because that route only looks up a record
+  for a path beginning ``/web/image``.
 - **The shim still hooks nothing.** Publishing a helper a rewritten expression
   calls is not intercepting a property; ``test_ingress_injection_hooks.py``
   keeps asserting Group B is absent, and the assertion here says the same
@@ -44,12 +45,12 @@ What is pinned here:
 - **The rewrites match the bundle.** An unmatched ``sub_filter`` is a silent
   no-op, so each pattern is counted in bytes captured from the bundles the
   control group serves, kept under ``fixtures/bundles/``.
-- **The round trip.** Both rewritten expressions are executed in node: the
-  render site against an editable that reports what the browser would fetch,
-  the save site against a DOM stand-in whose clone is serialised. With the
-  rules the picture is requested under the prefix and the saved markup is
-  root-relative; without them the first escapes and the second keeps whatever
-  the shim put on.
+- **The round trip**, executed in node: the render site against an editable
+  that reports what the browser would fetch, the save site against a record
+  stand-in that reports what would be stored, and the image-tools site against
+  a fake ``<img>``. Including what the round trip does *not* promise --
+  ``path()`` normalises a URL the way the browser resolves one, so a value
+  that is not already in normal form comes back percent-encoded or collapsed.
 - **Ingress only.** ``ingress_rule`` refuses a rule found outside the Ingress
   asset location, which would change what the Public origin serves.
 """
@@ -87,145 +88,67 @@ REWRITES = {
         "fixture": "html_editor_attach_content.js",
         "source": "editable.innerHTML=fixInvalidHTML(this.config.content)",
         "occurrences": 1,
+        "global": IN_GLOBAL,
     },
     "save": {
-        "fixture": "html_editor_save_content.js",
+        "fixture": "html_field_update_value.js",
         "source": (
-            "getElContent(){const el=this.editable.cloneNode(true);"
-            'this.resources["clean_for_save_handlers"].forEach((cb)=>cb({root:el}));'
-            "return el;}"
+            "async updateValue(value,{changeId}={changeId:this.lastChangeId}){"
+            "this.lastValue=normalizeHTML(value,this.clearElementToCompare.bind(this));"
         ),
         "occurrences": 1,
+        "global": OUT_GLOBAL,
+    },
+    "image tools": {
+        "fixture": "image_processing_relative_src.js",
+        "source": "const relativeSrc=srcUrl.pathname;",
+        "occurrences": 1,
+        "global": OUT_GLOBAL,
     },
 }
 
-# A DOM stand-in small enough to read and faithful in what these rewrites
-# depend on: a deep clone, `attributes` and `childNodes`, character-data
-# nodes, an `Element.prototype.setAttribute` the Runtime shim can wrap, and an
-# `ownerDocument` that can be adopted away. Every attribute write is logged
-# with whether the node was in an inert document at the time, which is how the
-# contract pins the one ordering the fix depends on.
-DOM = r"""
-function makeDom(context) {
-  const writes = [];
-  const live = { inert: false, name: "live" };
-  let inertDocuments = 0;
-  live.implementation = {
-    createHTMLDocument(title) {
-      inertDocuments += 1;
-      // A document with no browsing context: the image-data algorithm stops
-      // before requesting anything for a node this owns.
-      const inert = { inert: true, name: "inert", implementation: live.implementation };
-      inert.adoptNode = function (node) {
-        const own = (target) => {
-          target.ownerDocument = inert;
-          for (const child of target.childNodes || []) own(child);
-        };
-        own(node);
-        return node;
-      };
-      return inert;
-    },
+# Enough of a DOM for the whole Runtime shim to run, the way the clipboard and
+# media-source contracts build one. Both helpers are string functions, so
+# nothing below needs a DOM of its own.
+SHIM_CONTEXT = r"""
+function shimContext() {
+  function Element() {}
+  Element.prototype.setAttribute = function () {};
+  Element.prototype.setAttributeNS = function () {};
+  function XMLHttpRequest() {}
+  XMLHttpRequest.prototype.open = function () {};
+  function History() {}
+  History.prototype.pushState = function () {};
+  History.prototype.replaceState = function () {};
+  function WebSocket() {}
+  const fetched = [];
+  const context = {
+    document: { body: {}, documentElement: {}, activeElement: null },
+    navigator: { serviceWorker: undefined },
+    location: { href: PAGE, origin: ORIGIN, host: "ha.example:8123" },
+    sessionStorage: { getItem() { return null; }, setItem() {} },
+    fetch(input) { fetched.push(input); return Promise.resolve(); },
+    open() {},
+    XMLHttpRequest,
+    History,
+    Element,
+    WebSocket,
+    URL,
+    Request: function () {},
+    P,
+    PAGE,
+    ORIGIN,
+    fetched,
+    result: undefined,
   };
-
-  function Element() {
-    this.tagName = "DIV";
-    this.attrs = {};
-    this.childNodes = [];
-    this.nodeType = 1;
-    this.nodeValue = null;
-    this.ownerDocument = live;
-  }
-  let setup = 0;
-  Element.prototype.setAttribute = function (name, value) {
-    writes.push({
-      name,
-      value: String(value),
-      inert: !!(this.ownerDocument || {}).inert,
-      // Written by the stand-in while building a tree, not by the helper.
-      setup: setup > 0,
-    });
-    this.attrs[name] = String(value);
-  };
-  Element.prototype.getAttribute = function (name) {
-    return name in this.attrs ? this.attrs[name] : null;
-  };
-  Element.prototype.setAttributeNS = function (ns, name, value) { this.setAttribute(name, value); };
-  Object.defineProperty(Element.prototype, "attributes", {
-    get() {
-      // Live in the one way the helper uses it: each entry reads back the
-      // current value, so a write through one entry is visible in the next.
-      const el = this;
-      return Object.keys(el.attrs).map((name) => ({
-        name,
-        get value() { return el.attrs[name]; },
-      }));
-    },
-  });
-  Element.prototype.cloneNode = function (deep) {
-    const copy = new Element();
-    copy.tagName = this.tagName;
-    copy.attrs = Object.assign({}, this.attrs);
-    copy.ownerDocument = this.ownerDocument;
-    if (deep) copy.childNodes = this.childNodes.map((child) => child.cloneNode(true));
-    return copy;
-  };
-  Object.defineProperty(Element.prototype, "markup", {
-    get() {
-      return this.childNodes.map((child) => {
-        if (child.nodeType === 3) return child.nodeValue;
-        if (child.nodeType === 8) return "<!--" + child.nodeValue + "-->";
-        const attrs = Object.keys(child.attrs)
-          .map((name) => " " + name + '="' + child.attrs[name] + '"')
-          .join("");
-        const tag = child.tagName.toLowerCase();
-        return "<" + tag + attrs + ">" + child.markup + "</" + tag + ">";
-      }).join("");
-    },
-  });
-
-  function CharacterData(nodeType, nodeValue) {
-    this.nodeType = nodeType;
-    this.nodeValue = nodeValue;
-    this.childNodes = null;
-    this.ownerDocument = live;
-  }
-  CharacterData.prototype.cloneNode = function () {
-    return new CharacterData(this.nodeType, this.nodeValue);
-  };
-
-  context.makeNode = function (tagName, attrs, childNodes) {
-    const el = new Element();
-    el.tagName = tagName;
-    setup += 1;
-    try {
-      // Through the prototype, so the Runtime shim's wrapper is in the path --
-      // which is how an image the media dialog inserts gets a prefix today.
-      for (const name of Object.keys(attrs || {})) el.setAttribute(name, attrs[name]);
-    } finally {
-      setup -= 1;
-    }
-    for (const child of childNodes || []) el.childNodes.push(child);
-    return el;
-  };
-  // An attribute as the HTML parser produced it: markup insertion never goes
-  // through setAttribute, so the Runtime shim's wrapper never saw this value.
-  context.makeRawNode = function (tagName, attrs) {
-    const el = new Element();
-    el.tagName = tagName;
-    for (const name of Object.keys(attrs || {})) el.attrs[name] = String(attrs[name]);
-    return el;
-  };
-  context.makeText = function (value) { return new CharacterData(3, value); };
-  context.makeComment = function (value) { return new CharacterData(8, value); };
-  context.domWrites = writes;
-  context.inertDocuments = function () { return inertDocuments; };
-  return { Element, document: live };
+  context.window = context;
+  vm.createContext(context);
+  return context;
 }
 """
 
-# The rendered Runtime shim runs first in every case, so what the drivers call
-# is the helper the page actually gets.
+# One driver per rewrite site, run with the rendered shim in the context so
+# that what each rewritten expression calls is the helper the page gets.
 HARNESS = r"""
 const assert = require("node:assert/strict");
 const vm = require("node:vm");
@@ -233,62 +156,21 @@ const payload = JSON.parse(process.argv[1]);
 const P = "/api/hassio_ingress/token";
 const ORIGIN = "http://ha.example:8123";
 const PAGE = ORIGIN + P + "/odoo/action-454/5";
-__DOM__
+__SHIM_CONTEXT__
 
-function run(shim, program) {
-  function XMLHttpRequest() {}
-  XMLHttpRequest.prototype.open = function () {};
-  function History() {}
-  History.prototype.pushState = function () {};
-  History.prototype.replaceState = function () {};
-  function WebSocket() {}
-  const context = {
-    navigator: { serviceWorker: undefined },
-    location: { href: PAGE, origin: ORIGIN, host: "ha.example:8123" },
-    sessionStorage: { getItem() { return null; }, setItem() {} },
-    fetch() {},
-    open() {},
-    XMLHttpRequest,
-    History,
-    WebSocket,
-    URL,
-    Request: function () {},
-    P,
-    PAGE,
-    result: undefined,
-  };
-  const dom = makeDom(context);
-  context.Element = dom.Element;
-  context.document = dom.document;
-  context.document.body = {};
-  context.document.documentElement = {};
-  context.document.activeElement = null;
-  context.window = context;
-  vm.createContext(context);
-  if (shim) vm.runInContext(shim, context, { filename: "ingress-runtime-shim.js" });
-  vm.runInContext(program, context);
-  return context;
-}
-
-for (const { name, shim, program, expected, inertWrites } of payload) {
-  // The driver builds its result inside the vm context, so its Array is not
-  // this realm's; compare the values and not the prototypes.
-  const context = run(shim, program);
-  assert.equal(JSON.stringify(context.result), JSON.stringify(expected),
-    name + ": got " + JSON.stringify(context.result));
-  // A root-relative URL written onto a node the live document still owns is a
-  // request to the Home Assistant root, because a detached <img> loads too.
-  const escaping = context.domWrites.filter(
-    (write) => !write.setup && write.value.charAt(0) === "/" && write.value.indexOf(P) !== 0
-  );
-  assert.equal(escaping.length, inertWrites || 0,
-    name + ": unexpected root-relative writes " + JSON.stringify(escaping));
-  for (const write of escaping) {
-    assert.equal(write.inert, true,
-      name + ": " + write.name + "=" + write.value + " was written in the live document");
+(async () => {
+  for (const { name, shim, program, expected } of payload) {
+    const context = shimContext();
+    if (shim) vm.runInContext(shim, context, { filename: "ingress-runtime-shim.js" });
+    vm.runInContext(program, context);
+    // The driver builds its result inside the vm context, so its Array is not
+    // this realm's; compare the values and not the prototypes.
+    const value = await context.result;
+    assert.equal(JSON.stringify(value), JSON.stringify(expected),
+      name + ": got " + JSON.stringify(value));
   }
-}
-""".replace("__DOM__", DOM)
+})().catch((error) => { console.error(error); process.exit(1); });
+""".replace("__SHIM_CONTEXT__", SHIM_CONTEXT)
 
 # The render site. `fixInvalidHTML` is the identity here -- what it does to
 # invalid markup is Odoo's business; what matters is that the prefix is on the
@@ -297,12 +179,12 @@ for (const { name, shim, program, expected, inertWrites } of payload) {
 RENDER_DRIVER = r"""
 const fixInvalidHTML = (value) => value;
 const isEmpty = () => false;
-const createBaseContainer = () => makeNode("DIV", {});
+const createBaseContainer = () => ({});
 const fillShrunkPhrasingParent = () => {};
 const initElementForEdition = () => {};
 const requested = [];
 const editable = {
-  ownerDocument: { },
+  ownerDocument: {},
   classList: { add() {} },
   style: {},
   setAttribute() {},
@@ -328,20 +210,43 @@ new Editor(__CONTENT__).attachTo(editable);
 result = requested;
 """
 
-# The save site. The editable holds what the render site left plus one image
-# the media dialog inserted through `setAttribute`, which the shim prefixed.
+# The save site: the one place HtmlField writes the record. The stand-in
+# reports what `record.update` was given and what `lastValue` was set to,
+# because those two disagreeing is what would make the field save on every
+# blur.
 SAVE_DRIVER = r"""
-const editable = makeNode("DIV", {});
-editable.childNodes = __CHILDREN__;
-class Editor {
-  constructor(el) {
-    this.editable = el;
-    this.resources = { clean_for_save_handlers: [] };
+const stored = [];
+const normalizeHTML = (value) => "N(" + value + ")";
+class HtmlField {
+  constructor() {
+    this.lastChangeId = 0;
+    this.isDirty = true;
+    this.props = {
+      name: "description",
+      record: {
+        update(values) { stored.push(values.description); return Promise.resolve(); },
+        model: { bus: { trigger() {} } },
+      },
+    };
   }
+  clearElementToCompare() {}
 __SLICE__
 }
-const saved = new Editor(editable).getElContent();
-result = saved.markup;
+const field = new HtmlField();
+result = field.updateValue(__VALUE__).then(() => [stored[0], field.lastValue]);
+"""
+
+# The image-tools site: the `src` handed to /html_editor/get_image_info, which
+# the controller only looks a record up for when it begins `/web/image`.
+IMAGE_DRIVER = r"""
+const img = {
+  dataset: {},
+  ownerDocument: { defaultView: { location: { href: PAGE } } },
+  getAttribute: () => __SRC__,
+};
+const src = img.getAttribute("src");
+__SLICE__
+result = relativeSrc;
 """
 
 # Everything the two globals promise, executed against the rendered shim.
@@ -353,45 +258,22 @@ const P = "/api/hassio_ingress/token";
 const ORIGIN = "http://ha.example:8123";
 const PAGE = ORIGIN + P + "/odoo/action-454/5";
 const PICTURE = "/project_todo/static/img/todo_access.png";
-__DOM__
+const SECOND = "__SECOND__";
+__SHIM_CONTEXT__
 
 function run(script) {
-  function XMLHttpRequest() {}
-  XMLHttpRequest.prototype.open = function () {};
-  function History() {}
-  History.prototype.pushState = function () {};
-  History.prototype.replaceState = function () {};
-  function WebSocket() {}
-  const fetched = [];
-  const context = {
-    navigator: { serviceWorker: undefined },
-    location: { href: PAGE, origin: ORIGIN, host: "ha.example:8123" },
-    sessionStorage: { getItem() { return null; }, setItem() {} },
-    fetch(input) { fetched.push(input); return Promise.resolve(); },
-    open() {},
-    XMLHttpRequest,
-    History,
-    WebSocket,
-    URL,
-    Request: function () {},
-  };
-  const dom = makeDom(context);
-  context.Element = dom.Element;
-  context.document = dom.document;
-  context.document.body = {};
-  context.document.documentElement = {};
-  context.document.activeElement = null;
-  context.window = context;
-  vm.createContext(context);
+  const context = shimContext();
   vm.runInContext(script, context, { filename: "ingress-runtime-shim.js" });
-  return { context, fetched };
+  return context;
 }
 
-const { context, fetched } = run(shim);
+const context = run(shim);
 const markupIn = context.__WOOW_INGRESS_MARKUP_IN__;
 const markupOut = context.__WOOW_INGRESS_MARKUP_OUT__;
 assert.equal(typeof markupIn, "function", "the shim must publish __WOOW_INGRESS_MARKUP_IN__");
 assert.equal(typeof markupOut, "function", "the shim must publish __WOOW_INGRESS_MARKUP_OUT__");
+
+// --- IN --------------------------------------------------------------------
 
 // The onboarding to-do's own markup: both pictures, nothing else changed.
 const stored = '<h1>Hey</h1><img class="img-fluid" src="' + PICTURE + '" alt="todo-access"/>';
@@ -406,10 +288,13 @@ assert.equal(
   '<img src="' + P + PICTURE + '" data-src="' + P + PICTURE + '"/>',
   "a second URL attribute in the same tag must be prefixed too"
 );
-
-// It prefixes through the shim's own path(), so path()'s rules hold here.
+// Single-quoted attributes are the same attributes.
+assert.equal(markupIn("<img src='" + PICTURE + "'/>"), "<img src='" + P + PICTURE + "'/>");
+// Idempotent: the render site may run twice over the same content.
+assert.equal(markupIn(markupIn(stored)), markupIn(stored), "no value may be prefixed twice");
 assert.equal(markupIn('<a href="' + P + PICTURE + '">x</a>'),
   '<a href="' + P + PICTURE + '">x</a>', "an already prefixed value is unchanged");
+
 // Only a value whose first byte is `/` is a candidate, which is the shape the
 // nginx prefix rules match as well and the shape whose round trip is exact.
 // That excludes a protocol-relative reference, where every other rule of the
@@ -418,6 +303,8 @@ assert.equal(markupIn('<a href="' + P + PICTURE + '">x</a>'),
 // held; and it leaves an absolute same-origin URL alone -- Odoo writes
 // root-relative URLs into record HTML, and an absolute one somebody pasted is
 // unmeasured rather than fixed (see ADR 0004's postscript for this issue).
+// And it is only ever looked for inside a start tag, so prose, an escaped code
+// sample and an end tag keep their bytes.
 for (const untouched of [
   '<a href="#anchor">x</a>',
   '<a href="https://other.example/x">x</a>',
@@ -431,8 +318,6 @@ for (const untouched of [
   '<img data-oe-thumbnail="' + PICTURE + '"/>',
   '<img srcset="' + PICTURE + ' 1x"/>',
   '<div style="background-image: url(' + PICTURE + ')"></div>',
-  // Not inside a start tag, so not a candidate: an escaped code sample,
-  // prose and an end tag all keep their bytes.
   '<pre><code>&lt;img src="' + PICTURE + '"&gt;</code></pre>',
   '<p>write it as src="' + PICTURE + '" in your template</p>',
   '<p>a</p></p src="' + PICTURE + '">',
@@ -446,14 +331,11 @@ for (const value of [null, undefined, 7, false]) {
   assert.equal(markupIn(value), value, "a non-string is returned as it came");
 }
 assert.equal(markupIn("<p>no url here</p>"), "<p>no url here</p>");
-// Single-quoted attributes are the same attributes.
-assert.equal(markupIn("<img src='" + PICTURE + "'/>"), "<img src='" + P + PICTURE + "'/>");
-// Idempotent: the render site may run twice over the same content.
-assert.equal(markupIn(markupIn(stored)), markupIn(stored), "no value may be prefixed twice");
+
 // Two shapes IN does reach that are not really attributes: markup nested in
 // another attribute's value, and a real start tag inside a comment. Both are
-// prefixed, and the strip below is what keeps them out of the record -- these
-// assert the shape so the pair is read as one mechanism, not two.
+// prefixed, and OUT is what keeps them out of the record -- asserted here so
+// the pair is read as one mechanism and not two.
 assert.equal(
   markupIn('<div data-bs-content="<img src=' + "'" + PICTURE + "'" + '>"></div>'),
   '<div data-bs-content="<img src=' + "'" + P + PICTURE + "'" + '>"></div>'
@@ -461,68 +343,64 @@ assert.equal(
 assert.equal(markupIn('<!-- <img src="' + PICTURE + '"> -->'),
   '<!-- <img src="' + P + PICTURE + '"> -->');
 
-// It is the same path() the shim's own wrappers use, not a copy of it.
+// It is the same path() the shim's own wrappers use, not a copy of it -- and
+// path() normalises, so a value that is not already in normal form comes back
+// as the same address in different bytes. Said out loud, because that value is
+// what the record gets on the first Ingress edit.
 context.fetch(PICTURE);
-assert.deepEqual(fetched, [P + PICTURE], "fetch must prefix through the same helper");
+assert.deepEqual(context.fetched, [P + PICTURE], "fetch must prefix through the same helper");
+for (const [before, after] of [
+  ["/web/image/1/my photo.png", P + "/web/image/1/my%20photo.png"],
+  ["/web/image/1/%E5%9C%96.png", P + "/web/image/1/%E5%9C%96.png"],
+  ["/a/../web/image/2.png", P + "/web/image/2.png"],
+]) {
+  assert.equal(markupIn('<img src="' + before + '"/>'), '<img src="' + after + '"/>',
+    "path() normalisation: " + before);
+}
 
-// OUT removes the prefix from every attribute and every character-data node,
-// which is wider than IN by design: whatever IN touched, the record is clean.
-const tree = context.makeNode("DIV", {}, [
-  context.makeNode("IMG", { src: P + PICTURE }),
-  // Absolute and same-origin, as the parser left it: the shim's setAttribute
-  // wrapper never saw it, so the strip is what has to drop the token.
-  context.makeRawNode("A", { href: ORIGIN + P + "/web/content/7" }),
-  context.makeNode("FORM", { action: P + "/web/dataset/call_kw" }),
-  context.makeNode("IMG", { "data-src": P + PICTURE }),
-  context.makeNode("A", { href: "https://other.example/x" }),
-  context.makeNode("IMG", { src: PICTURE }),
-  // Not attributes IN prefixes, but ones the shim's own wrappers do.
-  context.makeNode("IMG", { srcset: P + PICTURE }),
-  context.makeNode("USE", { "xlink:href": P + "/web/static/img/icons.svg#x" }),
-  // Nested markup in another attribute, and attribute-shaped text: both are
-  // shapes IN can prefix, and both have to come back clean.
-  context.makeNode("DIV", { "data-bs-content": '<img src="' + P + PICTURE + '">' }),
-  context.makeNode("P", {}, [context.makeText('src="' + P + PICTURE + '"')]),
-  context.makeNode("P", {}, [context.makeComment(" " + P + PICTURE + " ")]),
-]);
-assert.equal(markupOut(tree), tree, "the helper returns the root it was handed");
-assert.deepEqual(tree.childNodes.map((el) => el.attrs), [
-  { src: PICTURE },
-  { href: ORIGIN + "/web/content/7" },
-  { action: "/web/dataset/call_kw" },
-  { "data-src": PICTURE },
-  { href: "https://other.example/x" },
-  { src: PICTURE },
-  { srcset: PICTURE },
-  { "xlink:href": "/web/static/img/icons.svg#x" },
-  { "data-bs-content": '<img src="' + PICTURE + '">' },
-  {},
-  {},
-]);
-assert.equal(tree.childNodes[9].childNodes[0].nodeValue, 'src="' + PICTURE + '"');
-assert.equal(tree.childNodes[10].childNodes[0].nodeValue, " " + PICTURE + " ");
-// Every write it made happened after the clone was adopted into a document
-// with no browsing context, which is what stops a detached <img> loading.
-assert.equal(context.inertDocuments(), 1, "one inert document, created once and reused");
-const stripWrites = context.domWrites.filter(
-  (write) => !write.setup && write.value.indexOf(P) === -1);
-// Eight of the eleven children carry the prefix once the shim's own
-// setAttribute wrapper has had its turn on the three it covers; the other
-// three are already clean or cross-origin and are never written.
-assert.equal(stripWrites.length, 8,
-  "the strip must write every prefixed attribute, wrote " + stripWrites.length + ": "
-    + JSON.stringify(stripWrites));
-for (const write of stripWrites) {
-  assert.equal(write.inert, true,
-    "the strip wrote " + write.name + "=" + write.value + " in the live document");
+// --- OUT -------------------------------------------------------------------
+
+// Every occurrence of the prefix, wherever it is in the string: attributes IN
+// prefixes, attributes only the shim's own wrappers prefix, an absolute
+// same-origin URL, and text.
+for (const [before, after] of [
+  ['<img src="' + P + PICTURE + '"/>', '<img src="' + PICTURE + '"/>'],
+  ['<form action="' + P + '/web/dataset/call_kw"></form>',
+   '<form action="/web/dataset/call_kw"></form>'],
+  ['<img srcset="' + P + PICTURE + ' 1x"/>', '<img srcset="' + PICTURE + ' 1x"/>'],
+  ['<use xlink:href="' + P + '/web/static/img/i.svg#x"/>',
+   '<use xlink:href="/web/static/img/i.svg#x"/>'],
+  ['<div data-bs-content="<img src=' + "'" + P + PICTURE + "'" + '>"></div>',
+   '<div data-bs-content="<img src=' + "'" + PICTURE + "'" + '>"></div>'],
+  ['<a href="' + ORIGIN + P + '/web/content/7">x</a>',
+   '<a href="' + ORIGIN + '/web/content/7">x</a>'],
+  ['<img src="' + P + PICTURE + '"/><img src="' + P + SECOND + '"/>',
+   '<img src="' + PICTURE + '"/><img src="' + SECOND + '"/>'],
+  // Prefix-shaped text a user typed goes too, and that is the decision: the
+  // prefix carries the Supervisor token, so an occurrence of it in a record is
+  // the harm and not content worth keeping.
+  ['<p>see ' + P + '/odoo for details</p>', '<p>see /odoo for details</p>'],
+]) {
+  assert.equal(markupOut(before), after, "must be stripped: " + before);
 }
-// A second call reuses the document rather than making another.
-markupOut(context.makeNode("DIV", {}));
-assert.equal(context.inertDocuments(), 1);
-// Anything that is not an element tree is handed straight back.
-for (const value of [null, undefined, "text", 7]) {
-  assert.equal(markupOut(value), value);
+// A value with no prefix in it is returned as it came, and so is a non-string.
+for (const untouched of [
+  '<img src="' + PICTURE + '"/>',
+  '<a href="https://other.example/x">x</a>',
+  "",
+  "/web/image/7",
+]) {
+  assert.equal(markupOut(untouched), untouched);
 }
+for (const value of [null, undefined, 7, false]) {
+  assert.equal(markupOut(value), value, "a non-string is returned as it came");
+}
+// The pair round-trips what IN touches, byte for byte, for a value in normal
+// form -- which is what Odoo writes into record HTML.
+assert.equal(markupOut(markupIn(stored)), stored, "the record must get back what it held");
+assert.equal(markupOut(markupOut(markupIn(stored))), stored, "stripping twice is stripping once");
+
+// --- both ------------------------------------------------------------------
 
 // Read-only: a bundle cannot replace a helper a rewritten expression calls.
 // Assignment to a non-writable property is silent outside strict mode, which
@@ -538,10 +416,10 @@ for (const [name, expected] of [
 }
 
 // With no Ingress prefix the shim returns before publishing anything.
-const empty = run(emptyShim).context;
+const empty = run(emptyShim);
 assert.equal(empty.__WOOW_INGRESS_MARKUP_IN__, undefined, "no prefix, no global");
 assert.equal(empty.__WOOW_INGRESS_MARKUP_OUT__, undefined, "no prefix, no global");
-""".replace("__DOM__", DOM)
+""".replace("__SHIM_CONTEXT__", SHIM_CONTEXT).replace("__SECOND__", TODO_PICTURES[1])
 
 
 def template() -> str:
@@ -556,8 +434,8 @@ def rewritten(name: str) -> str:
     """The fixture as the Ingress asset location serves it."""
     rewrite = REWRITES[name]
     replacement = ingress_rule(template(), rewrite["source"], rewrite["fixture"])
-    assert IN_GLOBAL in replacement or OUT_GLOBAL in replacement, (
-        "the rewrite must go through a helper the Runtime shim publishes"
+    assert rewrite["global"] in replacement, (
+        f"the {name} rewrite must go through {rewrite['global']}, the helper the shim publishes"
     )
     return fixture(name).replace(rewrite["source"], replacement)
 
@@ -586,10 +464,16 @@ def render_program(text: str, content: str) -> str:
     return RENDER_DRIVER.replace("__SLICE__", body).replace("__CONTENT__", json.dumps(content))
 
 
-def save_program(text: str, children: str) -> str:
-    """The fixture's `getContent`/`getElContent`, driven over one editable."""
-    body = text[text.index("getContent(){"):].rstrip()
-    return SAVE_DRIVER.replace("__SLICE__", body).replace("__CHILDREN__", children)
+def save_program(text: str, value: str) -> str:
+    """The fixture's `updateValue`, driven with one value on its way to the record."""
+    body = text[text.index("async updateValue("):].rstrip()
+    return SAVE_DRIVER.replace("__SLICE__", body).replace("__VALUE__", json.dumps(value))
+
+
+def image_program(text: str, src: str) -> str:
+    """The fixture's `loadImageInfo` preamble, driven with one `<img>` src."""
+    body = text[text.index("let docHref="):].rstrip()
+    return IMAGE_DRIVER.replace("__SLICE__", body).replace("__SRC__", json.dumps(src))
 
 
 # --- the globals the Runtime shim publishes -----------------------------------
@@ -601,20 +485,11 @@ def test_the_runtime_shim_publishes_the_markup_helpers() -> None:
 def test_the_helpers_prefix_through_the_shims_own_path() -> None:
     """One URL helper, published rather than copied (ADR 0004)."""
     text = template()
-    shim = runtime_shim(text)
-    assert shim.count("var path=function(u)") == 1, "there must be exactly one URL helper"
-    markup_map = map_block(text, MARKUP_MAP)
-    assert "path(v)" in markup_map, (
+    assert runtime_shim(text).count("var path=function(u)") == 1, (
+        "there must be exactly one URL helper"
+    )
+    assert "path(v)" in map_block(text, MARKUP_MAP), (
         "the markup helper must prefix through the shim's own path(), not a second helper"
-    )
-    assert "A.call(" in markup_map, (
-        "the strip must write through the native setAttribute the shim captured; the shim's "
-        "own wrapper would put the prefix straight back on"
-    )
-    assert "document.implementation.createHTMLDocument(" in markup_map, (
-        "the strip must adopt the clone into a document with no browsing context before it "
-        "writes: a detached <img> in the live document still loads, so a root-relative src "
-        "written there fetches from the Home Assistant root on every save"
     )
 
 
@@ -634,14 +509,26 @@ def test_the_helpers_are_spliced_into_the_runtime_shim_and_nowhere_else() -> Non
     )
 
 
-def test_publishing_a_helper_is_not_hooking_the_property() -> None:
-    """ADR 0004's Group B stays uncovered: the shim intercepts nothing here."""
+def test_the_helpers_are_string_functions_and_touch_no_dom() -> None:
+    """ADR 0004's Group B stays uncovered: the shim intercepts nothing here.
+
+    That is not only about Group B. A strip that walked the DOM would have had
+    to run on the clone the editor saves, which is detached but still owned by
+    the live document -- and a detached ``<img>`` loads, so writing the
+    root-relative ``src`` there would have re-requested the picture from the
+    Home Assistant root on every save, and a later re-insertion of that clone
+    (``HtmlMailField`` does one) would have done it again.
+    """
     markup_map = map_block(template(), MARKUP_MAP)
-    for hook in ("innerHTML", "outerHTML", "insertAdjacentHTML", "defineProperty(Element"):
+    for hook in (
+        "innerHTML", "outerHTML", "insertAdjacentHTML", "defineProperty(Element",
+        "setAttribute", "querySelectorAll", "childNodes", "adoptNode", "cloneNode",
+    ):
         assert hook not in markup_map, (
             f"the markup helpers must not touch {hook}: a hook on markup insertion writes the "
-            "Ingress prefix into the database, which is why ADR 0004 leaves Group B uncovered. "
-            "These are functions a rewritten expression calls, nothing more."
+            "Ingress prefix into the database, which is why ADR 0004 leaves Group B uncovered, "
+            "and a write onto a node a live document owns can start a request. These are "
+            "string functions a rewritten expression calls, nothing more."
         )
 
 
@@ -720,38 +607,20 @@ def test_without_the_globals_the_render_site_inserts_the_raw_value() -> None:
 
 # --- the save site ------------------------------------------------------------
 
-# What the editable holds under Ingress once the render site has run: the two
-# pictures with the prefix on, plus one image the media dialog inserted through
-# `setAttribute`, which the Runtime shim prefixed on the way in.
+# What the editor hands over under Ingress: the two pictures as the render site
+# left them, plus one image `savePendingImages` re-pointed after `getElContent`
+# returned, which the shim's `setAttribute` wrapper prefixed.
 EDITED = (
-    "["
-    'makeNode("IMG", {src: P + %(first)s}),'
-    'makeNode("IMG", {src: P + %(second)s}),'
-    'makeNode("IMG", {src: "/web/image/42-abc/pasted.png"}),'
-    'makeNode("A", {href: "https://odoo.example/docs"}),'
-    "]"
-) % {"first": json.dumps(TODO_PICTURES[0]), "second": json.dumps(TODO_PICTURES[1])}
+    '<img src="%(p)s%(first)s"/><img src="%(p)s%(second)s"/>'
+    '<img src="%(p)s/web/image/42-abc/pasted.png"/>'
+    '<a href="https://odoo.example/docs">x</a>'
+) % {"p": INGRESS_PREFIX, "first": TODO_PICTURES[0], "second": TODO_PICTURES[1]}
 
 SAVED_ROOT_RELATIVE = (
-    '<img src="%s"></img><img src="%s"></img>'
-    '<img src="/web/image/42-abc/pasted.png"></img>'
-    '<a href="https://odoo.example/docs"></a>'
+    '<img src="%s"/><img src="%s"/>'
+    '<img src="/web/image/42-abc/pasted.png"/>'
+    '<a href="https://odoo.example/docs">x</a>'
 ) % TODO_PICTURES
-
-SAVED_WITH_THE_PREFIX = (
-    '<img src="%(p)s%(first)s"></img><img src="%(p)s%(second)s"></img>'
-    '<img src="%(p)s/web/image/42-abc/pasted.png"></img>'
-    '<a href="https://odoo.example/docs"></a>'
-) % {"p": INGRESS_PREFIX, "first": TODO_PICTURES[0], "second": TODO_PICTURES[1]}
-
-# With no Runtime shim there is no `setAttribute` wrapper either, so the image
-# the media dialog inserted keeps the value it was given; the two pictures still
-# carry the prefix the render site put on before the shim stopped running.
-SAVED_WITHOUT_THE_SHIM = (
-    '<img src="%(p)s%(first)s"></img><img src="%(p)s%(second)s"></img>'
-    '<img src="/web/image/42-abc/pasted.png"></img>'
-    '<a href="https://odoo.example/docs"></a>'
-) % {"p": INGRESS_PREFIX, "first": TODO_PICTURES[0], "second": TODO_PICTURES[1]}
 
 
 def test_the_editor_saves_the_ingress_prefix_without_the_rewrite() -> None:
@@ -760,95 +629,81 @@ def test_the_editor_saves_the_ingress_prefix_without_the_rewrite() -> None:
         "name": "save, as Odoo ships it",
         "shim": rendered_shim(INGRESS_PREFIX),
         "program": save_program(fixture("save"), EDITED),
-        "expected": SAVED_WITH_THE_PREFIX,
+        "expected": [EDITED, "N(%s)" % EDITED],
     }])
 
 
-def test_the_rewrite_saves_a_root_relative_value() -> None:
-    """Three prefixes come off, and every one of them is written in the inert document."""
+def test_the_rewrite_stores_a_root_relative_value() -> None:
+    """And `lastValue` is computed from the value that was stored, not the other."""
     node(HARNESS, [{
         "name": "save, under Ingress",
         "shim": rendered_shim(INGRESS_PREFIX),
         "program": save_program(rewritten("save"), EDITED),
-        "expected": SAVED_ROOT_RELATIVE,
-        "inertWrites": 3,
+        "expected": [SAVED_ROOT_RELATIVE, "N(%s)" % SAVED_ROOT_RELATIVE],
     }])
 
 
-def test_without_the_globals_the_save_site_returns_the_clone_unchanged() -> None:
+def test_without_the_globals_the_save_site_stores_the_raw_value() -> None:
     """An Ingress page whose shim did not run must still save, not throw."""
     node(HARNESS, [{
         "name": "save, with no Runtime shim",
         "shim": "",
         "program": save_program(rewritten("save"), EDITED),
-        "expected": SAVED_WITHOUT_THE_SHIM,
+        "expected": [EDITED, "N(%s)" % EDITED],
     }])
 
 
-def test_the_round_trip_returns_the_stored_value() -> None:
-    """Render then save: what the database gets back is what it held."""
-    from conftest import require_tool
+# --- the image tools ----------------------------------------------------------
 
-    harness = r"""
-const assert = require("node:assert/strict");
-const vm = require("node:vm");
-const shim = JSON.parse(process.argv[1]);
-const P = "/api/hassio_ingress/token";
-const ORIGIN = "http://ha.example:8123";
-const PAGE = ORIGIN + P + "/odoo/action-454/5";
-__DOM__
-function XMLHttpRequest() {}
-XMLHttpRequest.prototype.open = function () {};
-function History() {}
-History.prototype.pushState = function () {};
-History.prototype.replaceState = function () {};
-function WebSocket() {}
-const context = {
-  navigator: { serviceWorker: undefined },
-  location: { href: PAGE, origin: ORIGIN, host: "ha.example:8123" },
-  sessionStorage: { getItem() { return null; }, setItem() {} },
-  fetch() {}, open() {}, XMLHttpRequest, History, WebSocket, URL,
-  Request: function () {},
-};
-const dom = makeDom(context);
-context.Element = dom.Element;
-context.document = dom.document;
-context.document.body = {};
-context.document.documentElement = {};
-context.document.activeElement = null;
-context.window = context;
-vm.createContext(context);
-vm.runInContext(shim, context, { filename: "ingress-runtime-shim.js" });
+CROPPED = INGRESS_PREFIX + "/web/image/42-abc/a.png"
 
-const PICTURE = "/project_todo/static/img/todo_access.png";
-const prefixed = context.__WOOW_INGRESS_MARKUP_IN__('<img src="' + PICTURE + '"/>');
-assert.equal(prefixed, '<img src="' + P + PICTURE + '"/>');
-// The editable, as the browser parsed the prefixed markup.
-const editable = context.makeNode("DIV", {}, [context.makeNode("IMG", { src: P + PICTURE })]);
-// Saving twice is what a form does; the second save must give the same bytes,
-// and the editable itself must be untouched by either.
-for (const attempt of [1, 2]) {
-  const saved = context.__WOOW_INGRESS_MARKUP_OUT__(editable.cloneNode(true));
-  assert.equal(saved.markup, '<img src="' + PICTURE + '"></img>',
-    "the value that goes back to the database must be the value it held (save " + attempt + ")");
-  assert.equal(editable.markup, '<img src="' + P + PICTURE + '"></img>',
-    "the live editable must keep the prefix it renders with (save " + attempt + ")");
-}
-""".replace("__DOM__", DOM)
-    result = subprocess.run(
-        [require_tool("node"), "-e", harness, json.dumps(rendered_shim(INGRESS_PREFIX))],
-        text=True, capture_output=True, check=False,
-    )
-    assert result.returncode == 0, result.stderr or result.stdout
+
+def test_the_image_tools_ask_about_a_prefixed_path_without_the_rewrite() -> None:
+    """`get_image_info` only looks a record up for a path beginning /web/image."""
+    node(HARNESS, [{
+        "name": "image tools, as Odoo ships it",
+        "shim": rendered_shim(INGRESS_PREFIX),
+        "program": image_program(fixture("image tools"), CROPPED),
+        "expected": CROPPED,
+    }])
+
+
+def test_the_rewrite_asks_about_the_root_relative_path() -> None:
+    node(HARNESS, [
+        {
+            "name": "image tools, under Ingress",
+            "shim": rendered_shim(INGRESS_PREFIX),
+            "program": image_program(rewritten("image tools"), CROPPED),
+            "expected": "/web/image/42-abc/a.png",
+        },
+        {
+            # An external image has no prefix to take off, so the pathname is
+            # handed on as Odoo computes it and the route's own URL search
+            # still gets its chance.
+            "name": "image tools, an external image",
+            "shim": rendered_shim(INGRESS_PREFIX),
+            "program": image_program(rewritten("image tools"), "https://other.example/a.png"),
+            "expected": "/a.png",
+        },
+        {
+            "name": "image tools, with no Runtime shim",
+            "shim": "",
+            "program": image_program(rewritten("image tools"), CROPPED),
+            "expected": CROPPED,
+        },
+    ])
 
 
 # --- the fixtures -------------------------------------------------------------
 
-def test_the_fixtures_are_the_editor_and_nothing_else() -> None:
-    """Both excerpts are verbatim bundle bytes, so they must parse as one region."""
+def test_the_fixtures_are_verbatim_regions() -> None:
+    """Each excerpt is bundle bytes, so it must start and end where it says."""
     render = fixture("render")
     assert render.startswith("attachTo(editable){")
     assert render.rstrip().endswith("this.config.onEditorReady?.();}")
     save = fixture("save")
-    assert save.startswith("getContent(){return this.getElContent().innerHTML;}")
-    assert re.search(r"getElContent\(\)\{const el=this\.editable\.cloneNode\(true\);", save)
+    assert save.startswith("async updateValue(value,{changeId}={changeId:this.lastChangeId}){")
+    assert save.rstrip().endswith('bus.trigger("FIELD_IS_DIRTY",this.isDirty);}')
+    image = fixture("image tools")
+    assert image.startswith("let docHref=img.ownerDocument.defaultView.location.href;")
+    assert re.search(r"const relativeSrc=srcUrl\.pathname;$", image.rstrip())

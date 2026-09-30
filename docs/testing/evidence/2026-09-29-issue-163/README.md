@@ -168,17 +168,20 @@ reaches for the same hammer.
 
 **Fixed 2026-09-30 (#210); the verdict in `open-diff.jsonl` is the one this run
 measured and is not edited.** ADR 0004's 2026-09-30 postscript adds the second
-half of the render-site rule: the Runtime shim publishes two markup helpers,
-`__WOOW_INGRESS_MARKUP_IN__` and `__WOOW_INGRESS_MARKUP_OUT__`, and two
-rewrites on the Ingress asset location put the prefix on at
-`Editor.attachTo` -- before the markup is parsed, so nothing is fetched from
-the Home Assistant root -- and take it off again at `Editor.getElContent`, the
-one place content leaves the editor, on the detached clone the field saves. So
-the two pictures load under the prefix and
-`project.task.description` stays root-relative. What is still owed is the Live
-half, which needs a Deploy: this run's three targets replayed on both surfaces
-with every signal zero, plus a save in the editor under Ingress followed by a
-read of the stored `src`. The static-tier contract is
+half of the render-site rule: the Runtime shim publishes two markup string
+helpers, `__WOOW_INGRESS_MARKUP_IN__` and `__WOOW_INGRESS_MARKUP_OUT__`, and
+three rewrites on the Ingress asset location call them -- the prefix goes on at
+`Editor.attachTo`, before the markup is parsed, so nothing is fetched from the
+Home Assistant root; it comes off at `HtmlField.updateValue`, the one place the
+field writes the record, which is later than the editor and so also covers an
+image `savePendingImages` re-points after the editor is done; and it comes off
+the `src` the image tools send to `/html_editor/get_image_info`, which only
+recognises an attachment from a path beginning `/web/image`. So the two
+pictures load under the prefix and `project.task.description` stays
+root-relative. What is still owed is the Live half, which needs a Deploy: this
+run's three targets replayed on both surfaces with every signal zero, plus a
+save in the editor under Ingress followed by a read of the stored `src`. The
+static-tier contract is
 `odoo18ce/tests/test_ingress_todo_description.py`.
 
 ### Website checkout e-invoice step — important
