@@ -212,7 +212,12 @@ http {
     # end of it. The name test is case-insensitive, because `mT` accepts an
     # uppercase tag name and `<IMG SRC="...">` is legal HTML somebody can
     # paste into the code view, and it is an *exact* name, so
-    # `data-original-src` is not a `data-src`. It is a comma-delimited
+    # `data-original-src` is not a `data-src`. The *name* class the walk
+    # consumes is wider than the four on purpose -- it takes a `:`, a `.`
+    # and a `_` as well -- because an attribute the walk cannot tokenise is
+    # one whose value it would then search inside, which is the misalignment
+    # above: `<img xlink:title='a src="/x' src="/y">` needs `xlink:title` to
+    # be one token even though nothing will ever prefix it. It is a comma-delimited
     # `indexOf` and not an anchored regex, because an anchored regex needs a
     # `$` and nginx reads a `$` in a quoted parameter as a variable -- with
     # `/i` after it, as an invalid one, which `nginx -t` refuses. The
@@ -220,14 +225,20 @@ http {
     # is how that was found rather than shipped.
     #
     # A value is a candidate only if its first byte is `/` and its second is
-    # not. The leading `/` leaves a relative value alone, because prefixing
-    # it would *resolve* it and the resolved path is not what the record
-    # held. The `(?!\/)` leaves a protocol-relative reference alone, which is
-    # the limit every other prefix rule in this template has and #166 owns:
-    # without it `path()` would return a *same-host* `//host/x` as a
-    # prefixed root-relative path, and the strip would then store `/x` --
-    # a silently rewritten link rather than an unfixed one. A cross-origin
-    # `//host/x` was never at risk; `path()` returns it as it came.
+    # neither `/` (47) nor a backslash (92). The leading `/` leaves a
+    # relative value alone, because prefixing it would *resolve* it and the
+    # resolved path is not what the record held. Excluding the second
+    # character leaves a protocol-relative reference alone, which is the
+    # limit every other prefix rule in this template has and #166 owns:
+    # without it `path()` would return a *same-host* `//host/x` as a prefixed
+    # root-relative path, and the strip would then store `/x` -- a silently
+    # rewritten link rather than an unfixed one. A cross-origin `//host/x`
+    # was never at risk; `path()` returns it as it came. The backslash is
+    # there because the URL parser treats `/\host/x` as `//host/x` for an
+    # http(s) base, so it is the same hazard spelled differently; it is
+    # tested by character code rather than as a literal, because nginx turns
+    # `\\` in a quoted parameter into one backslash and would leave the
+    # JavaScript with an unterminated string.
     #
     # `path()` normalises what it does prefix the way the browser resolves a
     # URL, so a value already in normal form round-trips byte for byte and
@@ -252,7 +263,7 @@ http {
     # before this line otherwise, and every rewritten expression falls back to
     # the untouched value when the globals are absent.
     map $upstream_http_content_type $ingress_markup_global_shim {
-        default 'var mT=/<[A-Za-z][^<>]*>/g,mA=/(^|\s)([A-Za-z][A-Za-z0-9-]*)=([\x22\x27])((?:(?!\3)[^<>])*)\3/g,mU=function(n){return ",src,href,action,data-src,".indexOf(","+n.toLowerCase()+",")>=0},mF=function(m,s,n,q,v){return mU(n)&&v.charAt(0)==="/"&&v.charAt(1)!=="/"?s+n+"="+q+path(v)+q:m},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mA,mF)}):h},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
+        default 'var mT=/<[A-Za-z][^<>]*>/g,mA=/(^|\s)([A-Za-z][-A-Za-z0-9:._]*)=([\x22\x27])((?:(?!\3)[^<>])*)\3/g,mU=function(n){return ",src,href,action,data-src,".indexOf(","+n.toLowerCase()+",")>=0},mF=function(m,s,n,q,v){return mU(n)&&v.charAt(0)==="/"&&v.charCodeAt(1)!==47&&v.charCodeAt(1)!==92?s+n+"="+q+path(v)+q:m},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mA,mF)}):h},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
     }
 
     map $upstream_http_content_type $ingress_runtime_shim {

@@ -83,13 +83,14 @@ issue #210:
 | `image_processing_relative_src.js` | `web.assets_backend` | `loadImageInfo`'s preamble, which turns an `<img>`'s `src` into the `relativeSrc` it sends to `/html_editor/get_image_info` |
 
 Measured on 2026-09-30 across every bundle the control group serves on that
-route:
+route. Each row is the `sub_filter` source as the template ships it, byte for
+byte — a shortened stand-in would be a count of a different pattern:
 
 | Pattern | Bundles that carry it, once each | Bundles that carry it zero times |
 |---|---|---|
 | `editable.innerHTML=fixInvalidHTML(this.config.content)` | `web.assets_backend`, `web.assets_web`, `web.assets_web_print` | the twelve others below |
 | `if(content){this.editable.innerHTML=content;}` | the same three | the twelve others below |
-| `async updateValue(value,{changeId}={changeId:this.lastChangeId}){` | the same three | the twelve others below |
+| `async updateValue(value,{changeId}={changeId:this.lastChangeId}){this.lastValue=normalizeHTML(value,this.clearElementToCompare.bind(this));` | the same three | the twelve others below |
 | `const comparisonValue=el.innerHTML;` | the same three | the twelve others below |
 | `const relativeSrc=srcUrl.pathname;` | the same three, plus `web.assets_frontend`, `web.assets_frontend_lazy` and `web_editor.assets_wysiwyg` | the nine others |
 

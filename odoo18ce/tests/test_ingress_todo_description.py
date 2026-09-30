@@ -397,6 +397,21 @@ assert.equal(
   markupIn('<img alt=' + "'" + 'a" src="/x' + "'" + ' src="' + PICTURE + '">'),
   '<img alt=' + "'" + 'a" src="/x' + "'" + ' src="' + P + PICTURE + '">'
 );
+// The name the walk consumes may hold a `:`, a `.` or a `_`, because an
+// attribute it cannot tokenise is one whose value it would search inside --
+// which is the misalignment above, reached by another spelling.
+for (const name of ["xlink:title", "data-x_y", "ns:a.b"]) {
+  assert.equal(
+    markupIn('<img ' + name + '=' + "'" + 'a" src="/x' + "'" + ' src="' + PICTURE + '">'),
+    '<img ' + name + '=' + "'" + 'a" src="/x' + "'" + ' src="' + P + PICTURE + '">'
+  );
+}
+// The URL parser reads `/\host/x` as `//host/x` for an http(s) base, so the
+// second-character guard has to refuse a backslash as well as a slash --
+// otherwise path() would return a same-host one as a prefixed path and the
+// strip would store `/x`, moving the link to another host.
+assert.equal(markupIn('<img src="/' + String.fromCharCode(92) + 'ha.example:8123/x.png"/>'),
+  '<img src="/' + String.fromCharCode(92) + 'ha.example:8123/x.png"/>');
 // And an unquoted value that swallows the next attribute (which is how a
 // browser parses it too) leaves the inner `src` preceded by a quote rather
 // than whitespace, so it is not a token either.
@@ -916,6 +931,25 @@ def test_a_real_change_still_writes_under_the_comparison_rewrite() -> None:
 
 
 # --- the fixtures -------------------------------------------------------------
+
+@pytest.mark.parametrize("name", REWRITES)
+def test_the_readme_records_the_pattern_that_ships(name: str) -> None:
+    """The counts are only about the rule if the row is the rule's own source.
+
+    A shortened stand-in in the table would be a measurement of a different
+    pattern, and the reader has no way to tell.
+    """
+    readme = (FIXTURES / "README.md").read_text(encoding="utf-8")
+    source = REWRITES[name]["source"]
+    rows = [
+        line for line in readme.splitlines()
+        if line.startswith("| `") and line.split("|")[1].strip().strip("`") == source
+    ]
+    assert len(rows) == 1, (
+        f"{name}: fixtures/bundles/README.md must carry one measurement row whose pattern is "
+        f"exactly the sub_filter source {source!r}"
+    )
+
 
 def test_the_fixtures_are_verbatim_regions() -> None:
     """Each excerpt is bundle bytes, so it must start and end where it says."""
