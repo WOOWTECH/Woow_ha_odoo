@@ -1369,6 +1369,12 @@ class SurfaceDriver:
         would edit the very screen under judgement. The record names the
         order and its size instead, and it carries the run id.
 
+        The click is bounded but not quick: with every wait in it timing out,
+        one cart target costs about nine minutes -- two passes of a `load`
+        navigation, the button waits, the badge wait and two cart readings --
+        against about four before the retry existed. A run that sizes a timeout
+        around this step should size it for that.
+
         This writes, and is deliberately not an `Operation`:
         `NON_MUTATING_OPERATIONS` is every member of that enum, so a WRITE
         member added there would be *permitted* by `READ_ONLY_POLICY` rather
@@ -1423,6 +1429,14 @@ class SurfaceDriver:
                     page.wait_for_function(_CART_GREW_JS, arg=0, timeout=30000)
                 except Exception:  # noqa: BLE001 -- the cart page below is the real check
                     pass
+                if attempt > 1:
+                    # A badge that rose cannot say which of the two clicks
+                    # raised it, so the second click gets the same grace the
+                    # reading before it got and the cart is read after that.
+                    # What that reading says is what the record says: a cart
+                    # that took both clicks is reported holding both lines
+                    # rather than the one line the wait happened to see.
+                    page.wait_for_timeout(_CART_SETTLE_MS)
                 after, order = self._cart(page)
                 if after is None:
                     # The page could not say, which is not the same as empty and
@@ -1445,7 +1459,9 @@ class SurfaceDriver:
             if late:
                 how += "; the click landed after the reading that called the cart empty, so it was not clicked again"
             elif attempt > 1:
-                how += "; the first %d click(s) left the cart empty" % (attempt - 1)
+                how += "; the first %d click(s) read as lost, so it was clicked %d times" % (attempt - 1, attempt)
+                if after > 1:
+                    how += ", and the cart holds more than one line because one of them had landed after all"
             return {"model": "sale.order", "id": order, "items": after, "how": how}
         finally:
             page.close()
@@ -1470,8 +1486,12 @@ class SurfaceDriver:
         """
         page.goto(self.base + product_route, wait_until="load", timeout=60000)
         button = page.locator(_ADD_TO_CART).first
-        button.wait_for(state="visible", timeout=30000)
-        deadline = time.monotonic() + 30
+        # A button that is not there 15s after `load` is a shop the run should
+        # report on, not wait for; the poll after it is shorter still, since a
+        # `button[disabled]` on a loaded page is waiting on an XHR and not on
+        # the bundle. Both bound what the retry doubles -- see `ensure_cart`.
+        button.wait_for(state="visible", timeout=15000)
+        deadline = time.monotonic() + 5
         while not button.is_enabled():
             if time.monotonic() >= deadline:
                 raise RuntimeError("the add-to-cart button on %s never became enabled"

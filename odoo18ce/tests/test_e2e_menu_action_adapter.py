@@ -3,6 +3,7 @@
 
 Nothing here opens a browser, a websocket or reads credentials.
 """
+import itertools
 import json
 import unittest
 from unittest import mock
@@ -763,7 +764,10 @@ class CartStepTests(unittest.TestCase):
 
     def test_a_button_that_never_becomes_enabled_fails_the_step_not_the_click(self) -> None:
         page = FakePage([0], enabled=(False, False))
-        with mock.patch("e2e_menu_action_adapter.time.monotonic", side_effect=(0.0, 31.0)):
+        # A clock that answers every call, however many the path takes: two
+        # exact values would fail this test with StopIteration on a third.
+        with mock.patch("e2e_menu_action_adapter.time.monotonic",
+                        side_effect=itertools.count(0.0, 31.0)):
             with self.assertRaisesRegex(RuntimeError, "add-to-cart button on /shop/product/desk-1 never became enabled"):
                 cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
         self.assertEqual(page.clicks, 0)
@@ -774,14 +778,28 @@ class CartStepTests(unittest.TestCase):
         # failing the run on it costs a whole two-surface judgement.
         # The readings: empty before the step, empty after the first click,
         # empty again just before the second, and filled after it.
-        page = FakePage([0, 0, 0, 2])
+        page = FakePage([0, 0, 0, 1])
         write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
         self.assertEqual(page.clicks, 2)
-        self.assertEqual((write["items"], write["id"]), (2, "7"))
-        self.assertEqual(write["how"], "added the product on /shop/product/desk-1 to the cart (0 -> 2 items)"
-                                       "; the first 1 click(s) left the cart empty")
+        self.assertEqual((write["items"], write["id"]), (1, "7"))
+        self.assertEqual(write["how"], "added the product on /shop/product/desk-1 to the cart (0 -> 1 items)"
+                                       "; the first 1 click(s) read as lost, so it was clicked 2 times")
         # Two clicks means two passes over the product page, and no third.
         self.assertEqual(page.log.count("goto:/shop/product/desk-1"), 2)
+
+    def test_a_cart_that_took_both_clicks_is_reported_holding_both_lines(self) -> None:
+        # The badge rising after the second click cannot say which click raised
+        # it, so the reading taken after the grace that follows is the record.
+        # A cart holding two lines is two rows to account for under ADR 0012 and
+        # a bigger cart than the other surface will judge: reporting one line
+        # would hide both.
+        page = FakePage([0, 0, 0, 2])
+        write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual((page.clicks, write["items"]), (2, 2))
+        self.assertEqual(write["how"], "added the product on /shop/product/desk-1 to the cart (0 -> 2 items)"
+                                       "; the first 1 click(s) read as lost, so it was clicked 2 times,"
+                                       " and the cart holds more than one line because one of them"
+                                       " had landed after all")
 
     def test_a_click_that_landed_late_is_not_clicked_again(self) -> None:
         # The add was still in flight when the reading called the cart empty. A
