@@ -1454,9 +1454,15 @@ class SurfaceDriver:
                                       " (%s), so what it holds is unaccounted for" % (clicks, why))
                         else:
                             detail = ""
+                        # A configuration error is re-raised by `open_screen`
+                        # rather than passed through the masker the `cart not
+                        # filled` path uses, so this one masks itself: a raw
+                        # Playwright message carries the host and the ingress
+                        # token every other message in this driver hides.
                         raise RuntimeError("crawler configuration: the ingress session could not be refreshed "
-                                           "during the cart step (%s)%s"
-                                           % ((str(error).splitlines() or [""])[0], detail)) from None
+                                           "during the cart step (%s)"
+                                           % self.masker.text((str(error).splitlines() or [""])[0] + detail)
+                                           ) from None
                 if attempt > 1:
                     # The add may still have been in flight when the reading
                     # above called the cart empty, and clicking again would add
@@ -1471,8 +1477,8 @@ class SurfaceDriver:
                     if after is None:
                         # Not empty -- unreadable, the same answer the reading
                         # after a click gives, and no reason to click again.
-                        raise RuntimeError("the cart page did not show its item count before clicking %s again "
-                                           "(%d click(s) so far)"
+                        raise RuntimeError("the cart page did not show its item count at %s after %d click(s), "
+                                           "so the step did not click again"
                                            % (self.masker.text(product_route), clicks))
                     if after:
                         filled_first = True
@@ -1507,7 +1513,7 @@ class SurfaceDriver:
                     # is not something another click would answer. The count is
                     # in the message: what the run clicked is what it has to
                     # account for, whatever the page would not say.
-                    raise RuntimeError("the cart page did not show its item count after adding %s in %d click(s)"
+                    raise RuntimeError("the cart page did not show its item count at %s after %d click(s)"
                                        % (self.masker.text(product_route), clicks))
                 if after and clicks > 1:
                     moved, unread, confirmed = False, False, False

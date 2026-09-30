@@ -964,6 +964,25 @@ class CartStepTests(unittest.TestCase):
         self.assertIn("no record will name the cart: sale.order:7 holding 1 item(s), "
                       "the cart holds 1 item(s) after the cart step failed", str(caught.exception))
 
+    def test_a_run_stopped_by_the_session_masks_what_it_reports(self) -> None:
+        # This message is re-raised rather than recorded, so it never reaches the
+        # masker `open_screen` runs the `cart not filled` text through. The host
+        # and the ingress token are in raw Playwright text, and they are what
+        # every other message in this driver hides.
+        target, = parse_targets([CART_TARGET])
+        driver = cart_driver(FakeContext(FakePage([0, 0]), fail_after=1))
+        driver.masker = Masker(bases={"<HA_BASE>": HA}, ingress_prefix=PREFIX, secrets=("hunter2",))
+        driver.ingress = mock.Mock()
+        driver.ingress.keep_alive.side_effect = [
+            None, RuntimeError("Page.goto: failed at %s%s/shop/cart with hunter2" % (HA, PREFIX)),
+        ]
+        with self.assertRaises(RuntimeError) as caught:
+            driver.open_screen(target)
+        message = str(caught.exception)
+        self.assertTrue(is_configuration_error(caught.exception))
+        for secret in (HA, PREFIX.rsplit("/", 1)[-1], "hunter2"):
+            self.assertNotIn(secret, message)
+
     def test_a_run_stopped_by_the_session_says_when_it_could_not_read_the_cart(self) -> None:
         # The reading it would have named the cart with failed too, so what the
         # click left is unknown -- and saying nothing would be the worse answer.
@@ -1020,14 +1039,14 @@ class CartStepTests(unittest.TestCase):
         # readings that could send the second click read it that way, and the
         # message carries what the run had clicked by then.
         page = FakePage([0, None])
-        with self.assertRaisesRegex(RuntimeError, r"did not show its item count after adding "
-                                                  r"/shop/product/desk-1 in 1 click\(s\)"):
+        with self.assertRaisesRegex(RuntimeError, r"did not show its item count at "
+                                                  r"/shop/product/desk-1 after 1 click\(s\)"):
             cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
         self.assertEqual(page.clicks, 1)
         # The grace reading before the second click is the other one.
         grace = FakePage([0, 0, None])
-        with self.assertRaisesRegex(RuntimeError, r"did not show its item count before clicking "
-                                                  r"/shop/product/desk-1 again \(1 click\(s\) so far\)"):
+        with self.assertRaisesRegex(RuntimeError, r"did not show its item count at /shop/product/desk-1 "
+                                                  r"after 1 click\(s\), so the step did not click again"):
             cart_driver(FakeContext(grace)).ensure_cart("/shop/product/desk-1")
         self.assertEqual(grace.clicks, 1)
 
