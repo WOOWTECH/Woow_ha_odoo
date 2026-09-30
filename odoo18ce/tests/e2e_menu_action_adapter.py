@@ -1162,13 +1162,15 @@ _CART_GREW_JS = """(before) => {
 }"""
 
 
-def _is_cart_update(response) -> bool:
-    """Whether a response is the cart answering an add.
+# What answers an add: the product page's own form posts to `/shop/cart/update`
+# (as does the cart page's quantity editor, at `/shop/cart/update_json`), and a
+# product with optional or combo products adds through the configurator instead.
+_CART_UPDATE_ROUTES = ("/shop/cart/update", "/website_sale/product_configurator/update_cart")
 
-    The product page's form posts to `/shop/cart/update`; the themes that add
-    over XHR post to `/shop/cart/update_json`, so the prefix matches both.
-    """
-    return "/shop/cart/update" in response.url
+
+def _is_cart_update(response) -> bool:
+    """Whether a response is the cart answering an add."""
+    return any(route in response.url for route in _CART_UPDATE_ROUTES)
 
 
 # Every theme the parity plan covers renders one of these.
@@ -1381,7 +1383,7 @@ class SurfaceDriver:
         order and its size instead, and it carries the run id.
 
         The click is bounded but not quick: with every wait in it timing out,
-        one cart target costs about thirteen minutes -- two passes of a `load`
+        one cart target costs about twelve minutes -- two passes of a `load`
         navigation, the button waits, the badge wait and the cart readings,
         including the ones that confirm a two-click cart settled -- against
         about four before the retry existed. A run that sizes a timeout around
@@ -1440,7 +1442,7 @@ class SurfaceDriver:
                         # a cart in: a line the first click already committed
                         # would go unaccounted for. The message carries it, on
                         # the one database ADR 0012 allows the write on.
-                        left, unread = self._cart_after_failure() if clicks else (None, None)
+                        left, why = self._cart_after_failure() if clicks else (None, None)
                         if left:
                             # Its own `how` says whether the run made this cart
                             # or found it; claiming either here would be the
@@ -1449,7 +1451,7 @@ class SurfaceDriver:
                                       % (left["model"], left["id"], left["items"], left["how"]))
                         elif clicks:
                             detail = ("; %d click(s) had been sent and the cart could not be read afterwards"
-                                      " (%s), so what it holds is unaccounted for" % (clicks, unread))
+                                      " (%s), so what it holds is unaccounted for" % (clicks, why))
                         else:
                             detail = ""
                         raise RuntimeError("crawler configuration: the ingress session could not be refreshed "
@@ -1607,21 +1609,26 @@ class SurfaceDriver:
         """
         try:
             page.goto(self.base + product_route, wait_until="load", timeout=60000)
-        except Exception:  # noqa: BLE001 -- retried below, and raised from there if it is real
+        except Exception:  # noqa: BLE001 -- re-raised below unless the page arrived
             # One sub-resource that never finishes would otherwise cost the whole
-            # target a blocker GAP, and the bundle has very likely run by then.
-            # `domcontentloaded` is where this started and the click's own retry
-            # is the guard behind it, so the step goes on from there.
-            page.goto(self.base + product_route, wait_until="domcontentloaded", timeout=60000)
+            # target a blocker GAP, and the page is up: its bundle has very
+            # likely run, and the click's own retry is the guard behind it. So
+            # the step goes on with the page it has -- navigating again would
+            # throw that away and land exactly where `load` was waiting to get
+            # past. A navigation that never arrived is a real failure.
+            if product_route not in (page.url or ""):
+                raise
         if (page.evaluate(_CART_QUANTITY_JS) or 0) > 0:
             return False
         button = page.locator(_ADD_TO_CART).first
-        # A button that is not there 15s after `load` is a shop the run should
-        # report on, not wait for. The poll after it keeps the 30s a bare
+        # A button that is not there 30s after `load` is a shop the run should
+        # report on, not wait for -- 30s because that is what a bare `click()`
+        # would have given it to appear, and nothing retries this abort. The
+        # poll after it keeps the same 30s a bare
         # `click()` would have auto-waited: a themed `button[disabled]` waiting
         # on its own combination XHR takes seconds, and nothing retries a step
         # this aborts -- only an empty cart is clicked at again.
-        button.wait_for(state="visible", timeout=15000)
+        button.wait_for(state="visible", timeout=30000)
         deadline = time.monotonic() + 30
         # The reading carries its own timeout: Playwright's default is 30s, and
         # a button that stopped resolving would blow the poll's bound and report

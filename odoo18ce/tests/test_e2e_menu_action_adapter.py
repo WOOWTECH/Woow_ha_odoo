@@ -687,6 +687,10 @@ class FakePage:
         self.badges = list(badges)
         self.answered = answered
         self.load_error = load_error
+        # A `load` that fails on a page that did arrive, unless `arrives` says
+        # the navigation never got there at all.
+        self.url = ""
+        self.arrives = True
         self.click_error: Exception | None = None
         self.path = ""
         self.log: list[str] = []
@@ -695,10 +699,13 @@ class FakePage:
         self.closed = False
 
     def goto(self, url: str, **kwargs) -> None:
+        self.url = url
         self.path = urlsplit(url).path
         self.opened.append((self.path, kwargs.get("wait_until")))
         self.log.append("goto:%s" % self.path)
         if self.load_error is not None and kwargs.get("wait_until") == "load":
+            if not self.arrives:
+                self.url = ""
             raise self.load_error
 
     def locator(self, selector: str) -> FakeLocator:
@@ -798,14 +805,22 @@ class CartStepTests(unittest.TestCase):
         write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
         self.assertEqual((page.clicks, write["items"]), (1, 1))
 
-    def test_a_product_page_whose_load_never_fires_is_opened_the_old_way(self) -> None:
+    def test_a_product_page_whose_load_never_fires_is_used_as_it_stands(self) -> None:
         # One sub-resource that never finishes would cost the target a blocker
-        # GAP; the bundle has very likely run, and the click's retry is behind it.
+        # GAP; the page is up, its bundle has very likely run, and the click's
+        # retry is behind it. Navigating again would throw that away.
         page = FakePage([0, 1], load_error=RuntimeError("Timeout 60000ms exceeded"))
         write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
         self.assertEqual((page.clicks, write["items"]), (1, 1))
-        self.assertEqual([wait for path, wait in page.opened if path == "/shop/product/desk-1"],
-                         ["load", "domcontentloaded"])
+        self.assertEqual([wait for path, wait in page.opened if path == "/shop/product/desk-1"], ["load"])
+
+    def test_a_navigation_that_never_arrived_is_the_failure_it_is(self) -> None:
+        # Not a slow sub-resource: the page is not the product page at all, so
+        # there is nothing to go on with.
+        page = FakePage([0, 1], load_error=RuntimeError("net::ERR_CONNECTION_REFUSED"))
+        page.arrives = False
+        with self.assertRaisesRegex(RuntimeError, "ERR_CONNECTION_REFUSED"):
+            cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
 
     def test_a_button_that_never_becomes_enabled_fails_the_step_not_the_click(self) -> None:
         page = FakePage([0], enabled=(False, False))
