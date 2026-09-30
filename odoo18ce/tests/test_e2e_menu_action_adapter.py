@@ -528,6 +528,19 @@ class OpenTargetTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "/shop/checkout"):
             require_write_database((target for target in checkout), "odoo_test")
 
+    def test_a_file_that_writes_both_ways_is_told_both(self) -> None:
+        # Refusing one of them sends the operator back for another browser
+        # launch and login, to be refused for the other.
+        both = parse_targets([
+            '{"module": "m", "target": "/shop", "expect_selector": "#x", "cart": "/shop/desk-1"}',
+            '{"module": "m", "target": "/shop/confirm_order", "expect_selector": "#y"}',
+        ])
+        with self.assertRaises(RuntimeError) as caught:
+            require_write_database(both, "odoo_test")
+        self.assertIn("fills a cart", str(caught.exception))
+        self.assertIn("/shop/confirm_order", str(caught.exception))
+        self.assertIn(WRITE_DATABASE, str(caught.exception))
+
     def test_every_get_writing_route_is_named_with_where_its_write_was_read(self) -> None:
         # The list is the guard, so an entry with no citation is an entry nobody
         # can check against upstream `website_sale`.

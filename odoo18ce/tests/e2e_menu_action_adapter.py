@@ -526,16 +526,19 @@ def require_write_database(targets: Iterable[OpenTarget], database: str | None) 
     # Read once: this walks the targets twice, and an `Iterable` may be a
     # generator, which the first walk would leave empty for the second.
     targets = tuple(targets)
-    if any(target.cart for target in targets):
-        raise RuntimeError("crawler configuration: a target fills a cart, which writes; "
-                           "the session's database is %r, not %s" % (database, WRITE_DATABASE))
+    # Every reason at once. A file can hold both kinds, and reporting one of
+    # them sends the operator back for another browser launch and login to be
+    # refused for the other.
+    reasons = ["a target fills a cart, which writes"] if any(target.cart for target in targets) else []
     for target in targets:
         prefix = get_writing_route(target.route)
         if prefix is not None:
-            raise RuntimeError("crawler configuration: target %s writes on a plain GET -- %s %s; "
-                               "that write is allowed on %s only, and the session's database is %r"
-                               % (target.target, prefix, GET_WRITING_ROUTES[prefix],
-                                  WRITE_DATABASE, database))
+            reasons.append("target %s writes on a plain GET -- %s %s"
+                           % (target.target, prefix, GET_WRITING_ROUTES[prefix]))
+    if reasons:
+        raise RuntimeError("crawler configuration: %s; that write is allowed on %s only, and the "
+                           "session's database is %r"
+                           % ("; also ".join(reasons), WRITE_DATABASE, database))
 
 
 # --- Home Assistant websocket messages -----------------------------------
