@@ -520,18 +520,26 @@ content worth keeping. The cost is stated rather than hidden: prefix-shaped
 text a user typed or pasted into a description is removed on save. That is
 de-tokenising a credential, and the Static-tier test asserts it as a decision.
 
-**Four attributes prefixed, and only a value beginning `/`.** `src`, `href`,
-`action` and `data-src` -- the ones whose whole value is one URL. `srcset` is a
-candidate list that needs a parse rather than a substitution and belongs to
-#166 with every other attribute rule; a `style` background inside record HTML
-stays as it is (#194 covers page HTML). Both are *stripped* on the way out
-anyway, because the shim's own wrappers can have put a prefix there.
+**Four attributes prefixed, and only a value beginning `/` and not `//`.**
+`src`, `href`, `action` and `data-src` -- the ones whose whole value is one
+URL. `srcset` is a candidate list that needs a parse rather than a substitution
+and belongs to #166 with every other attribute rule; a `style` background
+inside record HTML stays as it is (#194 covers page HTML). Both are *stripped*
+on the way out anyway, because the shim's own wrappers can have put a prefix
+there. The value runs to the *matching* quote -- the class excludes whichever
+quote opened it, not both -- so a `'` inside a double-quoted `src` is part of
+the URL, which an attachment called `Mary's photo.png` needs it to be.
 
-Requiring the first byte to be `/` excludes a protocol-relative reference --
-the limit every other prefix rule in the template has and #166 owns, excluded
-here rather than broken -- and it leaves a relative value alone, because
-prefixing it would *resolve* it and the resolved path is not what the record
-held. An absolute same-origin URL is left alone for the same reason.
+The leading `/` leaves a relative value alone, because prefixing it would
+*resolve* it and the resolved path is not what the record held; an absolute
+same-origin URL is left alone for the same reason. Excluding `//` is a separate
+rule and it is load-bearing, which the first draft of this postscript got
+wrong by folding it into the first: `path()` returns a *cross-origin*
+protocol-relative reference as it came, but a *same-host* one comes back as a
+prefixed root-relative path, and the strip would then have stored `/x` -- a
+link silently moved from one host to another rather than an unfixed one. So
+`//` is excluded here, which is the limit every other prefix rule in this
+template has and #166 owns.
 
 **What the round trip does not promise.** `path()` normalises through `new
 URL`, so a value already in normal form -- which is what Odoo writes into
@@ -555,14 +563,25 @@ themselves touch no DOM at all.
 **What is not closed, said rather than left implicit.** The code view's
 `editable.innerHTML = this.value` on toggling back (the `codeview` option,
 which the To-do field does not set); a snapshot a collaborative *peer* sends
-over WebRTC, which carries whatever that peer's editable held -- the *server*
-reset above is covered, this one is not; `ImageSelector.isInitialMedia`
+over WebRTC, which is worth naming precisely because it is the one open item
+that is a **token write** and not only a render escape -- the snapshot
+serialises that peer's editable, so it carries *that* peer's Ingress prefix,
+and the strip removes only the prefix of the session doing the saving, so a
+second editor could store a foreign Supervisor token in
+`project.task.description`. The *server* reset is covered; this one is not,
+and it is not closed here for two reasons: nothing has measured the
+collaboration transport on the test host (it needs two simultaneous Ingress
+sessions on one to-do), and a strip that removes a *foreign* prefix has to
+reason about what an Ingress prefix looks like, which today only nginx's
+`safe_ingress_path` map does. It belongs to its own issue with its own
+measurement. Also open: `ImageSelector.isInitialMedia`
 preselecting by comparing a prefixed `src` with `attachment.image_src`, already
 true before this change for any image the media dialog inserted under Ingress;
 the readonly `HtmlViewer`, which renders through `t-out` and is none of the
 five sites; and the legacy `web_editor` editor behind `html_legacy` and
 `mass_mailing_html`, which carries none of these expressions. None has been
-measured escaping; each is its own issue if one is.
+measured escaping -- except the peer snapshot, which is unmeasured rather than
+clean -- and each is its own issue.
 
 All five patterns were measured on 2026-09-30 across every bundle the control
 group serves; `odoo18ce/tests/fixtures/bundles/README.md` carries the counts.

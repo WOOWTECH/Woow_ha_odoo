@@ -375,6 +375,16 @@ assert.equal(
 );
 // Single-quoted attributes are the same attributes.
 assert.equal(markupIn("<img src='" + PICTURE + "'/>"), "<img src='" + P + PICTURE + "'/>");
+// The value runs to the *matching* quote, so the other one is part of the URL
+// -- an attachment called "Mary's photo.png" is a real filename.
+assert.equal(
+  markupIn('<img src="/web/image/12-abc/Mary' + "'" + 's photo.png"/>'),
+  '<img src="' + P + '/web/image/12-abc/Mary' + "'" + 's%20photo.png"/>'
+);
+assert.equal(
+  markupIn("<img src='/web/image/12-abc/a" + '"' + "b.png'/>"),
+  "<img src='" + P + "/web/image/12-abc/a" + '%22' + "b.png'/>"
+);
 // Idempotent: the render site may run twice over the same content.
 assert.equal(markupIn(markupIn(stored)), markupIn(stored), "no value may be prefixed twice");
 assert.equal(markupIn('<a href="' + P + PICTURE + '">x</a>'),
@@ -394,6 +404,11 @@ for (const untouched of [
   '<a href="#anchor">x</a>',
   '<a href="https://other.example/x">x</a>',
   '<a href="//other.example/x">x</a>',
+  // Same-host protocol-relative too: without the `(?!/)` this one is what
+  // path() would have turned into a prefixed root-relative path, and the
+  // strip would then have stored `/x`. #166 owns this shape for every rule.
+  '<a href="//ha.example:8123/x">x</a>',
+  '<img data-src="//www.youtube.com/embed/abc"/>',
   '<a href="' + ORIGIN + PICTURE + '">x</a>',
   '<a href="' + ORIGIN + P + PICTURE + '">x</a>',
   '<a href="todo.html">x</a>',

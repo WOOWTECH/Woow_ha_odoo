@@ -191,15 +191,26 @@ http {
     # `src`, `href`, `action`, `data-src`. `srcset` is a candidate list
     # needing a parse and belongs to #166 with every other attribute rule,
     # and `style` backgrounds inside record HTML stay as they are (#194
-    # covers page HTML). A value is a candidate only if its first byte is
-    # `/`: that excludes a protocol-relative reference, and it leaves a
-    # relative value alone, because prefixing it would *resolve* it and the
-    # resolved path is not what the record held. `path()` normalises what it
-    # does prefix the way the browser resolves a URL, so a value already in
-    # normal form round-trips byte for byte and one that is not (a literal
-    # space, a non-ASCII filename, a `..` segment) comes back percent-encoded
-    # or collapsed -- the same address, different bytes, and the Static-tier
-    # test pins each shape.
+    # covers page HTML). The value runs to the *matching* quote -- the class
+    # excludes whichever quote opened it and not both, so a `'` in a
+    # double-quoted `src` (`Mary's photo.png`) is part of the URL and not the
+    # end of it.
+    #
+    # A value is a candidate only if its first byte is `/` and its second is
+    # not. The leading `/` leaves a relative value alone, because prefixing
+    # it would *resolve* it and the resolved path is not what the record
+    # held. The `(?!\/)` leaves a protocol-relative reference alone, which is
+    # the limit every other prefix rule in this template has and #166 owns:
+    # without it `path()` would return a *same-host* `//host/x` as a
+    # prefixed root-relative path, and the strip would then store `/x` --
+    # a silently rewritten link rather than an unfixed one. A cross-origin
+    # `//host/x` was never at risk; `path()` returns it as it came.
+    #
+    # `path()` normalises what it does prefix the way the browser resolves a
+    # URL, so a value already in normal form round-trips byte for byte and
+    # one that is not (a literal space, a non-ASCII filename, a `..`
+    # segment) comes back percent-encoded or collapsed -- the same address,
+    # different bytes, and the Static-tier test pins each shape.
     #
     # `__WOOW_INGRESS_MARKUP_OUT__(value)` removes **every** occurrence of the
     # prefix from a string. It is deliberately wider than `IN` rather than its
@@ -218,7 +229,7 @@ http {
     # before this line otherwise, and every rewritten expression falls back to
     # the untouched value when the globals are absent.
     map $upstream_http_content_type $ingress_markup_global_shim {
-        default 'var mT=/<[A-Za-z][^<>]*>/g,mR=/(\s(?:data-src|src|href|action)=)([\x22\x27])(\/[^\x22\x27<>]*)\2/g,mF=function(m,a,q,v){return a+q+path(v)+q},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mR,mF)}):h},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
+        default 'var mT=/<[A-Za-z][^<>]*>/g,mR=/(\s(?:data-src|src|href|action)=)([\x22\x27])(\/(?!\/)(?:(?!\2)[^<>])*)\2/g,mF=function(m,a,q,v){return a+q+path(v)+q},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mR,mF)}):h},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
     }
 
     map $upstream_http_content_type $ingress_runtime_shim {
