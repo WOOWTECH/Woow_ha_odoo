@@ -370,21 +370,27 @@ def session_database(reported: str | None) -> str:
 # every `@route` of `controllers/`, including the bare `@route()` overrides of
 # `website`'s own routes, whose route is the parent's: one not listed here is
 # either unreachable by that navigation (`methods=['POST']`, `type='json'`) or
-# its controller was read and writes nothing -- `readonly=True`
-# (`/shop/<product>`), nothing but `request.session` (`/shop`), or nothing at
-# all (`/shop/confirmation`, `/shop/print`, `/shop/product/<id>`).
+# its body was read and writes nothing: nothing but `request.session` (`/shop`),
+# or nothing at all (`/shop/<product>`, `/shop/<product>/document/<id>`,
+# `/shop/confirmation`, `/shop/print`, `/shop/product/<id>`). The body is what
+# was read, not the `readonly=True` flag two of them carry: that flag is not a
+# bound, because `odoo/http.py:2157-2168` rolls a read-only transaction back and
+# re-runs the handler on a read/write cursor, so a `readonly` route that writes
+# writes anyway.
 #
-# Two limits on what that buys, both of them about the page rather than the
-# route, and neither of them something a route list can bound. The controller is
-# not the whole request: `views/templates.xml:13` calls
-# `website.sale_get_order()` from the cart link of every page header, which
-# writes the same way `/shop/checkout` does (models/website.py:457), so a page
-# whose controller writes nothing can still write. And the target's GET is not
-# the whole navigation: the page's own JavaScript posts on its own account, and
-# `/shop/products/recently_viewed_update` (controllers/main.py:2288) writes a
-# `website.visitor` from a product page nobody asked to write. The target names
-# neither, so the seam cannot see them; they are the same cross-cutting write as
-# the visitor tracking below.
+# Three limits on what that buys, none of them something a list keyed on the
+# target's route can see. The controller is not the whole request:
+# `views/templates.xml:13` calls `website.sale_get_order()` from the cart link of
+# every page header, which writes the same way `/shop/checkout` does
+# (models/website.py:457), so a page whose controller writes nothing can still
+# write. The target's GET is not the whole navigation: the page's own JavaScript
+# posts on its own account, and `/shop/products/recently_viewed_update`
+# (controllers/main.py:2288) writes a `website.visitor` from a product page
+# nobody asked to write. And the route navigated is not always the route
+# answered: `page.goto` follows a 30x, so a route that redirects into a listed
+# one writes behind the guard -- no `website_sale` route does (the set is closed
+# under its own redirects), which is a property of today's Odoo and not of this
+# list.
 #
 # The list is `website_sale`'s routes and no others, and it is not the whole of
 # what Odoo writes on a GET. Two writes outside it were read and left where they
