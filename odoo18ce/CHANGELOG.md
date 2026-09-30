@@ -18,12 +18,14 @@
   the shim now publishes two markup helpers,
   `__WOOW_INGRESS_MARKUP_IN__` and `__WOOW_INGRESS_MARKUP_OUT__` (string
   functions, read-only, Ingress-only, prefixing through the same `path()`
-  the `fetch`, XHR and attribute wrappers already use), and three rewrites
-  on the Ingress listener's asset location call them: the prefix goes on
-  where the editor renders its content, comes off again on every value the
-  field writes to the record, and comes off the `src` the image tools send
-  to `/html_editor/get_image_info`, which only recognises an attachment
-  from a path beginning `/web/image`. The prefix goes only on URL
+  the `fetch`, XHR and attribute wrappers already use), and five rewrites
+  on the Ingress listener's asset location call them: the prefix goes on at
+  both places the editor renders a stored value -- when the field opens, and
+  when the collaboration plugin resets a stale document from the server --
+  comes off again on every value the field writes to the record and on the
+  clone the urgent save compares against it, and comes off the `src` the
+  image tools send to `/html_editor/get_image_info`, which only recognises
+  an attachment from a path beginning `/web/image`. The prefix goes only on URL
   attributes inside a start tag, so prose and escaped code samples keep
   their bytes, and it comes off every occurrence in the stored string, so
   neither the editor nor a pasted image can put an Ingress URL -- token and
@@ -35,10 +37,11 @@
   edited under Ingress (the same address, different bytes), and text that
   looks like an Ingress prefix is removed when the field is saved, because
   that prefix carries the Supervisor token. The same round trip covers
-  every `html` field in the backend web client; no frontend or
-  website-editor bundle carries the first two expressions. The Public
-  origin gets neither the shim nor the rules and is unchanged. No version
-  bump. Issue #210, parent #148.
+  every field the Odoo 18 HTML editor drives in the backend web client; the
+  legacy `web_editor` editor behind `html_legacy` and `mass_mailing_html`
+  carries none of these expressions and is unchanged, as is the readonly
+  preview of an html field. The Public origin gets neither the shim nor the
+  rules. No version bump. Issue #210, parent #148.
 
 ## 0.4.8 — 2026-09-30
 

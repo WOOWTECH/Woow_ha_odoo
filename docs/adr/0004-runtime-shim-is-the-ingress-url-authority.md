@@ -456,21 +456,34 @@ that very clone into the live document (`editor.editable.after(el)`) to
 measure inlined styles, which would have done it again. A string never loads
 anything.
 
-**Three sites, and each one is where it is for a reason.**
+**Five sites, and each one is where it is for a reason.**
 
 - **In: `Editor.attachTo`**, the `editable.innerHTML = fixInvalidHTML(...)`
   where the value becomes DOM. The prefix has to be on the *string*, because
   the browser begins fetching an `<img>` the moment the markup is parsed.
+- **In again: the collaboration plugin's stale-document reset.** The To-do
+  field carries `'collaborative': true`, and
+  `resetFromServerAndResyncWithPeers()` reads the field over ORM and assigns
+  it straight to `editable.innerHTML`. That is a second render site, reached
+  whenever the open document is behind the server's, and the two pictures
+  would escape there exactly as they did before this fix. It is the same
+  one-line assignment, so it takes the same helper.
 - **Out: `HtmlField.updateValue`**, the one place the field writes the record.
   Every save path reaches it -- the editor's content, the urgent
   `getContent()`, and the code view's textarea -- and `lastValue` is computed
-  from the same argument, so the value stored and the value compared against it
-  cannot disagree. It is also *later* than the editor, which matters: the
-  field's `getEditorContent` calls `savePendingImages` **after**
+  from the same argument. It is also *later* than the editor, which matters:
+  the field's `getEditorContent` calls `savePendingImages` **after**
   `getElContent` has returned, and `saveB64Image`/`saveModifiedImage` set
   `src` through the shim's own wrapped setter. A strip inside the editor would
   have let a pasted image write `.../web/image/...` with the prefix, and the
   token with it, into the record. This one does not.
+- **Out again: `_commitChanges`'s `comparisonValue`**, which is the other half
+  of that. It is read off the clone, so it keeps the prefix, while `lastValue`
+  no longer has one -- and the urgent path only writes again when those two
+  differ. Leave it and the comparison never matches, so an urgent save writes
+  twice under Ingress: redundant rather than wrong, but it makes a
+  perfectly good comparison Odoo wrote into a no-op. Both sides go through
+  the strip instead. Nothing else reads `comparisonValue`.
 - **And the comparison a prefixed `src` breaks.**
   `/html_editor/get_image_info` is the route the image tools ask for the
   attachment behind an `<img>`, and the controller only looks a record up when
@@ -541,21 +554,26 @@ themselves touch no DOM at all.
 
 **What is not closed, said rather than left implicit.** The code view's
 `editable.innerHTML = this.value` on toggling back (the `codeview` option,
-which the To-do field does not set), a collaborative peer applying a snapshot,
-`ImageSelector.isInitialMedia` preselecting by comparing a prefixed `src` with
-`attachment.image_src` -- already true before this change for any image the
-media dialog inserted under Ingress -- and the readonly `HtmlViewer`, which
-renders through `t-out` and is none of the three sites. None has been measured
-escaping; each is its own issue if one is.
+which the To-do field does not set); a snapshot a collaborative *peer* sends
+over WebRTC, which carries whatever that peer's editable held -- the *server*
+reset above is covered, this one is not; `ImageSelector.isInitialMedia`
+preselecting by comparing a prefixed `src` with `attachment.image_src`, already
+true before this change for any image the media dialog inserted under Ingress;
+the readonly `HtmlViewer`, which renders through `t-out` and is none of the
+five sites; and the legacy `web_editor` editor behind `html_legacy` and
+`mass_mailing_html`, which carries none of these expressions. None has been
+measured escaping; each is its own issue if one is.
 
-All three patterns were measured on 2026-09-30 across every bundle the control
+All five patterns were measured on 2026-09-30 across every bundle the control
 group serves; `odoo18ce/tests/fixtures/bundles/README.md` carries the counts.
-The first two occur once each in `web.assets_backend`, `web.assets_web` and
+Four of them occur once each in `web.assets_backend`, `web.assets_web` and
 `web.assets_web_print` and nowhere else, so this reaches the backend web client
 and leaves the website editor's own round trip exactly where the
 snippet-thumbnail postscript left it, as a stated tension belonging to #194 and
-#166. The Public origin is untouched, and so is the Rewrite scan: record
-content is not in a bundle, so no Generated rewrite could ever derive it.
+#166. The fifth, the image-tools one, is also in the frontend bundles, and that
+is wanted: the same comparison breaks the same way there. The Public origin is
+untouched, and so is the Rewrite scan: record content is not in a bundle, so no
+Generated rewrite could ever derive it.
 
 `U-A6`'s probe list is *not* extended; its `innerHTML` probe still records the
 escape as the decision it is. What proves this fix is the Static-tier contract

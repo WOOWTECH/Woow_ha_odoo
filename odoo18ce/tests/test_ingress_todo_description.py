@@ -30,12 +30,17 @@ What is pinned here:
   occurrence of the prefix from a string: wider than ``IN`` on purpose,
   because that is what makes the record safe whatever ``IN`` reached and
   whatever the shim's own wrappers prefixed afterwards.
-- **Where each one is called.** ``IN`` at ``Editor.attachTo``, before the
-  markup is parsed, because a picture is fetched the moment it is. ``OUT`` at
+- **Where each one is called**, five sites. ``IN`` at ``Editor.attachTo``,
+  before the markup is parsed, because a picture is fetched the moment it is,
+  and ``IN`` again at the collaboration plugin's
+  ``resetFromServerAndResyncWithPeers``, the second render site and one the
+  To-do field reaches because it sets ``'collaborative': true``. ``OUT`` at
   ``HtmlField.updateValue``, the one place the field writes the record --
   which also covers the image ``savePendingImages`` re-points after the
-  editor has handed its content over, and the code view's textarea. And
-  ``OUT`` again on the ``src`` the image tools send to
+  editor has handed its content over, and the code view's textarea -- and
+  ``OUT`` on ``_commitChanges``'s ``comparisonValue``, so the urgent-save
+  comparison still holds between a stripped ``lastValue`` and a clone that
+  kept the prefix. And ``OUT`` on the ``src`` the image tools send to
   ``/html_editor/get_image_info``, because that route only looks up a record
   for a path beginning ``/web/image``.
 - **The shim still hooks nothing.** Publishing a helper a rewritten expression
@@ -102,6 +107,18 @@ REWRITES = {
     "image tools": {
         "fixture": "image_processing_relative_src.js",
         "source": "const relativeSrc=srcUrl.pathname;",
+        "occurrences": 1,
+        "global": OUT_GLOBAL,
+    },
+    "collaboration reset": {
+        "fixture": "collaboration_reset_from_server.js",
+        "source": "if(content){this.editable.innerHTML=content;}",
+        "occurrences": 1,
+        "global": IN_GLOBAL,
+    },
+    "commit comparison": {
+        "fixture": "html_field_commit_changes.js",
+        "source": "const comparisonValue=el.innerHTML;",
         "occurrences": 1,
         "global": OUT_GLOBAL,
     },
@@ -247,6 +264,74 @@ const img = {
 const src = img.getAttribute("src");
 __SLICE__
 result = relativeSrc;
+"""
+
+# The collaboration plugin's stale-document reset: a second render site, and
+# the one the To-do field can actually reach, because it sets
+# `'collaborative': true`.
+COLLAB_DRIVER = r"""
+const requested = [];
+const stripHistoryIds = () => {};
+class CollaborationOdooPlugin {
+  constructor(stored) {
+    this.lastCollaborationResetId = 0;
+    this.isDocumentStale = true;
+    this.historySyncAtLeastOnce = true;
+    this.startCollaborationTime = 0;
+    this.serverLastStepId = null;
+    this.config = {
+      collaboration: { collaborationChannel: { collaborationFieldName: "description" } },
+    };
+    this.stored = stored;
+    this.dependencies = {
+      history: { reset() {} },
+      baseContainer: { createBaseContainer: () => ({}) },
+    };
+    this.editable = {
+      replaceChildren() {},
+      set innerHTML(value) {
+        for (const match of String(value).matchAll(/src="([^"]*)"/g)) {
+          requested.push(new URL(match[1], PAGE).href);
+        }
+      },
+    };
+  }
+  getCurrentRecord() { return Promise.resolve({ description: this.stored }); }
+  getLastHistoryStepId() { return "1"; }
+  dispatchTo() {}
+  resetCollabRequests() {}
+  getPtpPeers() { return []; }
+  resetFromPeer() { return Promise.resolve(); }
+__SLICE__
+}
+result = new CollaborationOdooPlugin(__CONTENT__)
+  .resetFromServerAndResyncWithPeers()
+  .then(() => requested);
+"""
+
+# `_commitChanges`, for the one comparison the strip has to stay consistent
+# with: `comparisonValue` is read off the clone, `lastValue` off the value that
+# was stored, and the urgent path only writes again when they differ.
+COMMIT_DRIVER = r"""
+const stored = [];
+const status = () => "mounted";
+class HtmlField {
+  constructor(content, lastValue) {
+    this.isDirty = true;
+    this.lastChangeId = 3;
+    this.lastValue = lastValue;
+    this.state = { showCodeView: false };
+    this.editor = { getContent: () => content };
+    this.content = content;
+  }
+  getEditorContent() { return Promise.resolve({ innerHTML: this.content }); }
+  clearElementToCompare() {}
+  updateValue(value) { stored.push(value); return Promise.resolve(); }
+__SLICE__
+}
+result = new HtmlField(__CONTENT__, __LAST_VALUE__)
+  ._commitChanges({ urgent: true })
+  .then(() => stored);
 """
 
 # Everything the two globals promise, executed against the rendered shim.
@@ -468,6 +553,22 @@ def save_program(text: str, value: str) -> str:
     """The fixture's `updateValue`, driven with one value on its way to the record."""
     body = text[text.index("async updateValue("):].rstrip()
     return SAVE_DRIVER.replace("__SLICE__", body).replace("__VALUE__", json.dumps(value))
+
+
+def collab_program(text: str, content: str) -> str:
+    """The fixture's `resetFromServerAndResyncWithPeers`, driven with one record."""
+    body = text[text.index("async resetFromServerAndResyncWithPeers(){"):].rstrip()
+    return COLLAB_DRIVER.replace("__SLICE__", body).replace("__CONTENT__", json.dumps(content))
+
+
+def commit_program(text: str, content: str, last_value: str) -> str:
+    """The fixture's `_commitChanges`, driven on its urgent path."""
+    body = text[text.index("async _commitChanges({urgent}){"):].rstrip()
+    return (
+        COMMIT_DRIVER.replace("__SLICE__", body)
+        .replace("__CONTENT__", json.dumps(content))
+        .replace("__LAST_VALUE__", json.dumps(last_value))
+    )
 
 
 def image_program(text: str, src: str) -> str:
@@ -694,6 +795,75 @@ def test_the_rewrite_asks_about_the_root_relative_path() -> None:
     ])
 
 
+# --- the collaboration plugin's second render site ----------------------------
+
+def test_the_collaboration_reset_escapes_without_the_rewrite() -> None:
+    """The To-do field is collaborative, so this render site is reachable."""
+    node(HARNESS, [{
+        "name": "collaboration reset, as Odoo ships it",
+        "shim": rendered_shim(INGRESS_PREFIX),
+        "program": collab_program(fixture("collaboration reset"), STORED),
+        "expected": [HA_ORIGIN + picture for picture in TODO_PICTURES],
+    }])
+
+
+def test_the_rewrite_keeps_the_collaboration_reset_under_the_prefix() -> None:
+    node(HARNESS, [
+        {
+            "name": "collaboration reset, under Ingress",
+            "shim": rendered_shim(INGRESS_PREFIX),
+            "program": collab_program(rewritten("collaboration reset"), STORED),
+            "expected": [HA_ORIGIN + INGRESS_PREFIX + p for p in TODO_PICTURES],
+        },
+        {
+            "name": "collaboration reset, with no Runtime shim",
+            "shim": "",
+            "program": collab_program(rewritten("collaboration reset"), STORED),
+            "expected": [HA_ORIGIN + picture for picture in TODO_PICTURES],
+        },
+    ])
+
+
+# --- the comparison the strip has to stay consistent with ---------------------
+
+def test_the_urgent_save_writes_twice_without_the_comparison_rewrite() -> None:
+    """`lastValue` is stripped, the clone is not, so the comparison never matches."""
+    node(HARNESS, [{
+        "name": "commit comparison, as Odoo ships it",
+        "shim": rendered_shim(INGRESS_PREFIX),
+        # What the field is holding after a save: `lastValue` is the stored,
+        # stripped value; the clone still carries the prefix it renders with.
+        "program": commit_program(
+            fixture("commit comparison"), EDITED, "N(%s)" % SAVED_ROOT_RELATIVE
+        ),
+        "expected": [EDITED, EDITED],
+    }])
+
+
+def test_the_comparison_rewrite_leaves_the_urgent_save_alone() -> None:
+    """One write, because the comparison is now between two stripped values."""
+    node(HARNESS, [{
+        "name": "commit comparison, under Ingress",
+        "shim": rendered_shim(INGRESS_PREFIX),
+        "program": commit_program(
+            rewritten("commit comparison"), EDITED, SAVED_ROOT_RELATIVE
+        ),
+        "expected": [EDITED],
+    }])
+
+
+def test_a_real_change_still_writes_under_the_comparison_rewrite() -> None:
+    """The comparison must keep saying yes when the content actually changed."""
+    node(HARNESS, [{
+        "name": "commit comparison, a real change",
+        "shim": rendered_shim(INGRESS_PREFIX),
+        "program": commit_program(
+            rewritten("commit comparison"), EDITED, "something else entirely"
+        ),
+        "expected": [EDITED, EDITED],
+    }])
+
+
 # --- the fixtures -------------------------------------------------------------
 
 def test_the_fixtures_are_verbatim_regions() -> None:
@@ -707,3 +877,9 @@ def test_the_fixtures_are_verbatim_regions() -> None:
     image = fixture("image tools")
     assert image.startswith("let docHref=img.ownerDocument.defaultView.location.href;")
     assert re.search(r"const relativeSrc=srcUrl\.pathname;$", image.rstrip())
+    collab = fixture("collaboration reset")
+    assert collab.startswith("async resetFromServerAndResyncWithPeers(){")
+    assert collab.rstrip().endswith("return true;}")
+    commit = fixture("commit comparison")
+    assert commit.startswith("async _commitChanges({urgent}){")
+    assert commit.rstrip().endswith("await this.updateValue(content,{changeId});}}}")

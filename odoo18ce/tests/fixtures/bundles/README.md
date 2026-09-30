@@ -77,7 +77,9 @@ issue #210:
 | File | Bundle | What it holds |
 |---|---|---|
 | `html_editor_attach_content.js` | `web.assets_backend` | `Editor.attachTo`, whose `editable.innerHTML=fixInvalidHTML(this.config.content)` is where an html field's stored value becomes DOM |
+| `collaboration_reset_from_server.js` | `web.assets_backend` | `resetFromServerAndResyncWithPeers`, the collaboration plugin's stale-document reset, which assigns the ORM value straight to `editable.innerHTML` — the second render site, and one a `'collaborative': true` field reaches |
 | `html_field_update_value.js` | `web.assets_backend` | `HtmlField.updateValue`, the one place the field writes the record — every save path reaches it, and `lastValue` is computed from the same argument |
+| `html_field_commit_changes.js` | `web.assets_backend` | `HtmlField._commitChanges`, whose `comparisonValue` is read off the clone and compared with `lastValue` on the urgent path |
 | `image_processing_relative_src.js` | `web.assets_backend` | `loadImageInfo`'s preamble, which turns an `<img>`'s `src` into the `relativeSrc` it sends to `/html_editor/get_image_info` |
 
 Measured on 2026-09-30 across every bundle the control group serves on that
@@ -86,7 +88,9 @@ route:
 | Pattern | Bundles that carry it, once each | Bundles that carry it zero times |
 |---|---|---|
 | `editable.innerHTML=fixInvalidHTML(this.config.content)` | `web.assets_backend`, `web.assets_web`, `web.assets_web_print` | the twelve others below |
+| `if(content){this.editable.innerHTML=content;}` | the same three | the twelve others below |
 | `async updateValue(value,{changeId}={changeId:this.lastChangeId}){` | the same three | the twelve others below |
+| `const comparisonValue=el.innerHTML;` | the same three | the twelve others below |
 | `const relativeSrc=srcUrl.pathname;` | the same three, plus `web.assets_frontend`, `web.assets_frontend_lazy` and `web_editor.assets_wysiwyg` | the nine others |
 
 The twelve others are `web.assets_frontend`, `web.assets_frontend_lazy`,
@@ -94,8 +98,9 @@ The twelve others are `web.assets_frontend`, `web.assets_frontend_lazy`,
 `web.report_assets_common`, `web_editor.assets_wysiwyg`,
 `web_editor.assets_media_dialog`, `website.assets_wysiwyg`,
 `website.assets_editor`, `mass_mailing.assets_wysiwyg`,
-`im_livechat.assets_embed_external` and `html_builder.assets`. So the first two
-rewrites reach the backend web client and no frontend or website-editor bundle.
+`im_livechat.assets_embed_external` and `html_builder.assets`. So the first
+four rewrites reach the backend web client and no frontend or website-editor
+bundle.
 
 The third reaches more, and that is wanted: `loadImageInfo` exists twice in
 Odoo 18, once in `html_editor` (`docHref.startsWith("about:")`, calling
@@ -107,12 +112,13 @@ frontend editor alike. Only the `html_editor` variant is captured here, since
 it is the one the To-do form loads; `test_the_fixtures_are_verbatim_regions`
 pins the excerpt's ends so a drift in either shows up.
 
-The first two excerpts are byte-identical in the three bundles that carry them,
-so each is captured from `web.assets_backend` and stands for the others. Each
-is a whole method or a self-contained preamble, because the test executes it:
-`attachTo` against an editable that reports what the browser would fetch,
-`updateValue` against a record stand-in that reports what would be stored, and
-the preamble against a fake `<img>`.
+The first four excerpts are byte-identical in the three bundles that carry
+them, so each is captured from `web.assets_backend` and stands for the others.
+Each is a whole method or a self-contained preamble, because the test executes
+it: `attachTo` and `resetFromServerAndResyncWithPeers` against an editable that
+reports what the browser would fetch, `updateValue` against a record stand-in
+that reports what would be stored, `_commitChanges` on its urgent path to count
+the writes, and the preamble against a fake `<img>`.
 
 ## Re-capturing
 

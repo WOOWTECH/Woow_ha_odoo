@@ -646,6 +646,23 @@ http {
             # returned is covered as well -- it is not, if the strip happens
             # inside the editor.
             #
+            # **Out again: `_commitChanges`'s `comparisonValue`**, which is
+            # the other half of that. It is read off the same clone, so it
+            # keeps the prefix, while `lastValue` no longer has one; the
+            # urgent short-circuit that compares them would then never fire
+            # and the field would write twice on every urgent save. Both
+            # sides go through the strip, so the comparison Odoo wrote works
+            # as Odoo wrote it. Nothing else reads `comparisonValue`.
+            #
+            # **In again: the collaboration plugin's stale-document reset.**
+            # The To-do field carries `'collaborative': true`, and
+            # `resetFromServerAndResyncWithPeers()` reads the field over ORM
+            # and assigns it straight to `editable.innerHTML` -- a second
+            # render site, reached whenever the open document is behind the
+            # server's, and the two pictures would escape there exactly as
+            # they did before this fix. It is the same one-line assignment,
+            # so it takes the same helper.
+            #
             # **And the path a rewritten `src` has to be undone for.**
             # `/html_editor/get_image_info` is the route the image tools ask
             # for an attachment behind an `<img>`, and the controller only
@@ -660,7 +677,7 @@ http {
             # backend and the frontend editor, and it is a no-op on a value
             # that has no prefix.
             #
-            # All three patterns were measured on 2026-09-30 across every
+            # All five patterns were measured on 2026-09-30 across every
             # bundle the control group serves; `tests/fixtures/bundles/README.md`
             # carries the counts and `tests/test_ingress_todo_description.py`
             # pins them, the round trip and the shim's two globals.
@@ -668,14 +685,19 @@ http {
             # What this does not close, said rather than left implicit: the
             # code view's `editable.innerHTML=this.value` on toggling back
             # (the `codeview` option, which the To-do field does not set), a
-            # collaborative peer applying a snapshot, `ImageSelector`'s
-            # preselection comparing a prefixed `src` with `image_src`, and
-            # the readonly `HtmlViewer`, which renders through `t-out` and is
-            # not one of these sites. None was measured escaping; each is its
-            # own issue if one is.
+            # collaborative peer's own snapshot -- the *server* reset above is
+            # covered, a snapshot applied from a peer over WebRTC carries
+            # whatever that peer's editable held -- `ImageSelector`'s
+            # preselection comparing a prefixed `src` with `image_src`, the
+            # readonly `HtmlViewer`, which renders through `t-out`, and the
+            # legacy `web_editor` editor behind `html_legacy` and
+            # `mass_mailing_html`, which carries none of these expressions.
+            # None was measured escaping; each is its own issue if one is.
             sub_filter 'editable.innerHTML=fixInvalidHTML(this.config.content)' 'editable.innerHTML=(window.__WOOW_INGRESS_MARKUP_IN__||function(h){return h})(fixInvalidHTML(this.config.content))';
             sub_filter 'async updateValue(value,{changeId}={changeId:this.lastChangeId}){this.lastValue=normalizeHTML(value,this.clearElementToCompare.bind(this));' 'async updateValue(value,{changeId}={changeId:this.lastChangeId}){value=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(value);this.lastValue=normalizeHTML(value,this.clearElementToCompare.bind(this));';
             sub_filter 'const relativeSrc=srcUrl.pathname;' 'const relativeSrc=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(srcUrl.pathname);';
+            sub_filter 'if(content){this.editable.innerHTML=content;}' 'if(content){this.editable.innerHTML=(window.__WOOW_INGRESS_MARKUP_IN__||function(h){return h})(content);}';
+            sub_filter 'const comparisonValue=el.innerHTML;' 'const comparisonValue=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(el.innerHTML);';
             # Generated rewrites (ADR 0005). The add-on writes this file from
             # its own Rewrite scan; the config-rendering init step creates it
             # empty so a fresh install starts. It holds prefix rules only, and
