@@ -193,6 +193,10 @@ prefix escape), so acceptance criterion 4 of the issue lands on `GAP`, not on
 
 - `sale.order` `S00002` is a draft cart holding one line (1 item) of
   `WOOW-PARITY-20260929T045315Z Service`; nothing confirms it. The lines
-  earlier website runs had left in it are gone.
+  earlier website runs had left in it are gone. *Cleaned 2026-09-30: the
+  `WOOW-PARITY` line was removed over JSON-RPC; the cart is empty and still
+  a draft.*
 - `res.partner` 3 (Administrator) keeps the address and phone above.
+  *Cleaned 2026-09-30: `street`, `city`, `zip`, `country_id` and `phone` were
+  cleared over JSON-RPC, back to the unset state the run found them in.*
 - Nothing was installed, restarted or reconfigured.
