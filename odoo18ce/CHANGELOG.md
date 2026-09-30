@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.6 — 2026-09-30
 
 ### Changed
 - The image is built as three layers instead of one, so that a small
