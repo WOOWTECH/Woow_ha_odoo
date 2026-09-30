@@ -516,10 +516,19 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 > #160 的修正（server-wide module `woow_visitor_url`，把訪客追蹤存下的網址改建在 **Canonical URL** 上，`website.get_base_url()`）
 > 在 Static 與 Build tier 通過，但 **2026-09-30 於 0.4.6 測試主機的 Live 重跑判定 `FAIL`**：經 Ingress 開一次首頁後，
 > 新存的 `website.track` 仍記錄完整的 HA 根網址（`http://192.168.50.192:8123/`，重啟後重測一致），動作 596 的爬蟲比對仍是 `GAP`。
-> 存的是**未修改的完整** `request.httprequest.url`，即模組 `import website` 失敗時的「原樣放行」fallback ——
-> patch 在真實主機啟動時未生效（姊妹模組 `woow_base_url_guard` 不 import `website`，正常運作）。這是 Build-tier in-image probe 與真實主機的
-> 環境差異，正是 Live tier（ADR 0012）存在的理由。證據：`docs/testing/evidence/2026-09-30-issue-160/`。**#160 已 reopen**，
-> 待修的是讓 `woow_visitor_url` 在真實啟動時撐過 `website` 的 server-wide import（或改用不 import 的 patch 方式），並以 Live-tier 檢查為證。既有紀錄不回填。
+> 存的是**未修改的完整** `request.httprequest.url`。當時判讀為「模組 `import website` 失敗、走了原樣放行的 fallback」，
+> **2026-09-30 在主機上查證後推翻**：容器內 `/data/odoo/logs/odoo-server.log` 每個 worker 都有
+> `website.visitor._handle_webpage_dispatch patched`，而每一次 Ingress 頁面瀏覽之後都緊接著模組自己的
+> `the request's url could not be replaced` 警告 —— patch 確實生效，空操作的是**換網址那一步**。
+> 原因是 `request.httprequest` 不是 werkzeug request，而是 `odoo.http.HTTPRequest`：Odoo 為每個轉發屬性（含 `url`）在 wrapper 上裝一個純
+> `property`（`make_request_wrap_methods`），純 `property` 是 data descriptor，永不讀 instance `__dict__`，所以舊版寫進
+> `vars(httprequest)["url"]` 的值沒人讀得到；改成 `httprequest.url = …` 則會經 wrapper 的 setter 寫進被包住的 werkzeug request
+> （其 `url` 是 `cached_property`，`__set__` 會填快取）。修法即改為指派，並在 dispatch 之後把原本的網址寫回
+> —— wrapper 的轉發屬性沒有 deleter，所以不是刪快取而是寫回同一個網址。
+> Build tier 的 in-image probe 現在除了讀旗標，也在映像自己的 `odoo.http.HTTPRequest` 上真的換一次網址再讀回來，
+> 這正是 0.4.6 當時 Build 綠、主機無效的那一半。這仍是 Build-tier 與真實主機的環境差異，正是 Live tier（ADR 0012）存在的理由。
+> 證據：`docs/testing/evidence/2026-09-30-issue-160/`。既有紀錄不回填；
+> **Live 重跑仍欠**：要等帶著此修正的 Release 部署到測試主機，再經 Ingress 開一次網站頁面、重跑動作 596 的爬蟲比對才算收斂。
 
 ### 10.5 本輪未覆蓋的已知風險（明列，不假裝測過）
 

@@ -500,11 +500,18 @@ def load_probe():
     return module
 
 
-def probe_report(namespace):
+def odoo_http_module(request_class=None):
+    """Odoo's ``odoo.http`` as the probe reads it: the request class in it."""
+    module = types.ModuleType("odoo.http")
+    module.HTTPRequest = request_class or odoo_http_request_class()
+    return module
+
+
+def probe_report(namespace, http=None):
     import io
 
     out = io.StringIO()
-    status = load_probe().main(namespace, out)
+    status = load_probe().main(namespace, http or odoo_http_module(), out)
     return status, out.getvalue()
 
 
@@ -727,3 +734,277 @@ def test_the_probe_step_blames_the_container_when_the_probe_never_reports() -> N
     # failure on the mutation run leaves something to read as well.
     assert run.count('echo "${out}"') == 2
     assert "signature mismatch" in run
+
+
+# --- The request Odoo really hands the patch (#160, reopened) ---------------
+#
+# Every stand-in above puts a werkzeug request behind ``request.httprequest``,
+# whose ``url`` is a ``cached_property`` reading the instance ``__dict__``.
+# Odoo 18 hands the patch no such object. ``odoo.http.HTTPRequest`` *wraps* a
+# werkzeug request and, for every name in ``HTTPREQUEST_ATTRIBUTES`` -- ``url``
+# among them -- installs on itself a plain ``property`` whose getter and setter
+# delegate to the wrapped one (``odoo/http.py``, ``make_request_wrap_methods``).
+# A plain ``property`` is a data descriptor that never reads the instance
+# ``__dict__``, so the swap this module performs writes a dead entry into the
+# wrapper and the dispatch stores the address the request arrived on -- which
+# is what ``test_a_request_whose_url_cannot_be_written_is_left_alone_and_
+# reported`` above calls a request that cannot be written, and what the Live
+# rerun on 0.4.6 measured as ``U-C5`` still being a ``GAP``.
+#
+# Read on the deployed image (add-on ``1b7b4ce7_odoo18ce`` 0.4.6, werkzeug
+# 2.2.2): ``vars(odoo.http.HTTPRequest)["url"]`` is a ``builtins.property``
+# with a getter and a setter and no deleter; the instance-dict write is a
+# no-op; ``httprequest.url = value`` does take, because Odoo's own setter
+# reaches werkzeug's ``cached_property.__set__`` on the wrapped request, and
+# assigning the arrived value back restores it. The host's Odoo log carries
+# this module's own warning on every Ingress page view of that rerun.
+
+
+def werkzeug_url(environ):
+    """werkzeug's ``Request.url``, computed from a WSGI environ as it does.
+
+    Enough of ``werkzeug.sansio.utils.get_current_url`` for an environ with
+    no ``HTTP_HOST``: the scheme, the server name with its port unless that
+    port is the scheme's default, the script root, the path and the query.
+    """
+    scheme, port = environ["wsgi.url_scheme"], environ["SERVER_PORT"]
+    host = environ["SERVER_NAME"]
+    if (scheme, port) not in (("http", "80"), ("https", "443")):
+        host = f"{host}:{port}"
+    url = f"{scheme}://{host}{environ.get('SCRIPT_NAME', '')}{environ['PATH_INFO']}"
+    query = environ.get("QUERY_STRING")
+    return f"{url}?{query}" if query else url
+
+
+def odoo_http_request_class():
+    """``odoo.http.HTTPRequest``: plain properties over a werkzeug request.
+
+    Transcribed from ``odoo/http.py`` of Odoo 18.0 (``class HTTPRequest``,
+    ``make_request_wrap_methods`` and ``HTTPREQUEST_ATTRIBUTES``): the class
+    is built over a WSGI environ, wraps the werkzeug request it makes from it,
+    and reads every forwarded attribute off -- and writes it onto -- that
+    request. Name mangling makes the attribute ``_HTTPRequest__wrapped``
+    there and here.
+    """
+
+    class HTTPRequest:
+        def __init__(self, environ):
+            self.__wrapped = HttpRequest(werkzeug_url(environ))
+
+    for attr in ("url", "path", "query_string", "host"):
+        def getter(self, attr=attr):
+            return getattr(self._HTTPRequest__wrapped, attr)
+
+        def setter(self, value, attr=attr):
+            return setattr(self._HTTPRequest__wrapped, attr, value)
+
+        setattr(HTTPRequest, attr, property(getter, setter))
+
+    return HTTPRequest
+
+
+def odoo_http_request(wrapped):
+    """The wrapper Odoo builds, over a given werkzeug stand-in.
+
+    Upstream's constructor makes its own werkzeug request out of an environ,
+    which is what ``odoo_http_request_class()`` does; a test that needs a
+    particular werkzeug stand-in behind the wrapper puts it there instead.
+    """
+    httprequest = object.__new__(odoo_http_request_class())
+    httprequest._HTTPRequest__wrapped = wrapped
+    return httprequest
+
+
+def ingress_request_as_odoo_builds_it(path="/contactus", base=PUBLIC_BASE):
+    return OdooRequest(odoo_http_request(HttpRequest(HA_BASE + path)), Website(base))
+
+
+def test_the_stand_in_is_the_shape_odoo_hands_the_patch() -> None:
+    """The wrapper's ``url`` is a plain property: written through, not cached."""
+    httprequest = odoo_http_request(HttpRequest(HA_BASE + "/contactus"))
+    descriptor = vars(type(httprequest))["url"]
+    assert type(descriptor) is property
+    assert descriptor.fget is not None and descriptor.fset is not None
+    # No deleter, so the swap cannot be undone with ``del`` either.
+    assert descriptor.fdel is None
+    vars(httprequest)["url"] = f"{PUBLIC_BASE}/contactus"
+    assert httprequest.url == f"{HA_BASE}/contactus"
+    httprequest.url = f"{PUBLIC_BASE}/contactus"
+    assert httprequest.url == f"{PUBLIC_BASE}/contactus"
+    httprequest.url = f"{HA_BASE}/contactus"
+    assert httprequest.url == f"{HA_BASE}/contactus"
+
+
+def test_a_page_view_records_the_canonical_url_on_the_request_odoo_builds() -> None:
+    request = ingress_request_as_odoo_builds_it()
+    declared, tracks = odoo_website_visitor(request)
+    install_patch(declared, request)
+    declared()._handle_webpage_dispatch(Page(7))
+    assert tracks == [{"url": f"{PUBLIC_BASE}/contactus", "page_id": 7}]
+    # The rest of the response, and the next handler on this request, still
+    # see the address the browser really used.
+    assert request.httprequest.url == f"{HA_BASE}/contactus"
+
+
+# --- The swap a flag cannot see (#160, reopened) -----------------------------
+#
+# The two tests above prove the replacement takes on the request Odoo really
+# builds. These say what it leaves behind on that request, what happens when a
+# future Odoo stops accepting it, and how the build tier sees either -- because
+# on 0.4.6 the Build tier called the patch applied while the swap was a no-op,
+# and only the Live tier noticed.
+
+
+def test_the_swap_writes_no_dead_entry_into_the_wrappers_own_dict() -> None:
+    """Writing into the wrapper's ``__dict__`` is the defect, not the fix: a
+    plain ``property`` is a data descriptor, so such an entry is read by
+    nobody and left behind for whatever does read the dict."""
+    request = ingress_request_as_odoo_builds_it()
+    declared, _ = odoo_website_visitor(request)
+    install_patch(declared, request)
+    seen = []
+
+    original = declared._get_visitor_from_request
+
+    def watching(self, force_create=False, force_track_values=None):
+        seen.append((request.httprequest.url, "url" in vars(request.httprequest)))
+        return original(self, force_create=force_create, force_track_values=force_track_values)
+
+    declared._get_visitor_from_request = watching
+    declared()._handle_webpage_dispatch(None)
+    assert seen == [(f"{PUBLIC_BASE}/contactus", False)]
+    assert "url" not in vars(request.httprequest)
+
+
+def test_the_arrived_url_is_put_back_on_the_wrapper_when_the_dispatch_raises() -> None:
+    request = ingress_request_as_odoo_builds_it()
+    declared, _ = odoo_website_visitor(request)
+    install_patch(declared, request)
+
+    def boom(self, force_create=False, force_track_values=None):
+        raise RuntimeError("creating the visitor failed")
+
+    declared._get_visitor_from_request = boom
+    with pytest.raises(RuntimeError):
+        declared()._handle_webpage_dispatch(None)
+    assert request.httprequest.url == f"{HA_BASE}/contactus"
+
+
+def test_a_url_that_reads_back_as_it_arrived_is_reported_and_stored_as_it_arrived(caplog) -> None:
+    """A request that accepts the assignment and goes on reporting the old
+    address is the same silent no-op as one that refuses it: what must not
+    happen is a page view stored on the Home Assistant host while the patch
+    looks applied, which is how 0.4.6 shipped."""
+
+    class SwallowingRequest:
+        url = property(lambda self: self.arrived, lambda self, value: None)
+
+        def __init__(self, url):
+            self.arrived = url
+
+    request = OdooRequest(SwallowingRequest(f"{HA_BASE}/contactus"), Website(PUBLIC_BASE))
+    declared, tracks = odoo_website_visitor(request)
+    install_patch(declared, request)
+    with caplog.at_level("WARNING"):
+        declared()._handle_webpage_dispatch(None)
+    assert tracks == [{"url": f"{HA_BASE}/contactus"}]
+    assert any("reads back" in record.message for record in caplog.records)
+    assert request.httprequest.url == f"{HA_BASE}/contactus"
+
+
+# --- The build tier performs the swap, it does not read a flag ---------------
+
+
+def read_only_url(environ):
+    """A request class whose ``url`` refuses every assignment."""
+
+    class HTTPRequest:
+        url = property(lambda self: werkzeug_url(environ))
+
+        def __init__(self, environ):
+            self.environ = environ
+
+    return HTTPRequest
+
+
+def test_the_probe_environ_names_an_address_that_is_not_the_replacement() -> None:
+    """The swap would prove nothing if the request already read as the value
+    the probe assigns."""
+    probe = load_probe()
+    assert werkzeug_url(probe.PROBE_ENVIRON) != probe.REPLACEMENT
+    assert probe.PROBE_ENVIRON["SERVER_PORT"] not in ("80", "443")
+
+
+def test_the_probe_performs_the_swap_on_the_request_class_odoo_ships() -> None:
+    assert load_probe().url_not_replaceable(odoo_http_module()) is None
+
+
+def test_the_probe_fails_when_the_url_takes_no_assignment() -> None:
+    probe = load_probe()
+    http = odoo_http_module(read_only_url(probe.PROBE_ENVIRON))
+    assert "takes no assignment" in probe.url_not_replaceable(http)
+
+
+def test_the_probe_fails_when_the_url_reads_back_as_the_address_it_arrived_on() -> None:
+    """The 0.4.6 defect, in the shape the build tier would now see it: the
+    assignment is accepted and changes nothing."""
+
+    class HTTPRequest:
+        url = property(lambda self: self.arrived, lambda self, value: None)
+
+        def __init__(self, environ):
+            self.arrived = werkzeug_url(environ)
+
+    probe = load_probe()
+    unreplaceable = probe.url_not_replaceable(odoo_http_module(HTTPRequest))
+    assert "reads back" in unreplaceable
+    assert probe.REPLACEMENT in unreplaceable
+
+
+def test_the_probe_fails_when_the_request_class_cannot_be_built_over_an_environ() -> None:
+    """A nightly whose HTTPRequest wants more than an environ leaves the
+    swap unproven, which is not the same as proven and must not pass."""
+
+    class HTTPRequest:
+        def __init__(self, environ, session):
+            self.environ = environ
+
+    assert "could not be built" in load_probe().url_not_replaceable(odoo_http_module(HTTPRequest))
+
+
+def test_the_probe_reports_an_unreplaceable_url_with_a_non_zero_status() -> None:
+    request = ingress_request()
+    declared, _ = odoo_website_visitor(request)
+    install_patch(declared, request)
+    probe = load_probe()
+    http = odoo_http_module(read_only_url(probe.PROBE_ENVIRON))
+    status, report = probe_report(visitor_namespace(declared), http)
+    assert status != 0
+    assert len(report.splitlines()) == 1
+    assert report.startswith("visitor-url: url not replaceable (")
+
+
+def test_the_probe_reads_odoos_own_request_class_and_builds_none_of_its_own() -> None:
+    """The class under test has to come from the Odoo being probed, or the
+    check proves something about this file instead."""
+    tree = ast.parse(PROBE.read_text(encoding="utf-8"))
+    main = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "main"
+    )
+    assert [argument.arg for argument in main.args.args[:2]] == ["website_visitor", "http"]
+    entry = tree.body[-1]
+    assert isinstance(entry, ast.If)
+    imported = {
+        alias.name
+        for node in ast.walk(entry)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+    }
+    assert "odoo.http" in imported
+    assert not [node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+
+
+def test_the_build_step_reports_a_url_that_cannot_be_replaced() -> None:
+    _, run = visitor_url_step()
+    assert "url not replaceable" in run

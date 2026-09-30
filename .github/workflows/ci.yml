@@ -301,7 +301,10 @@ jobs:
       # module (the one the registry runs) carries the flag and whether the
       # wrapper still fits upstream's parameters. The second run leaves the
       # module out of --load and has to come back unpatched, which shows the
-      # check can go red. No database, Supervisor or credential is used.
+      # check can go red. It also performs the url replacement the patch
+      # performs, on this image's own odoo.http.HTTPRequest: on 0.4.6 the flag
+      # was on and the replacement was a no-op, which only the Live tier saw
+      # (issue #160, reopened). No database, Supervisor or credential is used.
       - name: In-image contract (visitor tracking URL)
         run: |
           set -euo pipefail
@@ -345,6 +348,14 @@ jobs:
               "website.visitor._handle_webpage_dispatch does not take that way; the patch installs," \
               "and a tracked page view would raise TypeError. The difference is named in the probe" \
               "line above."
+            exit 1
+          fi
+          if grep -q '^visitor-url: url not replaceable' <<< "${out}"; then
+            echo "::error::woow_visitor_url is applied, but replacing request.httprequest.url on" \
+              "this image's odoo.http.HTTPRequest does not take, so a page view opened through" \
+              "Ingress would still record the Home Assistant host while the patch looks applied." \
+              "That is how 0.4.6 shipped (issue #160, reopened). The reading is in the probe line" \
+              "above."
             exit 1
           fi
           if ! grep -qx 'visitor-url: applied' <<< "${out}"; then

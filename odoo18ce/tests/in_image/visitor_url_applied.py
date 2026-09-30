@@ -8,8 +8,9 @@ and carries on, so asking Odoo whether the patch is on is the one check that
 goes red. The probe never imports the module itself -- that would apply the
 patch and pass by itself.
 
-What the flag alone would not prove, the same two things ADR 0010's
-amendment named for the Canonical URL guard (issue #121):
+What the flag alone would not prove -- the two things ADR 0010's amendment
+named for the Canonical URL guard (issue #121), and the one the reopened #160
+adds:
 
 * the class the module patched is the last one in ``website_visitor``
   declaring ``_handle_webpage_dispatch``. Odoo builds a model from every
@@ -20,10 +21,17 @@ amendment named for the Canonical URL guard (issue #121):
   ``super()``;
 * the wrapper still fits upstream. ``functools.wraps`` keeps the original
   under ``__wrapped__``; if a nightly changed its parameters the patch still
-  installs and every tracked page view raises ``TypeError``.
+  installs and every tracked page view raises ``TypeError``;
+* the swap the wrapper performs takes on the request Odoo builds. This is the
+  half issue #160 was reopened over: the flag was on the host and every
+  Ingress page view still recorded the Home Assistant host, because
+  ``odoo.http.HTTPRequest`` forwards ``url`` through a plain ``property`` that
+  never reads the instance ``__dict__``. A flag cannot see that; performing
+  the swap on this image's own request class can.
 
-Prints one of ``visitor-url: applied``, ``visitor-url: not applied`` or
-``visitor-url: signature mismatch (...)``. Exit status 0 only for the first.
+Prints one of ``visitor-url: applied``, ``visitor-url: not applied``,
+``visitor-url: signature mismatch (...)`` or
+``visitor-url: url not replaceable (...)``. Exit status 0 only for the first.
 """
 import inspect
 import sys
@@ -32,6 +40,22 @@ import sys
 PATCHED_FLAG = "_woow_visitor_url_patched"
 MODEL = "website.visitor"
 METHOD = "_handle_webpage_dispatch"
+# The attribute the patch replaces for the length of one dispatch.
+URL_ATTRIBUTE = "url"
+# A complete, minimal WSGI environ: enough for werkzeug to compute a url and
+# for Odoo's wrapper to be built over it, with no server, no database and no
+# request behind it. The port is not the scheme's default, so the url werkzeug
+# computes from it carries one and cannot be mistaken for the replacement.
+PROBE_ENVIRON = {
+    "wsgi.url_scheme": "http",
+    "REQUEST_METHOD": "GET",
+    "SERVER_NAME": "probe.invalid",
+    "SERVER_PORT": "8069",
+    "SCRIPT_NAME": "",
+    "PATH_INFO": "/probe",
+    "QUERY_STRING": "",
+}
+REPLACEMENT = "https://canonical.invalid/probe"
 
 
 def registry_visitor(website_visitor):
@@ -119,7 +143,42 @@ def signature_mismatch(website_visitor):
     return upstream_fit(forwarded_names(wrapper), original)
 
 
-def main(website_visitor, out=sys.stdout) -> int:
+def url_not_replaceable(http):
+    """A sentence naming why the patch cannot replace this Odoo request's
+    ``url``, or None when the swap it performs takes.
+
+    ``http`` is Odoo's ``odoo.http``. Its ``HTTPRequest`` is what the dispatch
+    is handed: a wrapper that installs one plain ``property`` per forwarded
+    attribute, ``url`` included, whose getter and setter reach the werkzeug
+    request it wraps (``make_request_wrap_methods``). The patch assigns to
+    that attribute, so this builds the wrapper over a bare environ and asks it
+    to read the assignment back. Nothing here touches the patch, a database or
+    the network; a failure is this image's request class, not the module.
+    """
+    name = f"{http.HTTPRequest.__module__}.{http.HTTPRequest.__qualname__}"
+    try:
+        httprequest = http.HTTPRequest(dict(PROBE_ENVIRON))
+    except Exception as exc:
+        return f"{name} could not be built over a bare environ: {exc!r}"
+    try:
+        arrived = getattr(httprequest, URL_ATTRIBUTE)
+    except Exception as exc:
+        return f"{name}.{URL_ATTRIBUTE} could not be read: {exc!r}"
+    try:
+        setattr(httprequest, URL_ATTRIBUTE, REPLACEMENT)
+    except Exception as exc:
+        return f"{name}.{URL_ATTRIBUTE} takes no assignment: {exc!r}"
+    replaced = getattr(httprequest, URL_ATTRIBUTE, None)
+    if replaced != REPLACEMENT:
+        return (
+            f"{name}.{URL_ATTRIBUTE} was assigned {REPLACEMENT!r} and reads back "
+            f"{replaced!r} (it arrived as {arrived!r}); a page view would record the "
+            "address the request arrived on"
+        )
+    return None
+
+
+def main(website_visitor, http, out=sys.stdout) -> int:
     if not patched(website_visitor):
         print("visitor-url: not applied", file=out)
         return 1
@@ -127,11 +186,16 @@ def main(website_visitor, out=sys.stdout) -> int:
     if mismatch is not None:
         print(f"visitor-url: signature mismatch ({mismatch})", file=out)
         return 1
+    unreplaceable = url_not_replaceable(http)
+    if unreplaceable is not None:
+        print(f"visitor-url: url not replaceable ({unreplaceable})", file=out)
+        return 1
     print("visitor-url: applied", file=out)
     return 0
 
 
 if __name__ == "__main__":
+    import odoo.http
     from odoo.addons.website.models import website_visitor
 
-    sys.exit(main(website_visitor))
+    sys.exit(main(website_visitor, odoo.http))

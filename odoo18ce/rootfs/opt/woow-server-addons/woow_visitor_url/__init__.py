@@ -31,8 +31,16 @@ _logger = logging.getLogger(__name__)
 PATCHED_FLAG = "_woow_visitor_url_patched"
 MODEL = "website.visitor"
 METHOD = "_handle_webpage_dispatch"
-# werkzeug's Request.url is a cached_property, so a value written into the
-# instance dict is the one every later read returns.
+# What Odoo hands the dispatch is an ``odoo.http.HTTPRequest``, not the
+# werkzeug request it wraps: for every name in ``HTTPREQUEST_ATTRIBUTES`` --
+# ``url`` among them -- Odoo installs on the wrapper a plain ``property`` whose
+# getter and setter reach the wrapped request (``make_request_wrap_methods``).
+# A plain ``property`` is a data descriptor that never reads the instance
+# ``__dict__``, so the url is replaced by assigning to it: the wrapper forwards
+# the assignment, and werkzeug's ``cached_property`` -- which the wrapped
+# request's ``url`` is -- fills its cache from it. Both shapes answer to an
+# assignment; only the werkzeug one answers to a ``__dict__`` write, which is
+# why this module's first version was applied on the host and did nothing.
 URL_ATTRIBUTE = "url"
 
 
@@ -71,6 +79,40 @@ def website_base():
     return website.get_base_url() if website else ""
 
 
+def swap_url(httprequest, value) -> bool:
+    """Make ``httprequest.url`` read as ``value``. False when it did not take.
+
+    Assignment is what reaches both shapes of request -- Odoo's wrapper and
+    the werkzeug request it wraps -- and the value is read back afterwards,
+    because a request that accepts the assignment and still reports the old
+    address would leave this patch looking applied while storing the address
+    the request arrived on. That is what issue #160 was reopened over.
+    """
+    try:
+        setattr(httprequest, URL_ATTRIBUTE, value)
+    except (AttributeError, TypeError):
+        return False
+    return getattr(httprequest, URL_ATTRIBUTE, None) == value
+
+
+def restore_url(httprequest, arrived, was_cached) -> None:
+    """Put the address the browser really used back on the request.
+
+    The rest of the response, and the next handler on this request, must see
+    that one. A werkzeug request that had not computed its url before the
+    dispatch is left with nothing cached, which is how it arrived; Odoo's
+    wrapper has no deleter for a forwarded attribute, so there the arrived
+    value is written back instead -- the same address, now cached.
+    """
+    if not was_cached:
+        try:
+            delattr(httprequest, URL_ATTRIBUTE)
+            return
+        except (AttributeError, TypeError):
+            pass
+    swap_url(httprequest, arrived)
+
+
 def dispatch_on_the_canonical_url(original, self, website_page):
     """Run Odoo's dispatch with the request's ``url`` reading as what to store.
 
@@ -86,30 +128,34 @@ def dispatch_on_the_canonical_url(original, self, website_page):
 
     # Whether the url was cached is read before anything looks at it:
     # werkzeug caches Request.url on first read, and a request this patch
-    # rewrites has to come out of it exactly as it went in.
-    cached = vars(httprequest)
-    was_cached = URL_ATTRIBUTE in cached
+    # rewrites has to come out of it exactly as it went in. Odoo's wrapper
+    # holds no url in its own ``__dict__``, so this reads False there, which
+    # is what sends the restore down the write-it-back path.
+    was_cached = URL_ATTRIBUTE in getattr(httprequest, "__dict__", {})
     arrived = httprequest.url
     stored = tracked_url(arrived, website_base())
     if stored == arrived:
         return original(self, website_page)
 
-    cached[URL_ATTRIBUTE] = stored
+    if not swap_url(httprequest, stored):
+        # A request whose url refuses the assignment, or goes on reading as
+        # the address it arrived on, would make the swap a silent no-op: the
+        # page view is then stored as it arrived, and said so, rather than
+        # looking corrected. Whatever a refused assignment did land on the
+        # request is put back first.
+        restore_url(httprequest, arrived, was_cached)
+        _logger.warning(
+            "the request's url could not be replaced, so this page view records %s; "
+            "assigning %s on %s.%s does not change what it reads back",
+            arrived, URL_ATTRIBUTE,
+            type(httprequest).__module__, type(httprequest).__qualname__,
+        )
+        return original(self, website_page)
+
     try:
-        if httprequest.url != stored:
-            # A werkzeug whose Request.url no longer reads the instance dict
-            # would make this a silent no-op, storing the old address while
-            # the patch still looks applied.
-            _logger.warning(
-                "the request's url could not be replaced, so this page view records %s; "
-                "werkzeug's Request.url is no longer a cached_property", arrived
-            )
         return original(self, website_page)
     finally:
-        if was_cached:
-            cached[URL_ATTRIBUTE] = arrived
-        else:
-            cached.pop(URL_ATTRIBUTE, None)
+        restore_url(httprequest, arrived, was_cached)
 
 
 def patch_dispatch(visitor) -> bool:

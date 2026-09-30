@@ -3,6 +3,30 @@
 ## Unreleased
 
 ### Fixed
+- Under Ingress, a website page view again records the page's **Canonical
+  URL**. The fix that first shipped in 0.4.6 was applied on the test host and
+  changed nothing there: every Ingress page view still stored the Home
+  Assistant host (`U-C5`, root cause `RC-9`), and the add-on's own Odoo log
+  carried both the module's "patched" line at startup *and* its "the request's
+  url could not be replaced" warning on every one of those page views. The
+  replacement was the no-op, not the patch. `request.httprequest` is not the
+  werkzeug request: it is `odoo.http.HTTPRequest`, which wraps one and installs
+  a plain `property` for each attribute it forwards, `url` included. A plain
+  `property` is a data descriptor and never reads an instance's `__dict__`, so
+  the value the module wrote there was read back by nobody. It now **assigns**
+  to the attribute, which the wrapper forwards to the werkzeug request behind
+  it, and puts the address the browser really used back after the page view is
+  recorded -- by writing it again, because a forwarded attribute has no
+  deleter. A request that refuses the assignment, or accepts it and goes on
+  reporting the old address, is recorded as it arrived and said so in the log,
+  as before. Every pull request's in-image check now also performs that
+  replacement on the request class the image itself ships, instead of only
+  reading the flag the patch sets: reading the flag is what called this green
+  while the host was unfixed. Nothing else changes -- the stored URL is still
+  built on `website.get_base_url()`, a visit that already arrives on the
+  Canonical URL still stores exactly what it stored before, and **page views
+  stored before this version keep the Home Assistant host**: they are not
+  rewritten and not deleted. No version bump. Issue #160, parent #148.
 - Under Ingress, the **"Edit this content"** link on a website page now
   carries the Ingress prefix once instead of twice. `/@/<website path>` is
   Odoo 18's route from a website page into the web client, and it is the one
