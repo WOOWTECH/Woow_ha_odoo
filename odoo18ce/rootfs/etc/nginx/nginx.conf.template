@@ -195,20 +195,28 @@ http {
     # the rule rather than the list: any attribute it cannot tokenise is an
     # attribute whose value it then searches inside, which is the same defect
     # again. So the name is anything but whitespace, `=`, `/`, `<`, `>` or a
-    # quote -- the HTML attribute-name shape, not the four names -- the
-    # whitespace around the `=` is taken and put back unchanged, and an
+    # quote -- the HTML attribute-name shape, not the four names; the
+    # whitespace around the `=` is taken and put back unchanged; an
     # **unquoted** value is consumed as a token too, even though nothing
-    # unquoted is ever prefixed (there is no delimiter to put back). Four
-    # review rounds each found this defect through a different spelling: a
-    # `:` in the name, a `.` or `_`, `alt = '...'`, and `alt= href='...'`.
+    # unquoted is ever prefixed (there is no delimiter to put back); and an
+    # attribute may begin at a **quote** as well as at whitespace, because
+    # `<a href="/x"title="y">` is legal and minified HTML writes it. That
+    # last one is why the quoted value ends on a *lookahead*: the closing
+    # quote stays in the string rather than being consumed, so it is there to
+    # be the next attribute's opener, and the replacement re-emits only up to
+    # the value. Five review rounds each found this defect through a
+    # different spelling -- a `:` in the name, a `.` or `_`, `alt = '...'`,
+    # `alt= href='...'`, and no separator at all.
     #
     # Two shapes stay outside the pair and both fail safely -- the URL keeps
     # escaping rather than being corrupted. A start tag holding a `>` inside
     # an attribute value is not recognised as a tag at all. And an unquoted
     # value that is itself a URL is not prefixed. What *is* reached and is
     # not really an attribute is markup nested inside another attribute's
-    # value, and a start tag written inside a comment: both are prefixed, and
-    # the strip undoes that on the way to the record.
+    # value, a start tag written inside a comment, and a `src="..."` inside
+    # somebody's unquoted value (`alt=a"src="/x"`, where a browser reads one
+    # `alt` and no `src`): all three are prefixed, and the strip undoes that
+    # on the way to the record.
     #
     # Only the four attributes whose whole value is one URL are prefixed:
     # `src`, `href`, `action`, `data-src`. `srcset` is a candidate list
@@ -267,7 +275,7 @@ http {
     # before this line otherwise, and every rewritten expression falls back to
     # the untouched value when the globals are absent.
     map $upstream_http_content_type $ingress_markup_global_shim {
-        default 'var mT=/<[A-Za-z][^<>]*>/g,mA=/(^|\s)([^\s=\/<>\x22\x27]+)(\s*=\s*)(?:([\x22\x27])((?:(?!\4)[^<>])*)\4|[^\s<>\x22\x27]+)/g,mU=function(n){return ",src,href,action,data-src,".indexOf(","+n.toLowerCase()+",")>=0},mF=function(m,s,n,e,q,v){return q&&mU(n)&&v.charAt(0)==="/"&&v.charCodeAt(1)!==47&&v.charCodeAt(1)!==92?s+n+e+q+path(v)+q:m},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mA,mF)}):h},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
+        default 'var mT=/<[A-Za-z][^<>]*>/g,mA=/(^|\s|[\x22\x27])([^\s=\/<>\x22\x27]+)(\s*=\s*)(?:([\x22\x27])((?:(?!\4)[^<>])*)(?=\4)|[^\s<>\x22\x27]+)/g,mU=function(n){return ",src,href,action,data-src,".indexOf(","+n.toLowerCase()+",")>=0},mF=function(m,s,n,e,q,v){return q&&mU(n)&&v.charAt(0)==="/"&&v.charCodeAt(1)!==47&&v.charCodeAt(1)!==92?s+n+e+q+path(v):m},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mA,mF)}):h},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
     }
 
     map $upstream_http_content_type $ingress_runtime_shim {

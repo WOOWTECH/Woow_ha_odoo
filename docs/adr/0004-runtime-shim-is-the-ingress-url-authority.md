@@ -520,24 +520,33 @@ rather than a list of cases: any attribute it cannot tokenise is one whose
 value it searches inside, and that is the same defect again. So the name it
 consumes is the HTML attribute-name shape -- anything but whitespace, `=`,
 `/`, `<`, `>` or a quote -- and not the four names anything is prefixed for;
-the whitespace around the `=` is consumed and put back unchanged; and an
-unquoted value is consumed as a token too, even though nothing unquoted is
-ever prefixed, because there is no delimiter to put back. Four review rounds
-each found the same defect through a different spelling -- a `:` in the name,
-a `.` or `_`, `alt = '...'`, `alt= href='...'` -- which is why the principle
-is written here and not only the shapes it has been reached by.
+the whitespace around the `=` is consumed and put back unchanged; an unquoted
+value is consumed as a token too, even though nothing unquoted is ever
+prefixed, because there is no delimiter to put back; and an attribute may
+begin at a **quote** as well as at whitespace, because `<a href="/x"title="y">`
+is legal and minified HTML writes it. That last one is why a quoted value ends
+on a *lookahead*: the closing quote stays in the string instead of being
+consumed, so it is there to be the next attribute's opener.
+
+Five review rounds each found the same defect through a different spelling -- a
+`:` in the name, a `.` or `_`, `alt = '...'`, `alt= href='...'`, and no
+separator at all -- which is why the principle is written here and not only
+the shapes it has been reached by. Each of them produced a tag with the
+attribute *after* the misread one destroyed, and the strip cannot undo that.
 
 Two shapes stay outside the pair, and both fail safely -- the URL keeps
 escaping rather than being corrupted. A start tag holding a `>` inside an
 attribute value is not recognised as a tag at all. And an unquoted value that
-is itself a URL is not prefixed, whatever surrounds its `=`, including the one
-that swallows the attribute after it (`alt=a"src="/x"`, which is how a browser
-parses it too).
+is itself a URL is not prefixed, whatever surrounds its `=`.
 
 What *is* reached and is not really an attribute is markup nested inside
-another attribute's value, and a start tag written inside a comment: both are
-prefixed -- visible in the editor until the next load, never in the record,
-because `OUT` removes the prefix from the whole string.
+another attribute's value, a start tag written inside a comment, and a
+`src="..."` inside somebody's unquoted value (`alt=a"src="/x"`, where a
+browser reads one `alt` and no `src`): all three are prefixed -- visible in
+the editor until the next load, never in the record, because `OUT` removes the
+prefix from the whole string. The third is the price of accepting a quote as
+an attribute opener, and it is the cheap side of that trade: the alternative
+was destroying the attribute after a misread one.
 
 **Why `OUT` is wider than `IN` rather than its mirror.** It is not only that
 `IN` reaches the two not-really-attribute shapes above. The shim's own wrappers prefix attributes
@@ -603,11 +612,12 @@ themselves touch no DOM at all.
 `editable.innerHTML = this.value` on toggling back (the `codeview` option,
 which the To-do field does not set); a snapshot a collaborative *peer* sends
 over WebRTC, which is worth naming precisely because it is the one open item
-that is a **token write** and not only a render escape -- the snapshot
-serialises that peer's editable, so it carries *that* peer's Ingress prefix,
-and the strip removes only the prefix of the session doing the saving, so a
-second editor could store a foreign Supervisor token in
-`project.task.description`. The *server* reset is covered; this one is not,
+that is a **token write** and not only a render escape, and because this change
+*widens* it -- the snapshot serialises that peer's editable, so it carries
+*that* peer's Ingress prefix on every URL the prefixing reached, where before
+this change it carried one only on what the media dialog had just inserted;
+the strip removes only the prefix of the session doing the saving, so a second
+editor could store a foreign Supervisor token in `project.task.description`. The *server* reset is covered; this one is not,
 and it is not closed here for two reasons: nothing has measured the
 collaboration transport on the test host (it needs two simultaneous Ingress
 sessions on one to-do), and a strip that removes a *foreign* prefix has to

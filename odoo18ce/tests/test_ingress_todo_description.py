@@ -430,11 +430,27 @@ assert.equal(
   '<img alt= href=' + "'" + '/a src="' + P + PICTURE + '"' + "'" + ' >'
 );
 // An unquoted value that is itself a URL is not prefixed: there is no
-// delimiter to put back. It keeps escaping rather than being corrupted, and so
-// does one that swallows the attribute after it, which is how a browser parses
-// `alt=a"src="/x"` as well.
+// delimiter to put back. It keeps escaping rather than being corrupted.
+assert.equal(markupIn('<img src=' + PICTURE + ' alt="x">'),
+  '<img src=' + PICTURE + ' alt="x">');
+// An attribute may begin at a quote as well as at whitespace, because
+// `<a href="/x"title="y">` is legal and minified HTML writes it. Without that,
+// the walk desynchronises here and destroys the attribute after the one it
+// misreads.
+assert.equal(
+  markupIn('<a href="' + PICTURE + '"title=' + "'" + 'say " src="/z' + "'"
+    + ' class="c">t</a>'),
+  '<a href="' + P + PICTURE + '"title=' + "'" + 'say " src="/z' + "'"
+    + ' class="c">t</a>'
+);
+assert.equal(markupIn('<img src="' + PICTURE + '"alt="x">'),
+  '<img src="' + P + PICTURE + '"alt="x">');
+// The price of that is one more shape reached that is not really an attribute:
+// a `src="..."` inside somebody's *unquoted* value, where a browser reads one
+// `alt` and no `src` at all. Prefixed in the editor, and the strip takes it
+// off again on the way to the record, like the other two such shapes.
 assert.equal(markupIn('<img alt=a"src="' + PICTURE + '" >'),
-  '<img alt=a"src="' + PICTURE + '" >');
+  '<img alt=a"src="' + P + PICTURE + '" >');
 // Attributes separated by a newline are still attributes.
 assert.equal(
   markupIn('<img\n  src="' + PICTURE + '"\n  alt="x"/>'),
