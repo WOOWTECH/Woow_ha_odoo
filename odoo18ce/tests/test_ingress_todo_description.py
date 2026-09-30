@@ -849,14 +849,18 @@ def test_the_rewrite_keeps_the_collaboration_reset_under_the_prefix() -> None:
 # --- the comparison the strip has to stay consistent with ---------------------
 
 def test_the_urgent_save_writes_twice_without_the_comparison_rewrite() -> None:
-    """`lastValue` is stripped, the clone is not, so the comparison never matches."""
+    """`lastValue` is stripped, the clone is not, so the comparison never matches.
+
+    The three tests below are one controlled comparison: the same content and
+    the same ``lastValue`` every time, so the only variable is the rewrite.
+    """
     node(HARNESS, [{
         "name": "commit comparison, as Odoo ships it",
         "shim": rendered_shim(INGRESS_PREFIX),
         # What the field is holding after a save: `lastValue` is the stored,
         # stripped value; the clone still carries the prefix it renders with.
         "program": commit_program(
-            fixture("commit comparison"), EDITED, "N(%s)" % SAVED_ROOT_RELATIVE
+            fixture("commit comparison"), EDITED, SAVED_ROOT_RELATIVE
         ),
         "expected": [EDITED, EDITED],
     }])

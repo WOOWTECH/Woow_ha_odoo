@@ -589,10 +589,12 @@ from. The first was already true before this change for anything the dialog
 itself inserted under Ingress, because the shim's `setAttribute` wrapper
 prefixes `src` and `href`; both are display state, and closing them means
 teaching those comparisons about the prefix the way the `get_image_info`
-argument was taught. Also open: the readonly `HtmlViewer`, which renders
-through `t-out` and is none of the five sites; and the legacy `web_editor`
-editor behind `html_legacy` and `mass_mailing_html`, which carries none of
-these expressions. None has been
+argument was taught. Also open: the readonly `HtmlViewer`, which is none of
+the five sites and reaches markup twice over -- `t-out` on the plain path and
+`iframeTarget.innerHTML = content` on the `hasFullHtml`/`cssAssetId` path, so
+whoever picks that item up has two insertions to cover and not one; and the
+legacy `web_editor` editor behind `html_legacy` and `mass_mailing_html`, which
+carries none of these expressions. None has been
 measured escaping -- except the peer snapshot, which is unmeasured rather than
 clean -- and each is its own issue.
 

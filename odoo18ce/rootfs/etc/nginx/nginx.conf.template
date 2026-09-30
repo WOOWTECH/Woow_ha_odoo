@@ -710,9 +710,11 @@ http {
             # comparisons, `ImageSelector.isInitialMedia` on `src` and
             # `DocumentSelector.fetchAttachments` on `href`; an unquoted
             # attribute value, which has no closing delimiter to anchor on;
-            # the readonly `HtmlViewer`, which renders through `t-out`; and
-            # the legacy `web_editor` editor behind `html_legacy` and
-            # `mass_mailing_html`, which carries none of these expressions.
+            # the readonly `HtmlViewer`, which reaches markup twice over --
+            # `t-out` on the plain path, `iframeTarget.innerHTML` on the
+            # full-HTML one; and the legacy `web_editor` editor behind
+            # `html_legacy` and `mass_mailing_html`, which carries none of
+            # these expressions.
             # Each escapes rather than corrupts, and each is its own issue.
             sub_filter 'editable.innerHTML=fixInvalidHTML(this.config.content)' 'editable.innerHTML=(window.__WOOW_INGRESS_MARKUP_IN__||function(h){return h})(fixInvalidHTML(this.config.content))';
             sub_filter 'async updateValue(value,{changeId}={changeId:this.lastChangeId}){this.lastValue=normalizeHTML(value,this.clearElementToCompare.bind(this));' 'async updateValue(value,{changeId}={changeId:this.lastChangeId}){value=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(value);this.lastValue=normalizeHTML(value,this.clearElementToCompare.bind(this));';
