@@ -30,8 +30,9 @@ adds:
   image's own ``request`` and replacing the url on it can.
 
 Prints one of ``visitor-url: applied``, ``visitor-url: not applied``,
-``visitor-url: signature mismatch (...)`` or
-``visitor-url: url not replaceable (...)``. Exit status 0 only for the first.
+``visitor-url: signature mismatch (...)``, ``visitor-url: url not replaceable
+(...)`` or ``visitor-url: url swap unprovable (...)``. Exit status 0 only for
+the first.
 """
 import inspect
 import sys
@@ -56,6 +57,12 @@ PROBE_ENVIRON = {
     "QUERY_STRING": "",
 }
 REPLACEMENT = "https://canonical.invalid/probe"
+# The two ways the replacement can fail, kept apart because the build step says
+# something different about each: the first is a request that changed shape and
+# tells nothing about the patch, the second is a page view that would record
+# the Home Assistant host.
+UNPROVABLE = "url swap unprovable"
+NOT_REPLACEABLE = "url not replaceable"
 
 
 def registry_visitor(website_visitor):
@@ -165,9 +172,20 @@ def probe_request(http):
         return None, f"odoo.http.Request could not be built over a bare environ: {exc!r}"
 
 
-def url_not_replaceable(http):
-    """A sentence naming why the patch cannot replace this Odoo request's
-    ``url``, or None when the swap it performs takes.
+def url_swap(http):
+    """``(None, None)`` when the url replacement the patch performs takes here,
+    and ``(verdict, sentence)`` when it does not.
+
+    The verdict tells apart the two ways this can fail, because they mean
+    different things to whoever reads the build:
+
+    * ``"url swap unprovable"`` -- this Odoo could not be asked. Its
+      ``odoo.http`` no longer has what the probe reads, or its request cannot
+      be built over a bare environ, or its url cannot be read. A nightly
+      changed the shape of the request; nothing is known about the patch.
+    * ``"url not replaceable"`` -- it was asked and the swap did not take, so a
+      page view would record the address the request arrived on. This is the
+      0.4.6 defect, and the half issue #160 was reopened over.
 
     ``http`` is Odoo's ``odoo.http``. What the dispatch reads is
     ``request.httprequest``, an ``odoo.http.HTTPRequest``: a wrapper that
@@ -184,25 +202,25 @@ def url_not_replaceable(http):
     """
     request, unbuildable = probe_request(http)
     if unbuildable is not None:
-        return unbuildable
+        return UNPROVABLE, unbuildable
     httprequest = request.httprequest
     name = f"request.httprequest ({type(httprequest).__module__}.{type(httprequest).__qualname__})"
     try:
         arrived = getattr(httprequest, URL_ATTRIBUTE)
     except Exception as exc:
-        return f"{name}.{URL_ATTRIBUTE} could not be read: {exc!r}"
+        return UNPROVABLE, f"{name}.{URL_ATTRIBUTE} could not be read: {exc!r}"
     try:
         setattr(httprequest, URL_ATTRIBUTE, REPLACEMENT)
     except Exception as exc:
-        return f"{name}.{URL_ATTRIBUTE} takes no assignment: {exc!r}"
+        return NOT_REPLACEABLE, f"{name}.{URL_ATTRIBUTE} takes no assignment: {exc!r}"
     replaced = getattr(httprequest, URL_ATTRIBUTE, None)
     if replaced != REPLACEMENT:
-        return (
+        return NOT_REPLACEABLE, (
             f"{name}.{URL_ATTRIBUTE} was assigned {REPLACEMENT!r} and reads back "
             f"{replaced!r} (it arrived as {arrived!r}); a page view would record the "
             "address the request arrived on"
         )
-    return None
+    return None, None
 
 
 def main(website_visitor, http, out=sys.stdout) -> int:
@@ -213,9 +231,9 @@ def main(website_visitor, http, out=sys.stdout) -> int:
     if mismatch is not None:
         print(f"visitor-url: signature mismatch ({mismatch})", file=out)
         return 1
-    unreplaceable = url_not_replaceable(http)
-    if unreplaceable is not None:
-        print(f"visitor-url: url not replaceable ({unreplaceable})", file=out)
+    verdict, sentence = url_swap(http)
+    if verdict is not None:
+        print(f"visitor-url: {verdict} ({sentence})", file=out)
         return 1
     print("visitor-url: applied", file=out)
     return 0

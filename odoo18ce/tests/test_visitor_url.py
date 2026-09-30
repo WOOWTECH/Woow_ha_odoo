@@ -952,14 +952,16 @@ def test_the_probe_environ_names_an_address_that_is_not_the_replacement() -> Non
     assert probe.PROBE_ENVIRON["SERVER_PORT"] not in ("80", "443")
 
 
-def test_the_probe_performs_the_swap_on_the_request_class_odoo_ships() -> None:
-    assert load_probe().url_not_replaceable(odoo_http_module()) is None
+def test_the_probe_performs_the_swap_on_the_request_odoo_builds() -> None:
+    assert load_probe().url_swap(odoo_http_module()) == (None, None)
 
 
 def test_the_probe_fails_when_the_url_takes_no_assignment() -> None:
     probe = load_probe()
     http = odoo_http_module(read_only_url(probe.PROBE_ENVIRON))
-    assert "takes no assignment" in probe.url_not_replaceable(http)
+    verdict, sentence = probe.url_swap(http)
+    assert verdict == probe.NOT_REPLACEABLE
+    assert "takes no assignment" in sentence
 
 
 def test_the_probe_fails_when_the_url_reads_back_as_the_address_it_arrived_on() -> None:
@@ -973,20 +975,25 @@ def test_the_probe_fails_when_the_url_reads_back_as_the_address_it_arrived_on() 
             self.arrived = werkzeug_url(environ)
 
     probe = load_probe()
-    unreplaceable = probe.url_not_replaceable(odoo_http_module(HTTPRequest))
-    assert "reads back" in unreplaceable
-    assert probe.REPLACEMENT in unreplaceable
+    verdict, sentence = probe.url_swap(odoo_http_module(HTTPRequest))
+    assert verdict == probe.NOT_REPLACEABLE
+    assert "reads back" in sentence
+    assert probe.REPLACEMENT in sentence
 
 
 def test_the_probe_fails_when_the_request_class_cannot_be_built_over_an_environ() -> None:
-    """A nightly whose HTTPRequest wants more than an environ leaves the
-    swap unproven, which is not the same as proven and must not pass."""
+    """A nightly whose HTTPRequest wants more than an environ leaves the swap
+    unproven, which is not the same as proven and must not pass -- and is not
+    the same as the patch being broken either, so it gets the other verdict."""
 
     class HTTPRequest:
         def __init__(self, environ, session):
             self.environ = environ
 
-    assert "could not be built" in load_probe().url_not_replaceable(odoo_http_module(HTTPRequest))
+    probe = load_probe()
+    verdict, sentence = probe.url_swap(odoo_http_module(HTTPRequest))
+    assert verdict == probe.UNPROVABLE
+    assert "could not be built" in sentence
 
 
 def test_the_probe_reports_an_odoo_http_that_no_longer_has_what_it_reads() -> None:
@@ -997,8 +1004,9 @@ def test_the_probe_reports_an_odoo_http_that_no_longer_has_what_it_reads() -> No
     for missing in ("HTTPRequest", "Request"):
         http = odoo_http_module()
         delattr(http, missing)
-        assert probe.url_not_replaceable(http) == (
-            f"odoo.http has no {missing}; the request it builds cannot be read here"
+        assert probe.url_swap(http) == (
+            probe.UNPROVABLE,
+            f"odoo.http has no {missing}; the request it builds cannot be read here",
         )
 
 
@@ -1011,10 +1019,11 @@ def test_the_probe_swaps_through_the_request_and_not_through_a_class_it_names() 
         def __init__(self, httprequest):
             self.httprequest = _ReadOnlyHttprequest(httprequest.url)
 
-    http = odoo_http_module(request_class=Request)
-    unreplaceable = load_probe().url_not_replaceable(http)
-    assert "takes no assignment" in unreplaceable
-    assert "_ReadOnlyHttprequest" in unreplaceable
+    probe = load_probe()
+    verdict, sentence = probe.url_swap(odoo_http_module(request_class=Request))
+    assert verdict == probe.NOT_REPLACEABLE
+    assert "takes no assignment" in sentence
+    assert "_ReadOnlyHttprequest" in sentence
 
 
 class _ReadOnlyHttprequest:
@@ -1038,6 +1047,18 @@ def test_the_probe_reports_an_unreplaceable_url_with_a_non_zero_status() -> None
     assert report.startswith("visitor-url: url not replaceable (")
 
 
+def test_the_probe_reports_a_swap_it_could_not_perform_with_a_non_zero_status() -> None:
+    request = ingress_request()
+    declared, _ = odoo_website_visitor(request)
+    install_patch(declared, request)
+    http = odoo_http_module()
+    delattr(http, "Request")
+    status, report = probe_report(visitor_namespace(declared), http)
+    assert status != 0
+    assert len(report.splitlines()) == 1
+    assert report.startswith(f"visitor-url: {load_probe().UNPROVABLE} (")
+
+
 def test_the_probe_reads_odoos_own_request_class_and_builds_none_of_its_own() -> None:
     """The class under test has to come from the Odoo being probed, or the
     check proves something about this file instead."""
@@ -1059,6 +1080,11 @@ def test_the_probe_reads_odoos_own_request_class_and_builds_none_of_its_own() ->
     assert not [node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
 
 
-def test_the_build_step_reports_a_url_that_cannot_be_replaced() -> None:
-    _, run = visitor_url_step()
-    assert "url not replaceable" in run
+def test_the_build_step_tells_a_broken_swap_from_one_it_could_not_perform() -> None:
+    """Two probe verdicts, two messages: one says a page view would record the
+    Home Assistant host, the other says this Odoo changed shape and nothing is
+    known about the patch. One message for both is the container-versus-patch
+    conflation `probe_reported` exists to avoid."""
+    probe, (_, run) = load_probe(), visitor_url_step()
+    assert probe.NOT_REPLACEABLE in run and probe.UNPROVABLE in run
+    assert run.count("::error::") == run.count("exit 1") >= 5

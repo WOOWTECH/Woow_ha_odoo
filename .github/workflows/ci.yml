@@ -351,11 +351,17 @@ jobs:
             exit 1
           fi
           if grep -q '^visitor-url: url not replaceable' <<< "${out}"; then
-            echo "::error::woow_visitor_url is applied, but replacing request.httprequest.url on" \
-              "this image's odoo.http.HTTPRequest does not take, so a page view opened through" \
-              "Ingress would still record the Home Assistant host while the patch looks applied." \
-              "That is how 0.4.6 shipped (issue #160, reopened). The reading is in the probe line" \
-              "above."
+            echo "::error::woow_visitor_url is applied, but replacing the url of the request Odoo" \
+              "builds in this image does not take, so a page view opened through Ingress would" \
+              "still record the Home Assistant host while the patch looks applied. That is how" \
+              "0.4.6 shipped (issue #160, reopened). The reading is in the probe line above."
+            exit 1
+          fi
+          if grep -q '^visitor-url: url swap unprovable' <<< "${out}"; then
+            echo "::error::the probe could not build the request Odoo builds, so whether" \
+              "woow_visitor_url can replace its url is unknown; this is Odoo's odoo.http having" \
+              "changed shape, not the patch being broken. The probe line above names what it" \
+              "could not read."
             exit 1
           fi
           if ! grep -qx 'visitor-url: applied' <<< "${out}"; then
