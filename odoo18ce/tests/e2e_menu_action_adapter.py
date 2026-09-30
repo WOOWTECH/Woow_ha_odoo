@@ -455,7 +455,13 @@ def get_writing_route(route: str) -> str | None:
     A prefix matches the route itself and anything below it, on a path segment
     boundary: `/shop/payment/validate` is under `/shop/payment`, and a route
     that merely starts with the same characters (`/shop/cartons`) is not. The
-    query is ignored -- it cannot make a writing route a reading one.
+    longest match wins, so adding a narrower entry under a wider one reports the
+    narrower one rather than whichever the dict happens to hold first. The query
+    is ignored -- it cannot make a writing route a reading one.
+
+    A route that is not an absolute path is refused rather than answered.
+    `parse_targets` refuses one too, so reaching this is a caller that skipped
+    it, and a guard that cannot read the route must not say it is safe.
 
     The path is compared as Odoo routes it, not as it was typed. `normalize_route`
     deliberately keeps percent-escapes and repeated slashes, because they can
@@ -468,15 +474,22 @@ def get_writing_route(route: str) -> str | None:
     multilingual site. Every one of those can only refuse more than the literal
     spelling would, which is the safe direction for a guard.
     """
-    path = re.sub(r"/{2,}", "/", unquote(urlsplit(route).path))
+    parts = urlsplit(route)
+    if parts.netloc or not parts.path.startswith("/"):
+        raise ValueError("crawler configuration: %r is not an absolute path, so whether it writes "
+                         "on a plain GET cannot be judged" % route)
+    path = re.sub(r"/{2,}", "/", unquote(parts.path))
     head, _, rest = path.lstrip("/").partition("/")
     candidates = [path] + (["/" + rest] if head and rest else [])
+    found: str | None = None
     for candidate in candidates:
         trimmed = candidate.rstrip("/") or "/"
         for prefix in GET_WRITING_ROUTES:
-            if trimmed == prefix or trimmed.startswith(prefix + "/"):
-                return prefix
-    return None
+            if trimmed != prefix and not trimmed.startswith(prefix + "/"):
+                continue
+            if found is None or len(prefix) > len(found):
+                found = prefix
+    return found
 
 
 def require_write_database(targets: Iterable[OpenTarget], database: str | None) -> None:

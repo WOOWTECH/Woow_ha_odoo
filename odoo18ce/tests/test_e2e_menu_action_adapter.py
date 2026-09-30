@@ -5,6 +5,7 @@ Nothing here opens a browser, a websocket or reads credentials.
 """
 import json
 import unittest
+from unittest import mock
 from urllib.parse import urlsplit
 
 from e2e_menu_action_adapter import (
@@ -570,6 +571,28 @@ class OpenTargetTests(unittest.TestCase):
         # origin, and `parse_targets` refuses a target that carries one.
         with self.assertRaisesRegex(ValueError, "not a usable route"):
             parse_targets(['{"module": "m", "target": "//shop/checkout", "expect_selector": "#x"}'])
+
+    def test_a_route_the_guard_cannot_read_is_refused_not_permitted(self) -> None:
+        # `parse_targets` refuses both of these, so only a caller that skipped it
+        # gets here -- and then a None would read as "this route is safe".
+        for unreadable in ("shop/checkout", "//shop/checkout", "https://host/shop/checkout"):
+            with self.subTest(unreadable):
+                with self.assertRaisesRegex(ValueError, "crawler configuration"):
+                    get_writing_route(unreadable)
+
+    def test_the_longest_matching_prefix_is_the_one_reported(self) -> None:
+        # Two entries can nest -- `/shop/payment` already reads as the wider one
+        # over `/shop/payment/validate` -- and the narrower is what a reader
+        # needs. Dict order must not decide it.
+        wide, narrow = "/shop/payment", "/shop/payment/validate"
+        for order in ((wide, narrow), (narrow, wide)):
+            with self.subTest(order):
+                with mock.patch.dict(
+                    "e2e_menu_action_adapter.GET_WRITING_ROUTES",
+                    {name: "cited" for name in order}, clear=True,
+                ):
+                    self.assertEqual(get_writing_route("/shop/payment/validate"), narrow)
+                    self.assertEqual(get_writing_route("/shop/payment"), wide)
 
     def test_the_get_writing_guard_did_not_move_into_the_operation_enum(self) -> None:
         # The enum only ever names reads: NON_MUTATING_OPERATIONS is every
