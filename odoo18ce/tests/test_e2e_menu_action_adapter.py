@@ -590,7 +590,9 @@ class OpenTargetTests(unittest.TestCase):
                          # the ordinary spelling on a multilingual site.
                          "/zh_TW/shop/checkout", "/fr/shop/cart", "/en/website/lang/fr",
                          # Dot segments, which the browser resolves before it asks.
-                         "/shop/./checkout", "/shop/x/../checkout", "/shop/%2e/checkout"):
+                         "/shop/./checkout", "/shop/x/../checkout", "/shop/%2e/checkout",
+                         # A backslash, which the browser folds to a slash.
+                         "/shop\\checkout", "/shop%5Ccheckout", "/shop\\checkout\\..\\checkout"):
             with self.subTest(spelling):
                 self.assertIsNotNone(get_writing_route(spelling))
         # `//shop/checkout` never reaches here: `urlsplit` reads `//shop` as an

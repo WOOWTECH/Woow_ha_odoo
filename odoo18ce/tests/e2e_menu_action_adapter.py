@@ -498,11 +498,12 @@ def get_writing_route(route: str) -> str | None:
     The path is compared as Odoo routes it, not as it was typed, three ways.
     Percent-escapes and repeated slashes: `normalize_route` keeps both on purpose
     because they can route differently, and werkzeug unquotes before matching, so
-    `/shop/%63heckout` reaches `/shop/checkout`. Dot segments: the browser
-    resolves them before it asks, so `/shop/x/../checkout` asks for
-    `/shop/checkout` -- `normalize_route` refuses a dot segment outright
-    (`_safe_path`), so only a target nobody parsed brings one here, which is the
-    caller this helper cannot rely on. And the language segment: Odoo's frontend
+    `/shop/%63heckout` reaches `/shop/checkout`. Dot segments and backslashes: the
+    browser resolves the first and folds the second to `/` before it asks, so
+    `/shop/x/../checkout` and `/shop\\checkout` both ask for `/shop/checkout` --
+    `normalize_route` refuses both outright (`_safe_path`), so only a target
+    nobody parsed brings one here, which is the caller this helper cannot rely
+    on. And the language segment: Odoo's frontend
     takes the first segment of a path it cannot route as a language code and
     routes what is left (`http_routing/models/ir_http.py:390-392` at the pinned
     Odoo), which makes `/zh_TW/shop/checkout` the ordinary spelling of the
@@ -513,10 +514,12 @@ def get_writing_route(route: str) -> str | None:
     if parts.scheme or parts.netloc or not parts.path.startswith("/"):
         raise ValueError("crawler configuration: %r is not an absolute path, so whether it writes "
                          "on a plain GET cannot be judged" % route)
-    # `normpath` resolves the dot segments the browser would resolve for itself;
-    # it runs after the unquote so a `%2e` is one, and after the collapse so a
-    # leading `//` it would keep is already gone.
-    path = posixpath.normpath(re.sub(r"/{2,}", "/", unquote(parts.path)))
+    # A backslash is a separator to the browser, which folds it to `/` before it
+    # asks. `normpath` then resolves the dot segments the browser would resolve
+    # for itself; it runs after the unquote so a `%2e` or a `%5c` counts, and
+    # after the collapse so a leading `//` it would keep is already gone.
+    path = unquote(parts.path).replace("\\", "/")
+    path = posixpath.normpath(re.sub(r"/{2,}", "/", path))
     head, _, rest = path.lstrip("/").partition("/")
     candidates = [path] + (["/" + rest] if head and rest else [])
     found: str | None = None
