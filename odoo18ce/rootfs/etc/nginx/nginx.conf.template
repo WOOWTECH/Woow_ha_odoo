@@ -762,6 +762,76 @@ http {
             sub_filter 'const relativeSrc=srcUrl.pathname;' 'const relativeSrc=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(srcUrl.pathname);';
             sub_filter 'if(content){this.editable.innerHTML=content;}' 'if(content){this.editable.innerHTML=(window.__WOOW_INGRESS_MARKUP_IN__||function(h){return h})(content);}';
             sub_filter 'const comparisonValue=el.innerHTML;' 'const comparisonValue=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(el.innerHTML);';
+            # The `/@` links into the web client (issue #211, U-A2). `/@/<website
+            # path>` is Odoo 18's route from a website page into the backend, and
+            # it is the one route whose *tail* is itself a website path rather
+            # than a URL to fetch. Both builders splice `location.pathname` --
+            # already carrying the Ingress prefix -- into that tail:
+            #
+            #   currentUrl.pathname = `/@${currentUrl.pathname}`
+            #
+            # so the tail became `/@<PREFIX>/shop/payment`, and then the prefix
+            # went on a second time. The shim's `path()` spots a prefix only at
+            # position 0, and here it sits at position 2, so the "Edit this
+            # content" button on every website page a viewer may edit rendered
+            #
+            #   href="<PREFIX>/@<PREFIX>/shop/payment"
+            #
+            # and the web client opened `/api/hassio_ingress/<token>/shop/payment`
+            # as a website path. Composing the two steps reproduces the observed
+            # literal exactly.
+            #
+            # The fix is the second of the two the issue names: build the tail
+            # from the canonical path and put the prefix on once, at the front,
+            # where it belongs. That value is right for every consumer of these
+            # two builders and not only for the one that was measured --
+            # `backendEditBtnEl.href=currentUrl.href` goes through the shim's
+            # anchor-href setter, which returns an already-prefixed path
+            # unchanged; redirect.js's two `window.location.replace(currentUrl.href)`
+            # calls are writes to `location`, which ADR 0004 says the shim cannot
+            # wrap; and the popover hands `browser.open` a **URL object**, which
+            # the shim's `window.open` wrapper passes through because it prefixes
+            # strings only. Leaving the prefix off and trusting the shim would fix
+            # the href and break the other three.
+            #
+            # nginx reads `${` in a quoted parameter as a variable and has no
+            # escape for `$`, so the pattern cannot carry the template literal's
+            # interpolation. It stops at the backtick instead, and the replacement
+            # re-emits one: what follows -- `${currentUrl.pathname}`; -- is then
+            # the argument list of a **tagged template**, so the untouched tail is
+            # used rather than stranded. The tag takes the interpolated pathname
+            # as its second parameter, the way any tag does.
+            #
+            # Two ways out with Odoo's own value, both returning `"/@"+p`. With
+            # no Ingress prefix there is nothing to move, and this rule is
+            # ingress-only in any case. And the prefix belongs on a path of
+            # *this* origin only: the popover admits a link by hostname, which
+            # says nothing about the port or the scheme, so an absolute link to
+            # the add-on's own 8069 listener reaches this builder with a path
+            # that has no Ingress prefix and wants none. `path()` refuses the
+            # same case with `x.origin===location.origin`; the tag reads
+            # `currentUrl` from the scope it is written into, where both
+            # builders hold it, because a tag is handed the interpolation and
+            # not the URL it came from. redirect.js's `currentUrl` is
+            # `location.href`, so it always passes.
+            sub_filter 'currentUrl.pathname=`/@' 'currentUrl.pathname=function(s,p){var P="$safe_ingress_path";if(!P||currentUrl.origin!==location.origin)return "/@"+p;if(p.indexOf(P)===0)p=p.slice(P.length)||"/";return P+"/@"+p}`';
+            # The popover's guard, which the rewrite above needs. `_onPreviewLinkClick`
+            # leaves a link that is already in backend form alone, and it tests
+            # the raw pathname against `/@/` -- under Ingress that pathname reads
+            # `<PREFIX>/@/shop/x`, the test fails, and the builder above then
+            # produces `<PREFIX>/@/@/shop/x`. Before this issue the same input
+            # opened `/@<PREFIX>/@/shop/x` at the Home Assistant root, so neither
+            # is a regression and both are wrong; the guard is part of getting the
+            # link right rather than a second fix. Accepting the prefixed spelling
+            # beside the bare one keeps
+            # the Ingress surface behaving as the Public one does -- no
+            # `preventDefault`, no second window, the anchor followed as it stands.
+            # With no prefix the two tests are the same test, which is a no-op.
+            #
+            # Written with a double-quoted parameter because the expression quotes
+            # with `'`. redirect.js carries no such guard and this pattern does not
+            # reach it; `tests/test_ingress_at_route_links.py` pins both counts.
+            sub_filter "!currentUrl.pathname.startsWith('/@/')" "!(currentUrl.pathname.startsWith('/@/')||currentUrl.pathname.startsWith('$safe_ingress_path/@/'))";
             # Generated rewrites (ADR 0005). The add-on writes this file from
             # its own Rewrite scan; the config-rendering init step creates it
             # empty so a fresh install starts. It holds prefix rules only, and

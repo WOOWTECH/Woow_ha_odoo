@@ -3,6 +3,27 @@
 ## Unreleased
 
 ### Fixed
+- Under Ingress, the **"Edit this content"** link on a website page now
+  carries the Ingress prefix once instead of twice. `/@/<website path>` is
+  Odoo 18's route from a website page into the web client, and it is the one
+  route whose tail is itself a website path rather than a URL to fetch. Odoo
+  builds the link by splicing `location.pathname` -- already prefixed under
+  Ingress -- into that tail, so the tail read `/@<INGRESS_PREFIX>/shop/payment`
+  and the prefix went on a second time, giving
+  `<INGRESS_PREFIX>/@<INGRESS_PREFIX>/shop/payment`: the web client was asked
+  to open `/api/hassio_ingress/<token>/shop/payment` as a website path (the
+  doubled prefix of `U-A2`, a `GAP` the #163 run recorded on `/shop/payment`).
+  It was never specific to the checkout -- the button is on every website page
+  whose viewer may edit it. Two rewrites on the Ingress listener's asset
+  location fix it: the link is now built from the canonical path with the
+  prefix put on once, at the front, which is the value every consumer of it
+  needs -- the anchor, the two `window.location.replace` redirects behind
+  `?enable_editor` and alt+A, and the website editor's link popover, which
+  hands `window.open` a `URL` object the Runtime shim does not prefix. The
+  popover's own "this link is already in backend form" check now recognises a
+  prefixed `/@/` path as well, so a link that is already there is followed
+  rather than reopened, exactly as on the Public origin. The Public origin
+  gets neither rule. No version bump. Issue #211, parent #148.
 - Under Ingress, the **To-do** form's description now shows its two
   pictures instead of two broken images. The onboarding to-do Odoo creates
   for every user carries

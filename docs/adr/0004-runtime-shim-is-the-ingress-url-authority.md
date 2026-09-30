@@ -294,9 +294,10 @@ literal `oe-thumbnail` and stays that way.
 What that rewrite has to survive is unusual enough to write down: the
 expression lives inside an XML attribute delimited by double quotes, inside a
 JavaScript template literal. It therefore carries no double quote, no backtick,
-no backslash and no `${`, and quotes with `'` -- which is why this is the one
-`sub_filter` in the template whose replacement is written with a double-quoted
-parameter. `thumbnailSrc` keeps its raw value, so `save_snippet` stores exactly
+no backslash and no `${`, and quotes with `'` -- which is why this rule is
+written with a double-quoted parameter, as the generic `url('/` rules above it
+already are, and as issue #211's popover guard later had to be on the pattern
+side. `thumbnailSrc` keeps its raw value, so `save_snippet` stores exactly
 what it stores today and a custom block saved on either surface shows its
 thumbnail on both.
 

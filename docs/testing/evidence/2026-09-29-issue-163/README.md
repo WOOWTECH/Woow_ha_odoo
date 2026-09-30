@@ -138,7 +138,7 @@ the tracker).
 | `GAP` | Issue | State |
 |---|---|---|
 | To-do form: the onboarding description's two images load from the Home Assistant root under Ingress (404) | #210 | **fixed 2026-09-30**, Live rerun owed (see below) |
-| Website pages: the frontend "Edit this content" link doubles the Ingress prefix (`/@` + a second prefix) | #211 | open |
+| Website pages: the frontend "Edit this content" link doubles the Ingress prefix (`/@` + a second prefix) | #211 | **fixed 2026-09-30**, Live rerun owed (see below) |
 
 ### To-do form, `project.task` 5 — blocker
 
@@ -204,6 +204,29 @@ of the path Odoo is asked to open -- the doubled prefix of `U-A2`. It is not
 specific to the checkout: `/shop` shows the same literal, so it is on every
 website page an editor can see. Nothing on this screen belongs to
 `ecpay_invoice_website`; the target found it.
+
+**Fixed 2026-09-30 (#211); the verdict in `open-diff.jsonl` is the one this run
+measured and is not edited.** Two rewrites on the Ingress asset location build
+the link from the canonical path and put the prefix on once, at the front:
+`<INGRESS_PREFIX>/@/shop/payment`. The prefix goes on here rather than being
+left to the Runtime shim because the same `currentUrl` feeds three other
+consumers the shim cannot reach -- redirect.js's two
+`window.location.replace(currentUrl.href)` calls, which are writes to
+`location` (ADR 0004), and the website editor's link popover, which hands
+`browser.open` a `URL` object the shim's `window.open` wrapper passes through
+untouched. The second rule is the popover's own "already in backend form"
+check, which compared a prefixed pathname with a bare `/@/` and so never
+fired under Ingress. The expression is served once each in
+`web.assets_frontend_minimal`, `web.assets_frontend` and
+`website.assets_wysiwyg`, so one `sub_filter_once off` rule covers all three
+sites. What is still owed is the Live half, which needs a Deploy: the test
+host runs 0.4.6 and the newest Release is 0.4.8, so neither carries this fix
+and a rerun today would measure the old literal. Owed is this run's
+`/shop/payment` target replayed on both surfaces, on a Release that carries
+the fix, with the record's `url_literals` reading `<INGRESS_PREFIX>/@/shop/payment`
+and the verdict `PARITY`. The static-tier contract is
+`odoo18ce/tests/test_ingress_at_route_links.py`, which includes a real nginx
+serving both bundle excerpts through the template's own two rule lines.
 
 Neither `GAP` is a Structural gap: both are fixable in the add-on, and the
 e-invoice step itself works under Ingress (the block renders, no signal, no
