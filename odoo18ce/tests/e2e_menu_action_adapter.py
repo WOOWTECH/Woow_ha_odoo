@@ -403,11 +403,18 @@ def session_database(reported: str | None) -> str:
 # list.
 #
 # One write outside the list was read and left outside it:
-# `website/models/ir_http.py:203` creates or touches a `website.visitor` on any
-# tracked page's GET, whichever module serves it. Bounding that here would
-# refuse the read-only runs the parity plan is built on -- every page `crawl`
-# visits makes the same write -- while leaving `crawl` as it is, so it belongs
-# to whoever takes the read-only guarantee up as a whole and not to this seam.
+# `website/models/ir_http.py:188-205` creates or touches a `website.visitor` on
+# a GET whose response is a tracked page, whichever module serves it. It is out
+# because it is not a property of the route: the gate is `view.track` on the
+# template the response happened to render (`response_template` in its
+# `qcontext`), so the same route can write on one website and not on another, and
+# no list keyed on a route can say which. Bounding it would mean bounding every
+# website page an `open` target can name -- `/`, `/contactus`, `/shop` -- which
+# is a decision about whether `open` may judge a website page off
+# `WRITE_DATABASE` at all, and that is the read-only guarantee as a whole and not
+# this seam. (`crawl` is not affected either way: it navigates only
+# `/odoo/action-<id>`, whose response is the web client bootstrap and not a
+# tracked page, so it never makes this write.)
 #
 # And the list is not a complete audit of every Odoo module: `website_sale` was
 # audited route by route, and the one `sale` route below is the one `sale` route
