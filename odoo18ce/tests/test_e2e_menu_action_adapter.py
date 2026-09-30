@@ -787,19 +787,19 @@ class CartStepTests(unittest.TestCase):
         # Two clicks means two passes over the product page, and no third.
         self.assertEqual(page.log.count("goto:/shop/product/desk-1"), 2)
 
-    def test_a_cart_that_took_both_clicks_is_reported_holding_both_lines(self) -> None:
+    def test_a_cart_that_took_both_clicks_is_reported_at_the_size_both_left_it(self) -> None:
         # The badge rising after the second click cannot say which click raised
         # it, so the reading taken after the grace that follows is the record.
-        # A cart holding two lines is two rows to account for under ADR 0012 and
-        # a bigger cart than the other surface will judge: reporting one line
-        # would hide both.
+        # `/shop/cart/update` increments the line it finds, so both clicks
+        # landing leaves qty 2 -- a bigger cart than the other surface will
+        # judge, and reporting one item would hide it.
         page = FakePage([0, 0, 0, 2])
         write = cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
         self.assertEqual((page.clicks, write["items"]), (2, 2))
         self.assertEqual(write["how"], "added the product on /shop/product/desk-1 to the cart (0 -> 2 items)"
                                        "; the first 1 click(s) read as lost, so it was clicked 2 times,"
-                                       " and the cart holds more than one line because one of them"
-                                       " had landed after all")
+                                       " and the cart holds more than the one item the step meant to add,"
+                                       " because one of those clicks had landed after all")
 
     def test_a_click_that_landed_late_is_not_clicked_again(self) -> None:
         # The add was still in flight when the reading called the cart empty. A
@@ -823,11 +823,19 @@ class CartStepTests(unittest.TestCase):
         self.assertTrue(page.closed)
 
     def test_a_cart_page_that_gives_no_count_is_not_a_cart_to_click_at_again(self) -> None:
-        # None is "the page did not say", which no further click answers.
+        # None is "the page did not say", which no further click answers. Both
+        # readings that could send the second click read it that way, and the
+        # message carries what the run had clicked by then.
         page = FakePage([0, None])
-        with self.assertRaisesRegex(RuntimeError, "did not show its item count"):
+        with self.assertRaisesRegex(RuntimeError, r"did not show its item count after adding "
+                                                  r"/shop/product/desk-1 in 1 click\(s\)"):
             cart_driver(FakeContext(page)).ensure_cart("/shop/product/desk-1")
         self.assertEqual(page.clicks, 1)
+        # The grace reading before the second click is the other one.
+        grace = FakePage([0, 0, None])
+        with self.assertRaisesRegex(RuntimeError, "did not show its item count before clicking"):
+            cart_driver(FakeContext(grace)).ensure_cart("/shop/product/desk-1")
+        self.assertEqual(grace.clicks, 1)
 
     def test_a_cart_that_already_holds_something_is_left_alone(self) -> None:
         # Both surfaces judge the same cart, so the second run must not add to it.
@@ -871,6 +879,19 @@ class CartStepTests(unittest.TestCase):
             {"model": "sale.order", "id": "2", "items": 0,
              "how": "the empty order the cart already held before the step; nothing was added"},
         ])
+
+    def test_a_step_that_never_made_its_page_compares_against_no_earlier_reading(self) -> None:
+        # The reset comes before `new_page`, so a target that never got a page
+        # cannot be judged against the reading the previous target left.
+        target, = parse_targets([CART_TARGET])
+        driver = cart_driver(FakeContext(FakePage([0, 0, 0, 1]), fail_after=1))
+        driver.ensure_cart("/shop/product/desk-1")  # leaves cart_before = "7"
+        self.assertEqual((driver.cart_before, driver.cart_before_read), ("7", True))
+        observation = driver.open_screen(target)
+        self.assertEqual(list(observation.writes), [])
+        self.assertIn("could not be read afterwards", observation.result)
+        self.assertFalse(driver.cart_before_read)
+        self.assertIsNone(driver.cart_before)
 
     def test_an_empty_cart_with_nothing_read_before_it_says_it_cannot_tell(self) -> None:
         # The step failed on its own first reading, so there is nothing to

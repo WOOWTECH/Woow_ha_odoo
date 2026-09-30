@@ -1389,8 +1389,10 @@ class SurfaceDriver:
             # which is the only answer this driver has.
             raise RuntimeError("crawler configuration: the cart write is allowed on %s only; "
                                "the session's database is %r" % (WRITE_DATABASE, self.database))
-        page = self.context.new_page()
+        # Reset before the page, so a `new_page` that fails cannot leave the
+        # previous target's reading for `_cart_after_failure` to compare with.
         self.cart_before, self.cart_before_read = None, False
+        page = self.context.new_page()
         try:
             # Both readings are taken on the cart page: the badge on another
             # page can be a step behind, and a low reading there would let an
@@ -1409,14 +1411,20 @@ class SurfaceDriver:
             for attempt in range(1, _CART_CLICK_ATTEMPTS + 1):
                 if attempt > 1:
                     # The add may still have been in flight when the reading
-                    # above called the cart empty, and clicking again would
-                    # double it: two lines for a one-product step, a cart size
-                    # the plan never meant on the judged screen, and twice the
-                    # rows to account for under ADR 0012. So a cart that filled
-                    # late gets its moment and one more reading, and ends the
-                    # step here instead of growing again.
+                    # above called the cart empty, and clicking again would add
+                    # its quantity twice -- `/shop/cart/update` increments the
+                    # line it finds, so the one line ends at qty 2: a cart
+                    # bigger than the plan meant on the judged screen, and a
+                    # size the other surface will not match. So a cart that
+                    # filled late gets its moment and one more reading, and
+                    # ends the step here instead of growing again.
                     page.wait_for_timeout(_CART_SETTLE_MS)
                     after, order = self._cart(page)
+                    if after is None:
+                        # Not empty -- unreadable, the same answer the reading
+                        # after a click gives, and no reason to click again.
+                        raise RuntimeError("the cart page did not show its item count before clicking "
+                                           "%s a second time" % self.masker.text(product_route))
                     if after:
                         late = True
                         break
@@ -1434,15 +1442,17 @@ class SurfaceDriver:
                     # raised it, so the second click gets the same grace the
                     # reading before it got and the cart is read after that.
                     # What that reading says is what the record says: a cart
-                    # that took both clicks is reported holding both lines
-                    # rather than the one line the wait happened to see.
+                    # that took both clicks is reported at the quantity both
+                    # left it, not the one the wait happened to see.
                     page.wait_for_timeout(_CART_SETTLE_MS)
                 after, order = self._cart(page)
                 if after is None:
                     # The page could not say, which is not the same as empty and
-                    # is not something another click would answer.
-                    raise RuntimeError("the cart page did not show its item count after adding %s"
-                                       % self.masker.text(product_route))
+                    # is not something another click would answer. The count is
+                    # in the message: what the run clicked is what it has to
+                    # account for, whatever the page would not say.
+                    raise RuntimeError("the cart page did not show its item count after adding %s in %d click(s)"
+                                       % (self.masker.text(product_route), attempt))
                 if after:
                     break
                 if attempt == _CART_CLICK_ATTEMPTS:
@@ -1461,7 +1471,8 @@ class SurfaceDriver:
             elif attempt > 1:
                 how += "; the first %d click(s) read as lost, so it was clicked %d times" % (attempt - 1, attempt)
                 if after > 1:
-                    how += ", and the cart holds more than one line because one of them had landed after all"
+                    how += (", and the cart holds more than the one item the step meant to add,"
+                            " because one of those clicks had landed after all")
             return {"model": "sale.order", "id": order, "items": after, "how": how}
         finally:
             page.close()
