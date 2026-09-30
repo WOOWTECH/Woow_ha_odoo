@@ -548,14 +548,16 @@ class OpenTargetTests(unittest.TestCase):
                              set(GET_WRITING_ROUTES))
         # The list is not `website_sale`-only: a known GET write belongs on it
         # whichever module holds the route.
-        self.assertIn("/my/orders", GET_WRITING_ROUTES)
+        self.assertIn("/my/orders/", GET_WRITING_ROUTES)
         for prefix, where in GET_WRITING_ROUTES.items():
             with self.subTest(prefix):
                 # A prefix is matched against a target's path, so it has to be
-                # one: no origin, no query, and no trailing slash, which
-                # `get_writing_route` strips off the path before comparing.
-                self.assertEqual(prefix, urlsplit(prefix).path.rstrip("/"))
+                # one: no origin and no query. A trailing slash is allowed and
+                # means "below this, not this" -- and is the only place one can
+                # appear, since `get_writing_route` strips it off a path.
+                self.assertEqual(prefix, urlsplit(prefix).path)
                 self.assertTrue(prefix.startswith("/"))
+                self.assertFalse(prefix.endswith("//"))
                 self.assertTrue(where)
 
     def test_a_get_writing_route_is_matched_by_prefix_on_a_segment_boundary(self) -> None:
@@ -568,7 +570,11 @@ class OpenTargetTests(unittest.TestCase):
         self.assertEqual(get_writing_route("/website/lang/fr_BE"), "/website/lang")
         # None means "not on this list", not "writes nothing": `/my/orders/<id>`
         # writes in `sale`, which this list does not cover -- see its comment.
-        self.assertEqual(get_writing_route("/my/orders/7"), "/my/orders")
+        # A key ending in a slash bounds what is under it and not the path
+        # itself: the order page writes, the order list page does not.
+        self.assertEqual(get_writing_route("/my/orders/7"), "/my/orders/")
+        self.assertIsNone(get_writing_route("/my/orders"))
+        self.assertIsNone(get_writing_route("/my/orders/"))
         for outside in ("/shop", "/shop/cartons", "/shop/checkouts", "/my/home",
                         "/odoo/action-project_todo.project_task_action_todo"):
             with self.subTest(outside):

@@ -366,7 +366,10 @@ def session_database(reported: str | None) -> str:
 # so `/shop/change_pricelist` covers the `/shop/change_pricelist/<id>` the route
 # is actually spelled as, and a route under a prefix needs its own key only when
 # its write is not the one the prefix cites -- `/shop/payment/validate` has one
-# for that reason, and the longest key is the one a refusal names. The value
+# for that reason, and the longest key is the one a refusal names. A key that
+# ends in a slash bounds only what is *under* it and not the path itself, which
+# is how `/my/orders/<id>` is bounded while the `/my/orders` list page, which
+# writes nothing and is a parity path of its own, stays open. The value
 # cites the write in upstream Odoo at the version odoo18ce/Dockerfile pins --
 # 18.0.20260930, `ODOO_DEB_VERSION` -- read from that `.deb` under
 # `usr/lib/python3/dist-packages/odoo/addons/`; a path with no module in front
@@ -458,9 +461,14 @@ GET_WRITING_ROUTES = {
     # read: sale/controllers/portal.py:270 `_portal_ensure_token()` stores a
     # fresh `access_token` on any order `_has_to_be_paid()`, and :168 posts a
     # "Quotation viewed by customer" note on a draft or sent order a portal user
-    # opens with a token. `sale`'s portal has more routes than this one and they
-    # have not been read; see the note above the list.
-    "/my/orders": "stores an access_token on an unpaid order and posts a viewed-by-customer note",
+    # opens with a token. The key ends in a slash because the write is on
+    # `/my/orders/<int:order_id>` (:123) and not on `/my/orders` itself (:110),
+    # which only fills `request.session`. It over-refuses two siblings that write
+    # nothing -- `/my/orders/page/<n>` (:110) and `/my/orders/<id>/document/<n>`
+    # (:361) -- because no static prefix separates an order id from them, and
+    # over-refusing is the direction a guard errs in. `sale`'s portal has more
+    # routes than these and they have not been read; see the note above the list.
+    "/my/orders/": "stores an access_token on an unpaid order and posts a viewed-by-customer note",
 }
 
 
@@ -469,10 +477,12 @@ def get_writing_route(route: str) -> str | None:
 
     A prefix matches the route itself and anything below it, on a path segment
     boundary: `/shop/payment/validate` is under `/shop/payment`, and a route
-    that merely starts with the same characters (`/shop/cartons`) is not. The
-    longest match wins, so adding a narrower entry under a wider one reports the
-    narrower one rather than whichever the dict happens to hold first. The query
-    is ignored -- it cannot make a writing route a reading one.
+    that merely starts with the same characters (`/shop/cartons`) is not. A
+    prefix that ends in a slash matches only what is below it, so `/my/orders/`
+    bounds `/my/orders/7` and leaves `/my/orders` alone. The longest match wins,
+    so adding a narrower entry under a wider one reports the narrower one rather
+    than whichever the dict happens to hold first. The query is ignored -- it
+    cannot make a writing route a reading one.
 
     A route that is not an absolute path is refused rather than answered.
     `parse_targets` refuses one too, so reaching this is a caller that skipped
@@ -506,7 +516,12 @@ def get_writing_route(route: str) -> str | None:
     for candidate in candidates:
         trimmed = candidate.rstrip("/") or "/"
         for prefix in GET_WRITING_ROUTES:
-            if trimmed != prefix and not trimmed.startswith(prefix + "/"):
+            if prefix.endswith("/"):
+                # Below the prefix only: `trimmed` carries no trailing slash, so
+                # the prefix's own path cannot match it.
+                if not trimmed.startswith(prefix):
+                    continue
+            elif trimmed != prefix and not trimmed.startswith(prefix + "/"):
                 continue
             if found is None or len(prefix) > len(found):
                 found = prefix
