@@ -205,8 +205,6 @@ specific to the checkout: `/shop` shows the same literal, so it is on every
 website page an editor can see. Nothing on this screen belongs to
 `ecpay_invoice_website`; the target found it.
 
-Neither `GAP` is a Structural gap: both are fixable in the add-on, and the
-e-invoice step itself works under Ingress (the block renders, no signal, no
 **Fixed 2026-09-30 (#211); the verdict in `open-diff.jsonl` is the one this run
 measured and is not edited.** Two rewrites on the Ingress asset location build
 the link from the canonical path and put the prefix on once, at the front:
@@ -230,6 +228,8 @@ and the verdict `PARITY`. The static-tier contract is
 `odoo18ce/tests/test_ingress_at_route_links.py`, which includes a real nginx
 serving both bundle excerpts through the template's own two rule lines.
 
+Neither `GAP` is a Structural gap: both are fixable in the add-on, and the
+e-invoice step itself works under Ingress (the block renders, no signal, no
 prefix escape), so acceptance criterion 4 of the issue lands on `GAP`, not on
 "Ingress cannot do this in principle".
 
