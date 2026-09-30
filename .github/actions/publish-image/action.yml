@@ -38,7 +38,13 @@ runs:
           echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         } >> "$GITHUB_OUTPUT"
 
+    # The BuildKit version is pinned: its defaults decide how a layer is
+    # built and compressed, so an upgrade underneath us would change every
+    # digest and every host would download the whole image again. Bumping
+    # it is a deliberate change with exactly that cost (issue #155).
     - uses: docker/setup-buildx-action@v4
+      with:
+        driver-opts: image=moby/buildkit:v0.33.0
 
     - name: Log in to GHCR
       uses: docker/login-action@v4
@@ -51,7 +57,11 @@ runs:
       uses: docker/build-push-action@v7
       with:
         context: ${{ inputs.addon_dir }}
-        push: true
+        # The image output pins gzip rather than taking BuildKit's default,
+        # for the same reason the BuildKit version is pinned above: the
+        # compression decides the layer bytes, so changing it rebuilds every
+        # layer and costs every host a full download (issue #155).
+        outputs: type=image,push=true,compression=gzip
         # Supervisor cannot pull an image whose tag points at an attestation
         # manifest list; keep the tag a plain single-platform image.
         provenance: false
@@ -66,5 +76,29 @@ runs:
           BUILD_DESCRIPTION=${{ steps.meta.outputs.description }}
           BUILD_REF=${{ github.sha }}
           BUILD_REPOSITORY=${{ github.repository }}
-        cache-from: type=gha,scope=${{ inputs.arch }}
-        cache-to: type=gha,scope=${{ inputs.arch }},mode=max
+        # The layer cache lives on the same package as the version images,
+        # not in the GitHub Actions cache: that one is evicted after 7 days
+        # unused and past 10 GB, and every PR writes to it, so a Release
+        # that missed it rebuilt layers nobody had asked to change. A
+        # rebuild runs `apt-get update` and gets new bytes, so only a cache
+        # hit keeps a layer's digest -- and only an unchanged digest spares
+        # the host the download (issue #155).
+        # The gha cache stays behind it as a best-effort fallback read, for
+        # the build that finds no :buildcache yet -- the first one after
+        # this change -- and for any later miss. Nothing here writes it any
+        # more: CI's push-to-main builds do, every time on amd64 and only
+        # on a version bump on aarch64, so aarch64's fallback is whatever
+        # the last bump left and may be nothing at all. The registry cache
+        # is the one to rely on; this is for the transition.
+        cache-from: |
+          type=registry,ref=${{ inputs.image_base }}-${{ inputs.arch }}:buildcache
+          type=gha,scope=${{ inputs.arch }}
+        # Written only from main. A manual images-only run on another ref
+        # reads the cache but must not publish its own layers as the cache
+        # every later Release starts from -- so a version published that
+        # way leaves the cache where the last main build put it, and the
+        # next build on main refills it.
+        cache-to: >-
+          ${{ github.ref_name == 'main' && format(
+          'type=registry,ref={0}-{1}:buildcache,mode=max,compression=gzip,image-manifest=true,oci-mediatypes=true',
+          inputs.image_base, inputs.arch) || '' }}

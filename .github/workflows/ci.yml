@@ -23,6 +23,7 @@ concurrency:
 
 env:
   ADDON_DIR: odoo18ce
+  IMAGE_BASE: ghcr.io/woowtech/woow-ha-odoo
 
 jobs:
   lint:
@@ -150,7 +151,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The same BuildKit the Release build pins, because the gha cache
+      # this job writes is the fallback that build reads (issue #155).
       - uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: image=moby/buildkit:v0.33.0
 
       # The base image and its tag come from the Dockerfile's own ARGs;
       # only the architecture is passed in (issue #124).
@@ -165,7 +170,16 @@ jobs:
           build-args: |
             BUILD_ARCH=amd64
           tags: woow-ha-odoo-amd64:ci
-          cache-from: type=gha,scope=amd64
+          # The Release build's own registry cache first: it is the one
+          # that does not expire and the one the next Release starts from,
+          # so a PR build starts from the layers the last Release actually
+          # published. The package is public, so this is an anonymous read
+          # -- no ghcr login, no extra permission. The gha cache stays as
+          # the fallback and as the only thing CI writes; a PR must not
+          # publish layers to the Release cache (issue #155).
+          cache-from: |
+            type=registry,ref=${{ env.IMAGE_BASE }}-amd64:buildcache
+            type=gha,scope=amd64
           cache-to: type=gha,scope=amd64,mode=max
 
       # The Static tier cannot see inside the image, which is why the
@@ -359,7 +373,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The same BuildKit the Release build pins, because the gha cache
+      # this job writes is the fallback that build reads (issue #155).
       - uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: image=moby/buildkit:v0.33.0
 
       - name: Build image (no push)
         uses: docker/build-push-action@v7
@@ -369,5 +387,14 @@ jobs:
           build-args: |
             BUILD_ARCH=aarch64
           tags: woow-ha-odoo-aarch64:ci
-          cache-from: type=gha,scope=aarch64
+          # The Release build's own registry cache first: it is the one
+          # that does not expire and the one the next Release starts from,
+          # so a PR build starts from the layers the last Release actually
+          # published. The package is public, so this is an anonymous read
+          # -- no ghcr login, no extra permission. The gha cache stays as
+          # the fallback and as the only thing CI writes; a PR must not
+          # publish layers to the Release cache (issue #155).
+          cache-from: |
+            type=registry,ref=${{ env.IMAGE_BASE }}-aarch64:buildcache
+            type=gha,scope=aarch64
           cache-to: type=gha,scope=aarch64,mode=max

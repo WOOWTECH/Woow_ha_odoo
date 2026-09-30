@@ -3,6 +3,33 @@
 ## Unreleased
 
 ### Changed
+- Release builds keep their layer cache on **ghcr**, and the Release
+  notes report the download size. The build cache used to be the GitHub
+  Actions one, which is evicted after 7 days unused and LRU-evicted past
+  10 GB, and which every pull request writes to; a Release that missed it
+  rebuilt layers nobody had asked to change, and because a rebuild runs
+  `apt-get update` and gets new bytes, every rebuilt layer arrived with a
+  new digest and every host downloaded it again -- 0.4.1 to 0.4.2 re-sent
+  718 MiB on aarch64 and 0 MiB on amd64, from the same Dockerfile. The
+  Release build now reads and writes
+  `ghcr.io/woowtech/woow-ha-odoo-<arch>:buildcache`, on the same package
+  as the version images, and writes it only from `main`, so a manual
+  images-only run on another ref cannot become the cache the next Release
+  starts from. CI reads the same cache -- the package is public, so with
+  no ghcr login and no new permission -- and still writes only to the
+  Actions cache, which both sides keep reading behind the registry one so
+  that the first build after this change does not start cold. The image's compression (`gzip`) and the BuildKit
+  version are pinned as well, because both decide what a layer's bytes
+  are: changing either is a deliberate change that rebuilds every layer,
+  and the workflow says so where the pins are. Every Release also carries
+  a table of what updating costs a host, per architecture, against each
+  of the last three Releases, computed from the published manifests and
+  so correct even when a build was skipped because the image already
+  existed; over 100 MiB from the previous Release the run gets a warning.
+  The table can never block a Release: if it cannot be computed the notes
+  say `Download size: not computed` and the tag, the GitHub Release and
+  the store sync happen as before. No version bump. Issue #155, parent
+  #153.
 - The image is built as three layers instead of one, so that a small
   package or an Odoo bump no longer re-sends the whole thing. One `RUN`
   used to install PostgreSQL 16, the pinned Odoo nightly `.deb`, the

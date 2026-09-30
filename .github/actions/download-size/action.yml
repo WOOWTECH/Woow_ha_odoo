@@ -1,0 +1,71 @@
+---
+name: Download size table
+description: >-
+  Work out what a host downloads when it updates to this version from each
+  of the last few Releases, and write it as a markdown table for the
+  Release notes and for the step summary. Reads manifests from the
+  registry, so it works when a build was skipped because the image already
+  existed, and it never fails the Release: the caller runs it with
+  continue-on-error and falls back to a placeholder line.
+
+inputs:
+  image_base:
+    description: Image name without the -{arch} suffix
+    required: true
+  version:
+    description: The version being released; the tag of the new images
+    required: true
+  output:
+    description: Where to write the markdown table
+    required: false
+    default: download-size.md
+  bases:
+    description: How many earlier Releases to compare against
+    required: false
+    default: "3"
+  github_token:
+    description: Token that can list this repository's Releases
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Comparison bases and the table
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        REPOSITORY: ${{ github.repository }}
+        IMAGE_BASE: ${{ inputs.image_base }}
+        VERSION: ${{ inputs.version }}
+        OUTPUT: ${{ inputs.output }}
+        BASES: ${{ inputs.bases }}
+        SCRIPT: ${{ github.action_path }}/download_size.py
+      run: |
+        set -euo pipefail
+        # Every published Release; the script keeps the last few that are
+        # below this version and had images (0.4.0 onwards). A failure here
+        # fails the step, and the caller falls back to the placeholder
+        # line: an empty list would otherwise be read as "there is nothing
+        # earlier to compare against" and the notes would claim the whole
+        # image as the download.
+        gh release list --repo "${REPOSITORY}" --limit 100 \
+          --json tagName --jq '.[].tagName' > release-tags.txt
+        size_command=(
+          python3 "${SCRIPT}"
+          "${IMAGE_BASE}-amd64:${VERSION}"
+          "${IMAGE_BASE}-aarch64:${VERSION}"
+          --limit "${BASES}"
+          --output "${OUTPUT}"
+        )
+        while IFS= read -r tag; do
+          if [ -n "${tag}" ]; then
+            size_command+=(--release-tag "${tag}")
+          fi
+        done < release-tags.txt
+        "${size_command[@]}"
+        {
+          echo "## Download size"
+          echo
+          cat "${OUTPUT}"
+        } >> "$GITHUB_STEP_SUMMARY"
+        echo "--- download size ---"; cat "${OUTPUT}"
