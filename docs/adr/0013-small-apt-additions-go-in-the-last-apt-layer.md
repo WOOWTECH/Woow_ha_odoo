@@ -196,6 +196,24 @@ runs.
 - Odoo's `.deb` stops carrying its dependencies as Debian packages. The
   split of (a) from (b) rests on apt resolving `Depends` the same way twice.
 
+## Postscript (2026-09-30)
+
+The first consequence above needs a condition it did not state: a cache
+hit keeps a layer's digest only when every cache the build reads holds
+the same blob for that step. Through 0.4.7 the Release build read two —
+the registry `:buildcache` and, behind it, the GitHub Actions cache that
+CI writes and never publishes from. When 0.4.6 merged, the Release and
+main's CI built aarch64 cold in parallel and each compressed its own
+blob for layer (a): the Release pushed `sha256:e78d8df7becd…` and wrote
+it to `:buildcache`, CI wrote `sha256:b83475a1fd86…` to the Actions
+cache. The 0.4.7 Release reported `[3/8] … CACHED`, took CI's blob, and
+re-sent layer (a): 720.9 MiB against 0.4.6 on aarch64, where amd64,
+whose caches happened to agree, sent 378.5 MiB. So the Release build now
+reads the registry cache only; a Release that finds none builds cold and
+writes it, and the blob it pushes is then the blob it caches. CI keeps
+reading both and writing only the Actions one, because its blobs never
+reach an image (#219).
+
 ## References
 
 - [ADR 0001](0001-distribution-follows-release-tags.md) — what a user
