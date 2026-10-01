@@ -146,6 +146,40 @@
   version bump.
 
 ### Fixed
+- Under Ingress, the **legacy `web_editor` editor** -- the one Email
+  Marketing's mail designer runs -- now loads a record's markup under the
+  Ingress prefix and stores it root-relative again. Odoo 18 ships two HTML
+  editors: #210 and #237 rewrote `html_editor`, and ADR 0004's postscript had
+  already noted that this editor "carries none of these expressions". That was
+  literally true -- its load and save sites are different expressions, so not
+  one of those eight rules fired on it -- so a mailing body's pictures and
+  linked documents were fetched from the Home Assistant root and answered 404,
+  and, worse, **saving a mailing under Ingress stored the Supervisor token** in
+  `body_arch` and in the inlined `body_html` that goes out with the mail. Ten
+  rewrites close it: six putting the prefix on where markup becomes DOM
+  (`Wysiwyg.startEdition`, `OdooEditor.resetContent`, the three branches of the
+  readonly iframe a *sent* mailing renders through, and the `t-out` of the
+  field's own readonly template) and four taking it off where a value becomes a
+  record (`getEditingValue`, mass_mailing's inlined second field, and the code
+  view's two writes). All six insertions go through
+  `__WOOW_INGRESS_MARKUP_IN_VALUE__`, the helper #237 added, because every value
+  here is an OWL `Markup` object; no new global is published. The strip sits on
+  `getEditingValue` rather than on the `record.update` beside it, because
+  `updateValue` compares the editing value with the record's before writing:
+  strip later and every commit looks dirty and writes the field. Three widgets
+  reach this editor, and checking which found one the issue had not named --
+  `account_payment_register_html`, Register Payment's installments note, whose
+  own value holds no URL but whose render path is now covered; `html_legacy`,
+  by contrast, has no shipped view behind it at all. The mail designer's own
+  iframe is built by `document.write`, so no Runtime shim runs in it, and it
+  turns out to carry none of these files -- every rewritten expression runs in
+  the page's realm, which is a measurement in the fixtures' README rather than
+  an assumption. Two of the ten patterns start mid-identifier because nginx
+  reads a `$` in a parameter as a variable and this is jQuery-era code; a test
+  proves each is really the tail of the expression it names. The Public origin
+  is unchanged and `html_editor` keeps behaving exactly as #237 left it. No
+  version bump. Issue #238, ADR 0004 (second 2026-10-01 postscript), parent
+  #148; the Live rerun is #243's.
 - Under Ingress, a **readonly html field** now renders its record's pictures
   and linked documents under the Ingress prefix, down both of the paths it has.
   #210 fixed the editable path; this is the readonly `HtmlViewer`, which ADR

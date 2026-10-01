@@ -275,19 +275,34 @@ http {
     # -- including one a user typed, which the test says out loud.
     #
     # `__WOOW_INGRESS_MARKUP_IN_VALUE__(value)` is `IN` for a value that may be
-    # an OWL `Markup` object rather than a string (issue #237, the readonly
-    # `HtmlViewer`). Every html field holds its value as `markup(...)` -- the
-    # relational model wraps an `html` field that way -- and `IN` returns a
-    # non-string as it came, so calling `IN` on one would be a silent no-op.
-    # This helper puts the wrapper back through the value's **own**
+    # an OWL `Markup` object rather than a string (added by issue #237 for the
+    # readonly `HtmlViewer`; issue #238 made it the helper **every** markup
+    # insertion in this family calls, because the value at all of them is
+    # `record.data[name]`). Every html field holds its value as `markup(...)`
+    # -- the relational model wraps an `html` field that way -- and `IN`
+    # returns a non-string as it came, so calling `IN` on one would be a silent
+    # no-op. This helper puts the wrapper back through the value's **own**
     # constructor, because OWL's `t-out` inserts a `Markup` as HTML and
     # *escapes* everything else: a prefixed plain string handed back there
     # would be displayed as text rather than rendered, which is a worse bug
     # than the one being fixed. A primitive string goes through `IN`
-    # unchanged, so one helper covers both of the viewer's insertions -- the
-    # `t-out` and the iframe's `innerHTML`, where a string is markup too --
-    # and anything else (an empty html field is `false`) comes back as it
-    # came rather than as the word "false".
+    # unchanged, which is why the one helper serves a `t-out`, an `innerHTML`
+    # and jQuery's `.html()` alike -- each takes a string as markup too -- and
+    # anything else (an empty html field is `false`) comes back as it came
+    # rather than as the word "false". Being **type-preserving** is the
+    # property its callers rely on, not an implementation detail: `t-out`
+    # branches on `instanceof Markup` and jQuery's `.html()` on `typeof value
+    # === "string"`, so a helper that normalised the type would change which
+    # code path runs.
+    #
+    # Each caller spells its fallback out -- `(window.X||function(h){return h})`
+    # -- rather than referencing a `map` that could carry those bytes once. That
+    # is deliberate and the same choice every rewrite in this file makes: a
+    # reader of one `sub_filter` line can see what the page gets without
+    # resolving a variable, and `grep` for a helper finds its call sites. The
+    # cost is bytes in a `sub_filter` parameter, which has the whole 4096-byte
+    # token to itself; the shim's own script is the parameter that is short of
+    # room, and no fallback lives in it.
     #
     # Read-only and non-configurable like `__WOOW_INGRESS_URL__`, published
     # only when the Ingress prefix is non-empty because the IIFE returns
@@ -854,6 +869,155 @@ http {
             # rather than trusting a strip that is not there.
             sub_filter 'iframeTarget.innerHTML=content;' 'iframeTarget.innerHTML=(window.__WOOW_INGRESS_MARKUP_IN_VALUE__||function(h){return h})(content);';
             sub_filter '<div t-ref="readonlyContent" class="o_readonly" t-out="state.value"/>' '<div t-ref="readonlyContent" class="o_readonly" t-out="(window.__WOOW_INGRESS_MARKUP_IN_VALUE__||((h)=>h))(state.value)"/>';
+            # The **legacy** `web_editor` editor, which carries none of the
+            # eight expressions above (issue #238; ADR 0004's 2026-10-01
+            # postscript named it, this comment has what an editor of the ten
+            # lines below needs). Odoo 18 ships *two* HTML editors. #210 and
+            # #237 rewrote `html_editor`, the current one. Three field widgets
+            # still run the previous one out of `web_editor`, and its load and
+            # save expressions are different expressions, so not one of those
+            # rules fires on it:
+            #
+            #   `html_legacy`                   -- no shipped view uses it
+            #   `mass_mailing_html`             -- the mailing body (`body_arch`)
+            #   `account_payment_register_html` -- Register Payment's installments note
+            #
+            # The first is a compatibility registration with nothing behind it
+            # in the pinned package. The second is the mail designer, the main
+            # screen of a module installed on the parity database. The third
+            # the issue did not name and this Iteration found: `account`
+            # subclasses the legacy field and inherits its template, so the
+            # Register Payment wizard renders through the plain readonly path
+            # below. Its own value (`installments_switch_html`) is computed
+            # prose with no URL in it, so nothing escapes there today -- the
+            # path is covered because the path is a markup insertion of a
+            # record value, not because that one value needed it.
+            #
+            # **Where the prefix goes on: four insertion sites, one per path.**
+            #
+            # 1. `editable.html(options.value)` -- `Wysiwyg.startEdition`, the
+            #    editable's first load. The pattern starts *after* the `$` of
+            #    `this.$editable` on purpose: nginx reads `$editable` in a
+            #    parameter as a variable and refuses to load the config, and
+            #    there is no escape for `$`. Leaving `this.$` outside the match
+            #    is the same move the `${`-crossing rules above make.
+            # 2. `this.editable.innerHTML=value` -- `OdooEditor.resetContent`,
+            #    which every later load goes through: a record switch, a
+            #    discard, the collaboration stale-document reset, a mail theme
+            #    switch, and the code view on its way back off.
+            # 3/4/5. the legacy field's readonly iframe
+            #    (`_setupReadonlyIframe`), which reaches markup three times --
+            #    the refresh branch when the component is already mounted, the
+            #    first load into `#iframe_target`, and the sandboxed-preview
+            #    branch that writes the whole `documentElement`. This is the
+            #    reachable screen for a *sent* mailing, whose form is readonly
+            #    and which sets `cssReadonly`.
+            # 6. `t-out="markupValue"` on the `o_readonly` div of the legacy
+            #    field's own template -- the plain readonly path, the one
+            #    `account_payment_register_html` reaches. Three things about
+            #    this one: its bytes are lxml's re-serialisation of the file
+            #    and not the file (the source has a space before the `/>`),
+            #    its fallback is an **arrow** because OWL rewrites a
+            #    `function`'s parameter into a `ctx[...]` lookup, and
+            #    `account`'s `t-inherit` patch selects this div by
+            #    `@t-ref='readonlyElement'`, which the rewrite leaves alone.
+            #    The map comment at the top of this file has the rest of both.
+            #
+            # All six call `__WOOW_INGRESS_MARKUP_IN_VALUE__` and not the plain
+            # `IN`, because every value here is `this.props.record.data[name]`
+            # -- an OWL `Markup` object, which `IN` returns as it came. The
+            # helper is type-preserving, so jQuery's `.html()` and `t-out` both
+            # see the shape they saw before.
+            #
+            # **Where it comes off: every write the legacy field makes.**
+            #
+            # 7. `getEditingValue()` is the one read every save goes through
+            #    -- `updateValue` writes what it returns, `_isDirty` compares
+            #    it -- so the strip belongs there and not at the
+            #    `record.update` beside it. Stripping later would leave
+            #    `updateValue` comparing a prefixed editing value with the
+            #    unprefixed ORM value: every commit would look dirty and write
+            #    the field, and `currentEditingValue` would make the Wysiwyg
+            #    reset its content on each update. The rewrite keeps the
+            #    method's body as it is inside an arrow IIFE, so `this` is
+            #    unchanged and the class gains nothing.
+            # 8. `const inlineHtml=editableClone.innerHTML` is mass_mailing's
+            #    *second* write, the inlined `body_html`, which does not go
+            #    through `getEditingValue` at all: `commitChanges` clones the
+            #    editable into a `srcdoc` iframe, runs `toInline` over it and
+            #    stores that. Miss this one and a mailing is sent with the
+            #    Supervisor token in every image URL.
+            # 9/10. the code view's two `record.update` calls, which also
+            #    bypass `getEditingValue`. Bounded like #240's twin:
+            #    `codeview: Boolean(odoo.debug && options.codeview)`, and no
+            #    shipped view sets that option -- so this is a developer in
+            #    debug mode and nobody else. Covered rather than filed,
+            #    because it is a token *write* and two lines, where #240's is
+            #    a render escape.
+            #
+            # **The mail designer's nested iframes, which the issue asked
+            # about.** Every expression here runs in the page's realm, so the
+            # globals the shim published are the ones it reaches. The editor's
+            # own iframe is built by `document.write` and never was an HTTP
+            # response, so no shim ran in it -- and it carries none of these
+            # files: `web_editor.wysiwyg_iframe_editor_assets`, the bundle it
+            # loads, holds neither `wysiwyg.js` nor `OdooEditor.js`. The inner
+            # `srcdoc` iframe of rule 8 is only read from; the expression that
+            # reads it is the parent's. The editor runs out of
+            # `web_editor.backend_assets_wysiwyg`, loaded lazily by
+            # `_lazyloadWysiwyg` through `loadBundle`, which is a `<script
+            # src>` the shim prefixes -- so these rewritten bytes do arrive.
+            #
+            # **The one non-obvious blast radius: rules 1 and 2 are the only
+            # two served to the *website* editor.** `wysiwyg.js` and
+            # `OdooEditor.js` are in `web_editor.assets_wysiwyg` as well as the
+            # backend bundle, and the website editor mounts the same `Wysiwyg`.
+            # Neither reaches a record value there: the website editable is the
+            # page's own DOM, so `startEdition` is called with no
+            # `options.value` and rule 1 does not fire, and nothing in the
+            # website's save path calls `setValue`. What page HTML the editor
+            # does hold arrived through the generic HTML location, which already
+            # prefixed the same four attributes, so rule 2 is a no-op over it --
+            # `path()` spots a prefix at position 0 and does not add a second,
+            # which is why a prefix-on-insert rule can be shipped into a bundle
+            # whose other consumer saves what it holds. The website editor's own
+            # round trip stays exactly where #194 and #166 left it.
+            #
+            # **What is deliberately left alone.** The code view's `<textarea
+            # t-att-value="markupValue">` renders the record's stored bytes,
+            # which is what a source view should show -- but only on first
+            # render: `commitChanges` then refills it with
+            # `codeViewEl.value=this.wysiwyg.getValue()`, which is the editable
+            # and therefore prefixed, so after a commit the source view does
+            # display Supervisor-token URLs. That is left as it is because it is
+            # cosmetic and nothing stores it: rule 7 strips the same textarea
+            # when `getEditingValue` reads it and rule 10 strips it on the way
+            # out. Prefixing the `t-att-value` instead would make the source view
+            # lie about the record in the other direction, on the render that is
+            # right today. The checklist and star
+            # handlers write a value the *server* computed
+            # (`/web_editor/checklist`, `/web_editor/stars`), so there is no
+            # prefix in it. `_toInline` round-trips through the editable and
+            # back through `setValue`, where rule 2 prefixes idempotently.
+            # The legacy `loadImageInfo` shares `const relativeSrc=srcUrl.pathname;`
+            # with `html_editor`, so #210's rule already covers it on this
+            # editor too.
+            #
+            # All ten patterns were derived on 2026-10-01 from the pinned
+            # `.deb` through Odoo's own serve path and occur **once** each in
+            # the whole package; `tests/fixtures/bundles/README.md` carries the
+            # per-bundle counts and `tests/test_ingress_legacy_html_editor.py`
+            # drives every site with the globals present and absent.
+            sub_filter 'editable.html(options.value);' 'editable.html((window.__WOOW_INGRESS_MARKUP_IN_VALUE__||function(h){return h})(options.value));';
+            sub_filter 'this.editable.innerHTML=value;' 'this.editable.innerHTML=(window.__WOOW_INGRESS_MARKUP_IN_VALUE__||function(h){return h})(value);';
+            sub_filter 'iframeTarget.innerHTML=this.props.record.data[this.props.name];' 'iframeTarget.innerHTML=(window.__WOOW_INGRESS_MARKUP_IN_VALUE__||function(h){return h})(this.props.record.data[this.props.name]);';
+            sub_filter 'iframeTarget.innerHTML=value;' 'iframeTarget.innerHTML=(window.__WOOW_INGRESS_MARKUP_IN_VALUE__||function(h){return h})(value);';
+            sub_filter 'cwindow.document.documentElement.innerHTML=value;' 'cwindow.document.documentElement.innerHTML=(window.__WOOW_INGRESS_MARKUP_IN_VALUE__||function(h){return h})(value);';
+            sub_filter '<div t-ref="readonlyElement" class="o_readonly" t-out="markupValue"/>' '<div t-ref="readonlyElement" class="o_readonly" t-out="(window.__WOOW_INGRESS_MARKUP_IN_VALUE__||((h)=>h))(markupValue)"/>';
+            sub_filter 'getEditingValue(){const codeViewEl=this._getCodeViewEl();if(codeViewEl){return codeViewEl.value;}else{if(this.wysiwyg){return this.wysiwyg.getValue();}else{return null;}}}' 'getEditingValue(){return (window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})((()=>{const codeViewEl=this._getCodeViewEl();if(codeViewEl){return codeViewEl.value;}else{if(this.wysiwyg){return this.wysiwyg.getValue();}else{return null;}}})());}';
+            sub_filter 'const inlineHtml=editableClone.innerHTML;' 'const inlineHtml=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(editableClone.innerHTML);';
+            sub_filter 'this.wysiwyg.odooEditor.toolbarHide();const value=this.wysiwyg.getValue();' 'this.wysiwyg.odooEditor.toolbarHide();const value=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(this.wysiwyg.getValue());';
+            sub_filter 'codeview.val();this.props.record.update({[this.props.name]:value});' 'codeview.val();this.props.record.update({[this.props.name]:(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(value)});';
             # The `/@` links into the web client (issue #211, U-A2). `/@/<website
             # path>` is Odoo 18's route from a website page into the backend, and
             # it is the one route whose *tail* is itself a website path rather

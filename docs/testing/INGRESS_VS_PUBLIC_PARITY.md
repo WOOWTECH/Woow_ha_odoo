@@ -430,6 +430,49 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > `odoo18ce/tests/test_ingress_readonly_html_viewer.py`（含兩個 pattern 的測量，以及兩條路徑在
 > globals 有／無兩種情況下的執行）。`U-A6` 的探測清單**不**擴充，`innerHTML` 一途仍記 accepted。
 
+> **舊版 `web_editor` 編輯器（郵件設計器那一個）的十個改寫點已於 2026-10-01 補上（#238，ADR 0004
+> 的第二個 2026-10-01 附記），Live 重跑由 #243 統一執行。** Odoo 18 其實有**兩個** HTML 編輯器：
+> #210 與 #237 改的是 `html_editor`，而還有三個 field widget 跑的是 `web_editor` 裡的舊編輯器，它的
+> load／save 是**不同的運算式**，所以前面八條規則一條都不會命中。三個 widget 逐一在 pinned deb 內查
+> 證：`html_legacy`**沒有任何出貨 view 用它**（除了它自己的註冊之外，整包只出現在
+> `web_editor/static/tests/` 的四個測試檔：`html_field_tests.js`、`banner_tests.js`、`link_tests.js`、
+> `list_tests.js`）；`mass_mailing_html` 只有 `mass_mailing/views/mailing_mailing_views.xml` 一處（`body_arch`，
+> 郵件設計器，`mass_mailing` 在 `odoo_parity` 的 29 個模組內）；`account_payment_register_html` 是本輪
+> 新發現、issue 沒點名的第三個——`account` 繼承了舊欄位與它的樣板，所以 Register Payment 精靈走的是
+> 下面那條純文字唯讀路徑（它自己的值 `installments_switch_html` 是 computed 文案、不含 URL，今天不會
+> 逃逸，補的是**路徑**）。
+>
+> 六個「進」（都走 `__WOOW_INGRESS_MARKUP_IN_VALUE__`，因為這裡的值都是 `record.data[name]`，即 OWL
+> 的 `Markup` 物件）：`Wysiwyg.startEdition` 的第一次載入、`OdooEditor.resetContent`（換記錄／放棄／
+> 協作重設／換郵件主題／關閉 code view 都走這裡）、唯讀 iframe 的三個分支（refresh、第一次載入、
+> sandboxed preview；**寄出後**的 mailing 表單是唯讀且設了 `cssReadonly`，就是這條可達的畫面）、以及
+> 舊欄位樣板裡 `o_readonly` div 的 `t-out="markupValue"`。四個「出」：`getEditingValue()`（每一次存檔
+> 唯一都會經過的讀取點——**前綴要在這裡剝掉而不是在旁邊的 `record.update`**，否則 `updateValue` 會拿
+> 帶前綴的編輯值去跟不帶前綴的 ORM 值比較，每次 commit 都判定 dirty 並多寫一次，`currentEditingValue`
+> 還會讓 Wysiwyg 每次更新都重設內容）、mass_mailing 的 `const inlineHtml=editableClone.innerHTML;`
+> （`inline-field` 的 `body_html`，**第二個欄位**，完全不經過 `getEditingValue`；漏掉這個等於把
+> Supervisor token 連同郵件寄出去）、以及 code view 兩次 toggle 的兩個 `record.update`（受
+> `odoo.debug && options.codeview` 限制，沒有出貨 view 設這個 option，但它是 token **write**，所以兩行
+> 一起補而不另開 issue）。
+>
+> 郵件設計器的「iframe 裡的 iframe」：十個運算式**全都**跑在頁面本身的 realm，所以 shim 發佈的
+> globals 都拿得到。編輯器自己的 iframe 是 `document.write` 出來的、從來不是 HTTP 回應（shim 沒跑），
+> 而它載入的 `web_editor.wysiwyg_iframe_editor_assets` 既不含 `wysiwyg.js` 也不含 `OdooEditor.js`——這
+> 是量出來的，記在 `odoo18ce/tests/fixtures/bundles/README.md`。編輯器本體是 `_lazyloadWysiwyg` 用
+> `loadBundle` 取 `web_editor.backend_assets_wysiwyg`（`<script src>`，shim 會加前綴），所以改寫後的
+> 位元組確實送達；而那個 iframe 的 asset 之所以載得起來，是因為一般 HTML location 早就有
+> `"src": "/` → 加前綴這條規則在處理 `/web/bundle` 的 JSON。
+>
+> 兩個 pattern 從識別字中間開始（`editable.html(options.value);`、`codeview.val();…`），這是 nginx 的
+> 限制不是取巧：nginx 把參數裡的 `$` 當變數開頭、且無從轉義，未知變數會讓設定載不起來，所以
+> `this.$editable` / `$codeview` 的 `$` 留在比對範圍外。靜態層契約在
+> `odoo18ce/tests/test_ingress_legacy_html_editor.py`（十個 pattern 的測量、兩個「尾段」pattern 證明
+> 確實是完整運算式的尾段、改寫後的樣板重新用 XML parse 回來並確認 `account` 的 `t-inherit` xpath 仍
+> 命中、「沒有變更的 commit」在原始與改寫兩份位元組上各跑一次、以及十個點在 globals 有／無兩種情況下
+> 的執行）。`U-A6` 的探測清單**不**擴充，也沒有新的 global。**Live 重跑（由 #243 執行）**：在 Ingress
+> 下開啟並儲存郵件設計器的 body，兩面 `route_escape`／`http_4xx_5xx`／`console_error` 皆為 0，且
+> `mailing.mailing` 的 `body_arch` **與** `body_html` 存後仍是 root-relative。
+
 > **網站頁「Edit this content」連結的前綴重複（`U-A2`）已於 2026-09-30 修正（#211），Live 重跑待
 > Deploy。** `/@/<website path>` 是 Odoo 18 從網站頁進後台的 route，也是唯一一條**尾段本身就是網站
 > 路徑**的 route。Odoo 把已經帶前綴的 `location.pathname` 接進那個尾段，shim 的 `path()` 只認第 0 位

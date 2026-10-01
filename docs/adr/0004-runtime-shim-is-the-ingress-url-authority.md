@@ -635,10 +635,12 @@ prefixes `src` and `href`; both are display state, and closing them means
 teaching those comparisons about the prefix the way the `get_image_info`
 argument was taught. The readonly `HtmlViewer` was on this list -- none of the
 five sites and reaching markup twice over -- and is closed by the postscript
-below (#237). Also open: the legacy `web_editor` editor behind `html_legacy`
-and `mass_mailing_html`, which carries none of these expressions. None has been
-measured escaping -- except the peer snapshot, which is unmeasured rather than
-clean -- and each is its own issue.
+below (#237). The legacy `web_editor` editor behind `html_legacy` and
+`mass_mailing_html` was on it too, "which carries none of these expressions",
+and is closed by the second postscript below (#238) -- which also found a third
+widget on that editor the list never named. None has been measured escaping --
+except the peer snapshot, which is unmeasured rather than clean -- and each is
+its own issue.
 
 All five patterns were measured on 2026-09-30 across every bundle the control
 group serves; `odoo18ce/tests/fixtures/bundles/README.md` carries the counts.
@@ -766,3 +768,151 @@ with the globals present and absent, the iframe one with `hasFullHtml` set and
 with only `cssAssetId` set) plus the Live rerun after Deploy: a readonly html
 field carrying a root-relative `<img>` at
 `route_escape=0`/`http_4xx_5xx=0`/`console_error=0` on both surfaces.
+
+## Postscript (2026-10-01, the legacy `web_editor` editor)
+
+The first postscript's open list ended with "the legacy `web_editor` editor
+behind `html_legacy` and `mass_mailing_html`, which carries none of these
+expressions". That was literally true, and it is what made this the largest of
+the four: Odoo 18 ships **two** HTML editors, #210 and #237 rewrote
+`html_editor`, and the previous editor's load and save sites are *different
+expressions*, so not one of those eight rules fires on it. This closes it
+(#238) with ten more rewrites on the Ingress asset location.
+
+**Three widgets reach that editor, not two.** Read out of the pinned deb
+(`ODOO_DEB_VERSION` 18.0.20260930) rather than assumed, because the first
+acceptance question was which views are actually reachable:
+
+| Widget | Views in the package | Reachable |
+| --- | --- | --- |
+| `html_legacy` | **none** | no — outside its own registration every occurrence in the package is a test (`web_editor/static/tests/`: `html_field_tests.js`, `banner_tests.js`, `link_tests.js`, `list_tests.js`) |
+| `mass_mailing_html` | `mass_mailing/views/mailing_mailing_views.xml` (`body_arch`) | yes — the mail designer, on a module installed on `odoo_parity` |
+| `account_payment_register_html` | `account/wizard/account_payment_register_views.xml` (`installments_switch_html`) | yes — Register Payment's installments note |
+
+The third is this Iteration's finding and the issue did not name it: `account`
+subclasses the legacy field and `t-inherit`s its template, so Register Payment
+renders down the plain readonly path. Its own value is computed prose with no
+URL in it, so nothing escaped there; the path is rewritten because the path is a
+markup insertion of a record value, and the next value that arrives there is not
+this ADR's to predict. `html_legacy` is recorded as a widget registration with
+no view behind it -- a finding, not a screen.
+
+**The ten rewrites.** Six put the prefix on where markup becomes DOM, four take
+it off where a value becomes a record. Each occurs exactly **once** in the whole
+package; `odoo18ce/tests/fixtures/bundles/README.md` carries the per-bundle
+counts and the derivation.
+
+| | Expression | Site | Helper |
+| --- | --- | --- | --- |
+| 1 | `editable.html(options.value);` | `Wysiwyg.startEdition`, the editable's first load | `IN_VALUE` |
+| 2 | `this.editable.innerHTML=value;` | `OdooEditor.resetContent`, every later load | `IN_VALUE` |
+| 3 | `iframeTarget.innerHTML=this.props.record.data[this.props.name];` | the readonly iframe's refresh branch | `IN_VALUE` |
+| 4 | `iframeTarget.innerHTML=value;` | the readonly iframe's first load | `IN_VALUE` |
+| 5 | `cwindow.document.documentElement.innerHTML=value;` | the readonly iframe's sandboxed preview | `IN_VALUE` |
+| 6 | `<div t-ref="readonlyElement" class="o_readonly" t-out="markupValue"/>` | the plain readonly path, in the field's own template | `IN_VALUE` |
+| 7 | `getEditingValue(){…}` | the one read every save goes through | `OUT` |
+| 8 | `const inlineHtml=editableClone.innerHTML;` | mass_mailing's inlined `body_html` | `OUT` |
+| 9 | `this.wysiwyg.odooEditor.toolbarHide();const value=this.wysiwyg.getValue();` | the code view, opening | `OUT` |
+| 10 | `codeview.val();this.props.record.update({[this.props.name]:value});` | the code view, closing | `OUT` |
+
+All six insertions call `__WOOW_INGRESS_MARKUP_IN_VALUE__`, the helper the
+previous postscript added, and for the same reason: every value here is
+`this.props.record.data[name]`, an OWL `Markup` object, and `IN` returns a
+non-string as it came. The helper is type-preserving, so jQuery's `.html()` and
+OWL's `t-out` both see the shape they saw before -- which matters at rule 1,
+where jQuery branches on `typeof value === "string"` and takes a different code
+path for a `String` object.
+
+**Why the strip is on `getEditingValue` and not on the `record.update` beside
+it.** This is the one design decision in the ten. `updateValue` compares the
+editing value with the ORM value before writing; strip at the write instead and
+that comparison is prefixed-against-unprefixed, so **every** commit looks dirty,
+writes the field, and sets `currentEditingValue` to a value that makes the
+Wysiwyg reset its content on the next update. Stripping at the read keeps every
+comparison in the file apples-to-apples -- `updateValue`'s, `_isDirty`'s, and
+`Wysiwyg.isDirty`'s `_initialValue`, which is taken from the editable after the
+prefix is already on it. The rewrite keeps the method's body byte for byte
+inside an arrow IIFE, so `this` is unchanged and the class gains no member a
+subclass could collide with. The Static-tier test drives the unchanged commit on
+both sets of bytes, so the reason is executed and not asserted in prose.
+
+**Two of the ten patterns begin mid-identifier, and that is a constraint of
+nginx and not a shortcut.** nginx reads `$` in a parameter as the start of a
+variable, in the pattern as well as the replacement, and there is no escape for
+it; an unknown variable is a config nginx refuses to load, which the Build-tier
+probe would catch as an add-on that does not start. This editor is jQuery-era
+code, so `this.$editable.html(options.value);` and `$codeview.val();…` cannot be
+matched whole. Each pattern starts *after* the `$` and leaves `this.$` / `$`
+outside the match -- the same move the `${`-crossing rules of #211 make. A test
+asserts each pattern is really the tail of the full expression, because a suffix
+could otherwise be matching something else entirely.
+
+**Four writes, not one, which is the part worth carrying forward.** The other
+editor has a single write expression; this one has four, and three of them do
+not go through `getEditingValue`:
+
+- mass_mailing's `commitChanges` writes a **second field**. It clones the
+  editable into a `srcdoc` iframe, runs `toInline` over it and stores the result
+  as `body_html` (the `inline-field` option) with its own `record.update`. Miss
+  that one and a mailing is *sent* with the Supervisor token in every image URL
+  -- the only place in this family where a token leaves the installation.
+- `toggleCodeView` writes twice, once on each toggle. It is bounded exactly as
+  #240's twin is -- `codeview: Boolean(odoo.debug && options.codeview)`, and no
+  shipped view sets that option -- so it is a developer in debug mode and nobody
+  else. Covered here rather than filed, because it is a token *write* and two
+  lines, where #240's is a render escape.
+
+**What the mail designer's nested iframes turned out to be.** The issue asked
+for the globals to be shown reachable from where each rewritten expression runs,
+"the nested iframe of the mail designer included". The answer is that every one
+of the ten runs in the **page's** realm. The editor's own iframe is built by
+`_loadIframe` with `document.open(...).write(...)`, so it never was an HTTP
+response and no Runtime shim ran in it -- and the bundle it loads,
+`web_editor.wysiwyg_iframe_editor_assets`, carries neither `wysiwyg.js` nor
+`OdooEditor.js`, so no rewritten expression is in that realm at all. That is a
+measurement in the fixtures' README, beside the counts. The editor itself
+arrives through `web_editor.backend_assets_wysiwyg`, which `_lazyloadWysiwyg`
+fetches with `loadBundle` -- a `<script src>` the shim prefixes, so the request
+goes through the Ingress asset location and gets the rewritten bytes. The inner
+`srcdoc` iframe of rule 8 is only *read* from, by the parent's own code. And the
+iframe assets load at all only because the generic HTML location already
+prefixes `"src": "/` in `/web/bundle` JSON, which that rule's comment predicted
+for the website editor and which turns out to be what keeps this screen alive.
+
+**What is deliberately left alone on this editor.** The code view's `<textarea
+t-att-value="markupValue">` renders the record's stored bytes, which is what a
+source view should show -- on first render. `commitChanges` then refills it with
+`codeViewEl.value = this.wysiwyg.getValue()`, the editable's value and therefore
+prefixed, so after a commit the source view *does* show Supervisor-token URLs.
+Said precisely rather than left as the unconditional claim it first read as: it
+is cosmetic and nothing stores it, because rule 7 strips that same textarea where
+`getEditingValue` reads it and rule 10 strips it on the way out. Prefixing the
+`t-att-value` instead would make the source view lie about the record on the one
+render that is right today, so the escape stays where it is visible.
+`_onReadonlyClickChecklist` and `_onReadonlyClickStar`
+write a value the *server* computed (`/web_editor/checklist`,
+`/web_editor/stars`), so there is no prefix in it. `_toInline` round-trips
+through the editable and back through `setValue`, where rule 2 prefixes
+idempotently. And the legacy `loadImageInfo` shares `const
+relativeSrc=srcUrl.pathname;` with `html_editor`, so #210's fifth rule already
+covered it here -- which the first postscript noted and is now the one piece of
+this editor that was never broken.
+
+Group B stays uncovered, the Public origin stays untouched, `U-A6`'s probe list
+is not extended, and no new global is published: the three helpers of #210 and
+#237 were enough. What proves this fix is the Static-tier contract
+(`odoo18ce/tests/test_ingress_legacy_html_editor.py`: all ten patterns counted
+in excerpts derived through Odoo's own serve path, the two mid-identifier
+patterns proved to be tails of their expressions, the rewritten template parsed
+back as XML and checked to keep the attribute `account`'s `t-inherit` selects it
+by, the unchanged commit driven on both sets of bytes, and every one of the ten
+sites run in node with the globals present **and** absent) plus the Live rerun,
+which #243 carries for the whole family and whose row this Iteration refined
+rather than left to guess: the mail designer's body loaded and saved under
+Ingress at `route_escape=0`/`http_4xx_5xx=0`/`console_error=0` on both surfaces,
+with `mailing.mailing.body_arch` **and** `body_html` still root-relative
+afterwards -- both, because the inlined second field does not go through
+`getEditingValue` and is the one that leaves the installation -- plus a *sent*
+mailing's body, which is the readonly iframe's own screen and needs no save.
+Rules 9 and 10 have no screen on this database and are recorded there as
+unreachable with that reason rather than dropped.

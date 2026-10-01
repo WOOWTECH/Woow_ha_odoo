@@ -215,6 +215,104 @@ occurs three more times, all in the legacy `web_editor`'s html field
 assignment beside it, and `iframeTarget.innerHTML=value;`) — none of them is
 `=content;`, and that editor is ADR 0004's own open item.
 
+Derived 2026-10-01 from the pinned `.deb` (`ODOO_DEB_VERSION` 18.0.20260930)
+through Odoo's own serve path, for the **legacy** `web_editor` editor of issue
+#238 — the one ADR 0004's postscript said "carries none of these expressions",
+which is literally true: #210's and #237's eight patterns are all in
+`html_editor`, and this editor's own load and save sites are different
+expressions.
+
+| File | Bundle | What it holds |
+|---|---|---|
+| `legacy_wysiwyg_start_edition.js` | `web_editor.backend_assets_wysiwyg` | `Wysiwyg.startEdition`'s preamble, whose `this.$editable.html(options.value)` is the editable's first load |
+| `legacy_editor_reset_content.js` | `web_editor.backend_assets_wysiwyg` | `OdooEditor.resetContent`, the whole method — the load every *later* render goes through: a record switch, a discard, the collaboration stale-document reset, a mail theme switch, and the code view on its way back off |
+| `legacy_readonly_iframe.js` | `web.assets_backend` | the legacy field's `_setupReadonlyIframe`, the whole method — which reaches markup three times, once per branch |
+| `legacy_html_field_template.js` | `web.assets_backend` | the whole `registerTemplate("web_editor.HtmlField", …)` call the xml bundle appends — the plain readonly path, `t-out="markupValue"` on the `o_readonly` div |
+| `legacy_html_field_editing_value.js` | `web.assets_backend` | `HtmlField.getEditingValue` and the `updateValue` beside it that writes what it returns |
+| `legacy_html_field_code_view.js` | `web.assets_backend` | `HtmlField.toggleCodeView`, the whole method — two `record.update` calls that do not go through `getEditingValue` |
+| `mass_mailing_inline_field.js` | `web.assets_backend` | the tail of `MassMailingHtmlField.commitChanges`, which reads the inlined clone out of a `srcdoc` iframe and stores it as `body_html` |
+| `legacy_editor_bundle_membership.json` | — | the manifest asset entries of `web_editor.wysiwyg_iframe_editor_assets`, `web_editor.backend_assets_wysiwyg` and `web_editor.assets_wysiwyg`, plus every bundle they include, so a test can resolve bundle membership with no package present |
+
+Measured 2026-10-01 across the eighteen bundles the control group serves on that
+route. Each row is the `sub_filter` source as the template ships it, byte for
+byte, and each occurs **once** in the whole package — in exactly one file:
+
+| Pattern | Bundles that carry it, once each |
+|---|---|
+| `editable.html(options.value);` | `web_editor.assets_wysiwyg`, `web_editor.backend_assets_wysiwyg` |
+| `this.editable.innerHTML=value;` | the same two |
+| `iframeTarget.innerHTML=this.props.record.data[this.props.name];` | `web.assets_backend`, `web.assets_web`, `web.assets_web_print` |
+| `iframeTarget.innerHTML=value;` | the same three |
+| `cwindow.document.documentElement.innerHTML=value;` | the same three |
+| `<div t-ref="readonlyElement" class="o_readonly" t-out="markupValue"/>` | the same three |
+| `getEditingValue(){const codeViewEl=this._getCodeViewEl();if(codeViewEl){return codeViewEl.value;}else{if(this.wysiwyg){return this.wysiwyg.getValue();}else{return null;}}}` | the same three |
+| `const inlineHtml=editableClone.innerHTML;` | the same three |
+| `this.wysiwyg.odooEditor.toolbarHide();const value=this.wysiwyg.getValue();` | the same three |
+| `codeview.val();this.props.record.update({[this.props.name]:value});` | the same three |
+
+The eighteen are the sixteen of #237's table plus the two this family added:
+`web.assets_backend`, `web.assets_backend_lazy`, `web.assets_web`,
+`web.assets_web_print`, `web.assets_frontend`, `web.assets_frontend_lazy`,
+`web.assets_frontend_minimal`, `web.report_assets_common`,
+`web_editor.assets_wysiwyg`, **`web_editor.backend_assets_wysiwyg`**,
+**`web_editor.wysiwyg_iframe_editor_assets`**, `web_editor.assets_media_dialog`,
+`website.assets_wysiwyg`, `website.assets_editor`,
+`mass_mailing.assets_wysiwyg`, `im_livechat.assets_embed_external`,
+`html_builder.assets` and `project.webclient`. Every bundle not named in a row
+above carries that row's pattern **zero** times.
+
+Two of those memberships are the point rather than bookkeeping:
+
+- **`web_editor.backend_assets_wysiwyg`** is where the first two patterns arrive
+  in the backend. The legacy field does not ship the editor in
+  `web.assets_backend`; `_lazyloadWysiwyg` fetches that bundle with
+  `loadBundle`, which builds a `<script src>` the Runtime shim prefixes, so the
+  request goes through the Ingress asset location and gets the rewritten bytes.
+  `web_editor.assets_wysiwyg` is the frontend twin and carries the same two.
+- **`web_editor.wysiwyg_iframe_editor_assets`** carries **none** of the ten, and
+  that is the answer to #238's question about the mail designer's nested
+  iframes. It is the one membership claim here that is **executed** and not only
+  recorded: `legacy_editor_bundle_membership.json` holds the manifest asset
+  entries of that bundle, of the two that do carry the editor, and of every
+  bundle those include -- closed, so membership resolves with no package present
+  -- and `test_ingress_legacy_html_editor.py` resolves `wysiwyg.js` and
+  `OdooEditor.js` against it both ways. An Odoo bump that moved either file into
+  that bundle would put a rewritten expression in a realm where no shim ran, with
+  every other test still green, which is why this one does not live in prose. That bundle is the one `_loadIframe` injects into the editor's own
+  iframe — a document built with `document.write`, which never was an HTTP
+  response and in which no Runtime shim ran. It holds neither
+  `web_editor/static/src/js/wysiwyg/wysiwyg.js` nor
+  `…/odoo-editor/src/OdooEditor.js`, so no rewritten expression runs in that
+  realm. Every one of the ten runs in the page's realm, where the globals are.
+  (The inner `srcdoc` iframe of `commitChanges` is only *read* from, by the
+  parent's own code.)
+
+**How each was counted.** Reproducing `addons/base/models/assetsbundle.py` over
+every `*/static/src/**/*.{js,xml}` file in the pinned package: for JavaScript,
+`rjsmin(transpile_javascript(url, source))`; for a template, `XMLAsset._fetch_content`'s
+unwrap followed by `generate_xml_bundle`'s `etree.tostring` inside
+`registerTemplate(name, path, template)`. Bundle membership comes from
+`ast.literal_eval` on each addon's `__manifest__.py`, walking `d["assets"]` with
+`**/` matching zero or more directories and honouring `remove` and `replace`.
+The same derivation reproduces #237's two fixtures byte for byte, which is how
+it was checked before any count here was trusted.
+
+**Two patterns begin mid-identifier, and that is deliberate.** nginx reads `$`
+in a parameter as the start of a variable and there is no escape for it, so
+`this.$editable.html(options.value);` and `$codeview.val();…` cannot be matched
+whole — an unknown variable is a config nginx refuses to load. Each pattern
+starts *after* the `$` and leaves `this.$` / `$` outside the match, which is the
+same move the `${`-crossing rules make elsewhere in the template.
+`test_ingress_legacy_html_editor.py` asserts each is really the tail of the full
+expression, because a suffix could otherwise be matching something else.
+
+`getEditingValue`'s whole body is the anchor rather than a line inside it,
+because the strip has to be the *last* thing that happens to the value before
+`updateValue` compares it with the record's: strip at the `record.update`
+instead and the comparison is prefixed-against-unprefixed, so every commit looks
+dirty and writes the field. The seven JavaScript excerpts are whole methods or
+self-contained regions because the tests execute them.
+
 ## Re-capturing
 
 The bundles are public, so no login is needed; the asset route redirects a
