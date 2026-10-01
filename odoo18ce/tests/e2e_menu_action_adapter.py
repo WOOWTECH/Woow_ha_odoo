@@ -373,7 +373,7 @@ def session_database(reported: str | None) -> str:
 # cites the write in upstream Odoo at the version odoo18ce/Dockerfile pins --
 # 18.0.20260930, `ODOO_DEB_VERSION` -- read from that `.deb` under
 # `usr/lib/python3/dist-packages/odoo/addons/`; a path with no module in front
-# of it is under `website_sale/`, the one module audited route by route.
+# of it is under `website_sale/`, the module #212 audited route by route.
 #
 # That audit covers every `type='http'` route of `website_sale` the navigation
 # itself can reach -- every `@route` of `controllers/`, including the bare
@@ -400,7 +400,9 @@ def session_database(reported: str | None) -> str:
 # answered: `page.goto` follows a 30x, so a route that redirects into a listed
 # one writes behind the guard -- no `website_sale` route does (the set is closed
 # under its own redirects), which is a property of today's Odoo and not of this
-# list.
+# list. `project`'s two outdated portal prefixes are redirects of exactly that
+# shape and are listed below for it; they are the ones that were found, not the
+# ones that exist.
 #
 # One write outside the list was read and left outside it:
 # `website/models/ir_http.py:188-205` creates or touches a `website.visitor` on
@@ -416,12 +418,80 @@ def session_database(reported: str | None) -> str:
 # `/odoo/action-<id>`, whose response is the web client bootstrap and not a
 # tracked page, so it never makes this write.)
 #
-# And the list is not a complete audit of every Odoo module: `website_sale` was
-# audited route by route, and the one `sale` route below is the one `sale` route
-# that was read, not a finding that `sale`'s portal holds no others. A known
-# write belongs on the list whatever module holds it -- an entry bounds it, and
-# leaving it off to keep the list tidy would leave the hole this Issue is about
-# -- but the absence of a `sale` route from the list says nothing.
+# Most of the `/my/...` keys below are one write seen from several routes.
+# `_get_page_view_values` (portal/controllers/portal.py:437) calls
+# `get_records_pager`, which at :93 and :100 calls `_portal_ensure_token()` on
+# the record either side of this one in the session's browsing history, and
+# portal/models/portal_mixin.py:33 writes a fresh `access_token` on each. Every
+# portal document page calls it, on a GET with no query and no form. Each of
+# those keys ends in a slash for that reason: the write is on the document page,
+# while the list page above it writes nothing and is a parity path of its own.
+# `get_records_pager` writes only when the record is in the session's history
+# (portal/controllers/portal.py:85), which the list page fills -- so whether a
+# given navigation writes depends on what the run opened before it. A list keyed
+# on a route cannot see the session, and a guard that asked would be guessing, so
+# the prefix bounds the page either way.
+#
+# A known write belongs on the list whatever module holds it -- an entry bounds
+# it, and leaving it off to keep the list tidy would leave the hole #212 was
+# about. Two kinds of entry below are deliberately wider than what a target can
+# ask for. A write reachable only through a query (`?confirm=reminder`,
+# `?report_type=pdf`) is bounded anyway, because `get_writing_route` keys on the
+# path and `parse_targets` already refuses every query but `view_type=`. And a
+# route whose only write is the one it redirects into is bounded at the route
+# navigated, because `page.goto` follows the 30x.
+#
+# The portal audit #226 asked for read, `@route` by `@route`, every portal
+# controller of the installed modules and their dependency closure at the pinned
+# Odoo: portal (portal.py, mail.py, attachment.py, message_reaction.py,
+# thread.py, web.py), sale, sale_management, account (portal.py,
+# download_docs.py, terms.py), account_payment, project, hr_timesheet, purchase,
+# payment (portal.py, post_processing.py), website_payment, digest, portal_rating
+# and rating. What it read and found clean, so the next audit need not read it
+# again: the portal home and its counters (`/my`, `/my/home`, `/my/counters` --
+# `request.session` only), `/my/account` (portal/controllers/portal.py:208) and
+# `/my/security` (:262), which write on their POST branch only; every list page
+# (`/my/orders`, `/my/quotes`, `/my/invoices`, `/my/purchase`, `/my/rfq`,
+# `/my/projects`, `/my/tasks`, `/my/timesheets`); the project-sharing page
+# (project/controllers/portal.py:186, which renders the web client); `/terms`;
+# the payment result pages (`/payment/confirmation`, `/payment/status`) and
+# `/donation/pay`, whose `payment_utils.generate_access_token` is an hmac and not
+# a record and whose only other write is `request.session`; the downloads
+# (`/account/download_invoice_attachments`, `/account/download_invoice_documents`,
+# `/my/orders/<id>/document/<id>`), whose PDF path renders without storing
+# because the report records read carry no `attachment`
+# (base/models/ir_actions_report.py:1037 is what the flag gates); the chatter's
+# author avatar (portal/controllers/mail.py:25, which streams an image through
+# `ir.binary` and writes nothing); and both rating pages --
+# rating/controllers/main.py:27 records that `/rate/<token>/<rate>` stopped
+# writing on GET, and `/rate/<token>/submit_feedback` writes on its POST branch
+# only (:60). A `type='json'` route and a `methods=['POST']` one are
+# outside this audit the way they are outside `website_sale`'s: a GET does not
+# reach them.
+#
+# Two routes that sweep read are clean on a bare GET and not clean in general,
+# which is a weaker thing than the clean list above claims of its entries.
+# `/payment/pay`
+# (payment/controllers/portal.py:37) and `/my/payment_method` (:193) end in
+# `_get_extra_payment_form_values`, which `account_payment` overrides
+# (account_payment/controllers/payment.py:114) to store an `access_token` on the
+# invoice at :149 whenever the request names an `invoice_id` -- a `?invoice_id=`
+# in the query and nothing else. They are off the list because `parse_targets`
+# refuses every query but `view_type=`, which is a narrower bound than the path:
+# loosen that rule and these two become entries.
+#
+# Where this audit stopped, for the next one. Of `mail` it read only the two
+# controllers the entries above cite -- controllers/mail.py and
+# controllers/discuss/public_page.py -- and not the other eight, so `mail` is the
+# module to start the next sweep on. Untouched: the non-portal controllers of
+# every other module (website's `main.py` and `form.py`, and the controllers of
+# web, web_editor, html_editor, survey, event, im_livechat, point_of_sale,
+# mass_mailing, product, stock, delivery, crm, calendar, bus, auth_signup and the
+# hr_* modules), and the four add-on modules that are not in the pinned `.deb` at
+# all -- `ecpay_invoice_tw`, `ecpay_invoice_website`, `payment_ecpay` and
+# `payment_ecpay_ecpg`. `/chat/` and `/meet/` below are a warning about what that
+# leaves: they were found only because a review round went looking outside the
+# portal, and they are the first writes on this list that no query rule bounds.
 GET_WRITING_ROUTES = {
     # controllers/main.py:796 unlinks the cart lines of archived products, and
     # :785-786 rewrites an abandoned cart's lines onto the session cart and
@@ -468,14 +538,95 @@ GET_WRITING_ROUTES = {
     # read: sale/controllers/portal.py:270 `_portal_ensure_token()` stores a
     # fresh `access_token` on any order `_has_to_be_paid()`, and :168 posts a
     # "Quotation viewed by customer" note on a draft or sent order a portal user
-    # opens with a token. The key ends in a slash because the write is on
+    # opens with a token. It also writes with neither of those: :199 reaches the
+    # portal pager, which stores an `access_token` on the orders either side of
+    # this one. The key ends in a slash because the write is on
     # `/my/orders/<int:order_id>` (:123) and not on `/my/orders` itself (:110),
     # which only fills `request.session`. It over-refuses two siblings that write
     # nothing -- `/my/orders/page/<n>` (:110) and `/my/orders/<id>/document/<n>`
     # (:361) -- because no static prefix separates an order id from them, and
-    # over-refusing is the direction a guard errs in. `sale`'s portal has more
-    # routes than these and they have not been read; see the note above the list.
+    # over-refusing is the direction a guard errs in.
     "/my/orders/": "stores an access_token on an unpaid order and posts a viewed-by-customer note",
+    # `account`'s invoice page: account/controllers/portal.py:153 renders
+    # `/my/invoices/<int:invoice_id>` through `_invoice_get_page_view_values`
+    # (:47), which reaches the portal pager and stores an `access_token` on the
+    # invoices either side of this one. Slash-terminated for the same reason as
+    # the orders key: `/my/invoices` (:81) only fills `request.session`. It
+    # over-refuses `/my/invoices/page/<n>` (:81), which writes nothing.
+    "/my/invoices/": "stores an access_token on the neighbouring invoices through the portal pager",
+    # Under that prefix, and its own entry because the longest match is what a
+    # refusal reports and this write is not the one above: the overdue-invoices
+    # page (account_payment/controllers/portal.py:53) asks the company for a
+    # batch payment reference at :85 whenever a partner has more than one overdue
+    # invoice, and account/models/company.py:272 takes it from an `ir.sequence`
+    # with `next_by_id()`, which bumps the sequence -- a write on the company's
+    # numbering and not on any invoice.
+    "/my/invoices/overdue": "bumps the company's batch payment sequence",
+    # `purchase`'s order page: purchase/controllers/portal.py:145 renders
+    # `/my/purchase/<int:order_id>` through :110, which reaches the portal pager.
+    # With a query it writes more: :158, :160 and :162 take `?confirm=` as the
+    # vendor's answer and flip `mail_reminder_confirmed` /
+    # `mail_reception_confirmed` / `mail_reception_declined` with a chatter note
+    # (purchase/models/purchase_order.py:1125, :1143 and :1152), and the last one
+    # also schedules an activity (:1153). `/my/purchase` (:126) and `/my/rfq`
+    # (:112) write nothing; `/my/purchase/page/<n>` is over-refused.
+    "/my/purchase/": "stores an access_token on the neighbouring purchase orders and answers ?confirm= on the order",
+    # `project`'s project page and the task pages under it:
+    # project/controllers/portal.py:209 calls `generate_access_token()` on every
+    # attachment of the task it is about to render, and
+    # base/models/ir_attachment.py:691 writes an `access_token` on each; :125 and
+    # :197 both reach the portal pager through :58 and :304. `/my/projects` (:69)
+    # writes nothing. Over-refuses `/my/projects/<id>/page/<n>` (:125),
+    # `/my/projects/<id>/project_sharing` (:186) and the subtask and recurrent
+    # task lists (:214, :247), none of which write.
+    "/my/projects/": "stores access_tokens on a task's attachments and on the neighbouring records",
+    # `project`'s standalone task page: project/controllers/portal.py:556 is the
+    # same `generate_access_token()` write (ir_attachment.py:691), and :561
+    # reaches the portal pager through :304. `/my/tasks` (:514) writes nothing.
+    "/my/tasks/": "stores access_tokens on a task's attachments and on the neighbouring tasks",
+    # The outdated spellings of the two above, and on the list because of what
+    # they redirect into: project/controllers/portal.py:110 and :118 answer
+    # `/my/project/...` and `/my/task/...` with a 30x onto `/my/projects/...` and
+    # `/my/tasks/...`, and `page.goto` follows a 30x, so the landing page's write
+    # is this route's write. Both keys end in a slash: `/my/task` redirects onto
+    # the task list page, which writes nothing, and `/my/project` is not a route.
+    "/my/project/": "redirects onto /my/projects/<id>, which writes",
+    "/my/task/": "redirects onto /my/tasks/<id>, which writes",
+    # `mail`'s route, which `portal` overrides to add the portal layout
+    # (portal/controllers/mail.py:172, a bare `@route()` over
+    # mail/controllers/mail.py:217 -- `type='http'`, no `methods`, so a GET
+    # reaches it): mail/controllers/mail.py:225 unsubscribes the partner the
+    # query names from the record's followers, which unlinks a `mail.followers`
+    # row. The token check in front of it (:219) is not a write bound; a wrong
+    # token raises instead, and a guard errs towards refusing.
+    "/mail/unfollow": "unsubscribes a follower from the record",
+    # `digest`'s two GET-reachable routes, one key because the prefix is static
+    # and the digest id is not: digest/controllers/portal.py:25 takes
+    # `methods=['GET', 'POST']` and unsubscribes a user at :51 or :54
+    # (digest/models/digest.py:119 writes `user_ids`), and :62 carries no
+    # `methods` at all and sets the digest's periodicity at :70
+    # (digest/models/digest.py:128). The POST-only one-click route (:14) is under
+    # the same prefix and is refused with them, which costs nothing: a GET never
+    # reaches it.
+    "/digest/": "unsubscribes a user from a digest and sets the digest's periodicity",
+    # `mail`'s Discuss public pages, and the only writes found outside a portal
+    # controller that a *path* alone reaches -- no query, so the rule that bounds
+    # `?confirm=` and `?report_type=` does not reach them, and the Runtime shim
+    # rewrites the invitation link that leads here
+    # (rootfs/etc/nginx/nginx.conf.template:591), so it is a route this product
+    # navigates. mail/controllers/discuss/public_page.py:42 takes the channel's
+    # uuid in the path and reaches :96 `_find_or_create_persona_for_channel`,
+    # which creates a `mail.guest` and its `discuss.channel.member` for whoever
+    # opened the link; :14 and :27 take a token that names no channel yet and
+    # create the `discuss.channel` itself at :69 -- and on a concurrent insert
+    # the handler calls `request.env.cr.commit()` at :81, which a rollback cannot
+    # take back. The `/chat/...` creation is gated on the `mail.chat_from_token`
+    # config parameter (:63) and the guest creation on nothing but the uuid. Both
+    # keys end in a slash because neither `/chat` nor `/meet` is a route.
+    # `/discuss/channel/<id>` (:52) renders the same page without the persona
+    # step and writes nothing, which is why the key is not `/discuss/`.
+    "/chat/": "creates a mail.guest and a discuss.channel.member, and a discuss.channel from an unknown token",
+    "/meet/": "creates a discuss.channel from an unknown token, and a mail.guest in it",
 }
 
 
@@ -546,10 +697,11 @@ def require_write_database(targets: Iterable[OpenTarget], database: str | None) 
     Both are refused here, before the first screen is opened, so a misaimed run
     is a configuration error and not a mutated database.
 
-    Not every write a run can make is one of those two -- `website_sale` is the
-    one module audited route by route, and a page writes through its own
-    templates and JavaScript as well. `GET_WRITING_ROUTES` says what is outside
-    it and why. This guard is as good as that list, not better.
+    Not every write a run can make is one of those two -- the audits behind the
+    list are `website_sale`'s controllers and the portal controllers of the
+    installed modules, and a page writes through its own templates and
+    JavaScript as well. `GET_WRITING_ROUTES` says what is outside it and why.
+    This guard is as good as that list, not better.
 
     `database` is what the session reported it is on. `None` -- it reported
     nothing -- refuses the write like any other wrong answer: a run that cannot

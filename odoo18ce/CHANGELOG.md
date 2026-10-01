@@ -3,6 +3,39 @@
 ## Unreleased
 
 ### Added
+- `open`'s write bound now covers the **portal** controllers of every module the
+  add-on installs, not just `website_sale` plus the one `sale` route #212 read on
+  the way. `GET_WRITING_ROUTES` went from 11 prefixes to 22, each new one citing
+  the write it was read from in the pinned Odoo: `/my/invoices/`,
+  `/my/purchase/`, `/my/projects/` and `/my/tasks/` (the portal pager stores an
+  `access_token` on the records either side of the one being viewed --
+  `portal/controllers/portal.py:93`, `:100`, `portal/models/portal_mixin.py:33`
+  -- and the project and task pages also token every attachment they are about to
+  render, `project/controllers/portal.py:209` and `:556`),
+  `/my/invoices/overdue` (which bumps the company's batch payment sequence,
+  `account/models/company.py:272`), `/my/project/` and `/my/task/` (the outdated
+  spellings, which redirect into the two writing pages, and `page.goto` follows a
+  30x), `/mail/unfollow` (`mail/controllers/mail.py:225` unlinks a follower) and
+  `/digest/` (which unsubscribes a user and sets a digest's periodicity on a
+  plain GET).
+- `/chat/` and `/meet/` are bounded too, and they are the first entries on that
+  list that **no query rule bounds**: `mail`'s Discuss public pages create a
+  `mail.guest` and a `discuss.channel.member` from a channel uuid in the path
+  alone (`mail/controllers/discuss/public_page.py:96`), and create the
+  `discuss.channel` itself from an unknown token (`:69`) -- with a
+  `request.env.cr.commit()` on the concurrent-insert path (`:81`) that a rollback
+  cannot take back. The Runtime shim already rewrites the invitation link that
+  leads there (`nginx.conf.template:591`), so it is a route this product
+  navigates. Every other GET write the audit deferred needs a query that
+  `parse_targets` refuses; these two need nothing.
+- The list's comment now records which controllers were read and **found clean**
+  -- every portal list page, `/my/account` and `/my/security` (whose writes are
+  POST-only), the payment result pages, the downloads, the chatter avatar and
+  both rating pages -- which two are clean only on a bare GET (`/payment/pay` and
+  `/my/payment_method` store an invoice token when the query names an
+  `invoice_id`, `account_payment/controllers/payment.py:149`), and where the
+  audit stopped, so the next one does not re-read the same routes and knows to
+  start on `mail`. Guard-only; no behaviour change and no version bump.
 - The static tier measures how much of nginx's 4096-byte configuration token
   buffer the Runtime shim's prefix script has left, and fails while there is
   still room to act. That script is one single-quoted parameter, and every
@@ -16,11 +49,49 @@
   substitutions applied, holds a 64-byte reserve on the shim, says in the
   failure that the way back is to move a part of the script into a `map` of
   its own (nginx concatenates variables after parsing, so a reference costs
-  only its own length), pins the limit against a real nginx so the constant
-  cannot drift from the nginx the image ships, and refuses any comment that
-  states the headroom in prose -- which is the shape the stale claims took.
-  The two comments that carried a figure now point at the measurement. No
-  behaviour change and no version bump.
+  only its own length), pins the limit against a real nginx, and refuses any
+  comment that states the headroom in prose -- which is the shape the stale
+  claims took. The two comments that carried a figure now point at the
+  measurement.
+- A review round found two overstatements in that measurement, both now
+  corrected. The nginx it drives is the one on the **Static tier**'s PATH,
+  installed from the runner's base and not from the image's, so it pins the
+  constant against a real nginx without proving it is the nginx the image
+  ships; a differing buffer in the image surfaces on a **Deploy**, as an
+  add-on that does not start. And the budget's worst case for
+  `%%CANONICAL_URL%%` was an assumption, not a bound: `public_url` is an
+  add-on option, and cont-init's check reads the value's shape and never its
+  length, so an origin of a legal shape but 4000 bytes long would have been
+  rendered into a parameter nginx refuses -- the exact failure the budget
+  exists to catch early, reported as headroom. `10-odoo-config.sh` now caps
+  the **Canonical URL** at the budgeted 2048 bytes and drops an over-long
+  value the way it already drops a misshapen one (a warning, and a **Runtime
+  shim** that publishes nothing), and a test reads the cap out of the script
+  so the two numbers cannot drift apart. That cap is the one behaviour change
+  here; it needs no version bump of its own.
+- The **Build tier** now reads the gateway config with the nginx the add-on
+  ships. Correcting the docstring above said where the measurement stops; this
+  moves the stopping point. `tests/in_image/gateway_config_loads.py` runs
+  inside the image this build produced and checks three things against
+  `/usr/sbin/nginx` there: that the token buffer is the size the budget assumes
+  (a token at the limit parses, one byte more does not), that the shipped
+  template loads for every start shape -- `public_url` set, unset, and unset
+  with no LAN address -- for an empty **Generated rewrite** file and a
+  populated one, and that a **Canonical URL** at the new cap still loads while
+  one far over the cliff does not. Every number comes from the file that states
+  it: `TOKEN_LIMIT` from the budget test, `CANONICAL_URL_MAX` from the shipped
+  cont-init. So the budget's worst case for the Canonical URL is now verified
+  against a real nginx rather than assumed, and a differing buffer in the
+  image's nginx fails a pull request instead of a **Deploy**.
+- The renderer behind both tiers exists once, in `tests/gateway_render.py`
+  (stdlib only, because the probe imports it inside the image where pytest and
+  PyYAML are not). `test_dual_gateway.py` renders through it, so the **Static
+  tier** and the Build tier cannot measure different files.
+  `tests/test_gateway_config_in_image.py` proves the probe's own logic against
+  the runner's nginx -- including both ways it goes red, each injected from the
+  real defect it stands for -- and pins the Build-tier step to the
+  unconditional amd64 build, this build's image, and a timeout. A probe that
+  silently broke would otherwise pass in the one tier nothing watches.
 
 ### Changed
 - The weekly bump bot proposes the Debian **base-image** bump in a pull
