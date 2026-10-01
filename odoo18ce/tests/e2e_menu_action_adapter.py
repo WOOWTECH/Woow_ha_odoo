@@ -491,7 +491,44 @@ def session_database(reported: str | None) -> str:
 # cares about -- `type='http'` and not `methods=['POST']`, so a plain GET reaches
 # them: discuss/binary.py:12, :35 and :65, discuss/rtc.py:111 and
 # discuss/voice.py:10. All five carry `readonly=True`, which is not a write
-# bound, so all five still need their bodies read. #247 holds that sweep.
+# bound. #247 read all five out of the pinned `.deb`, and three of them write --
+# not in their bodies, which are clean, but in a decorator they share. The
+# entries below cite it; what it means for the next sweep is that reading a
+# `mail` route means reading its decorators first.
+#
+# That write survives `readonly=True` for a second reason, beyond the rollback
+# and re-run at odoo/http.py:2157-2168 this comment already records. Its guard is
+# `not req.env.cr.readonly` (mail/models/discuss/mail_guest.py:30), and on this
+# add-on that cursor is not readonly: `Registry.cursor(readonly=True)` hands back
+# a read/write cursor unless `_db_readonly` is set (odoo/modules/registry.py:1015
+# and :1028), which happens only when a `db_replica_host` is configured
+# (registry.py:166), and cont-init writes none
+# (rootfs/etc/cont-init.d/10-odoo-config.sh:97-100). So a guard that reads as a
+# write bound on a replica holds nothing here, and no `ReadOnlySqlTransaction` is
+# raised to say so. A `readonly=True` route is not just re-run after a write --
+# on this product it was never on a read-only cursor to begin with.
+#
+# Read clean, so the next sweep need not read them again: the two worklet routes
+# (discuss/rtc.py:111 and discuss/voice.py:10), which answer with a file read off
+# the disk through `file_open`, reach no model at all and carry no decorator.
+# Clean too, and the reason the three above are entries rather than clean: the
+# bodies of all three only search a channel and stream an attachment through
+# `ir.binary`, which writes nothing at the pinned Odoo -- no create, write or
+# unlink in base/models/ir_binary.py, `_get_image_stream_from` (:160) resizes in
+# memory, and `ir.attachment`'s `validate_access` (:723) and `_to_http_stream`
+# (:805) write nothing either.
+#
+# The same sweep read the two routes in controllers/mail.py that #226 counted as
+# read while recording only `/mail/unfollow` out of it: `/mail/view` (:182) and
+# `/mail/message/<id>` (:237). Both write, both are entries below.
+#
+# Where #247 stopped. The decorator is not `mail`'s to carry alone -- `im_livechat`
+# (controllers/main.py:76, :110, :215, :248, :255 and :261, chatbot.py:11, :22,
+# :38 and :112, rtc.py:12, attachment.py:14), `cloud_storage`
+# (controllers/attachment.py:11) and `website_livechat` (models/website.py:14)
+# apply it too, and `im_livechat` is installed. Those are the next thing to read,
+# and reading them is one `type=`/`methods=` check per route rather than 13
+# bodies, because the write is already read.
 #
 # Untouched: the non-portal controllers of every other module (website's
 # `main.py` and `form.py`, and the controllers of web, web_editor, html_editor,
@@ -634,9 +671,60 @@ GET_WRITING_ROUTES = {
     # config parameter (:63) and the guest creation on nothing but the uuid. Both
     # keys end in a slash because neither `/chat` nor `/meet` is a route.
     # `/discuss/channel/<id>` (:52) renders the same page without the persona
-    # step and writes nothing, which is why the key is not `/discuss/`.
+    # step, which is why the key is not `/discuss/`. This comment also said that
+    # page writes nothing: it carries `@add_guest_to_context` (:53), so it writes
+    # what the four keys below write, and `/discuss/channel/` bounds it there.
     "/chat/": "creates a mail.guest and a discuss.channel.member, and a discuss.channel from an unknown token",
     "/meet/": "creates a discuss.channel from an unknown token, and a mail.guest in it",
+    # #247's sweep of `mail`'s other 16 controllers, and one write answers for
+    # the first three keys: `@add_guest_to_context`
+    # (mail/models/discuss/mail_guest.py:18) updates the guest's timezone at
+    # :30-33, through the raw `UPDATE mail_guest` at :105-114, on every route it
+    # decorates. It needs two cookies and no query -- the `dgid` a Discuss public
+    # page above left behind (:136) and a `tz` holding a name `pytz` knows (:90).
+    # Nothing in the pinned Odoo sets `tz` itself, so the write is dormant on a
+    # browser that has only ever been here; under Ingress the page is served from
+    # the Home Assistant origin, where another application's cookie reaches Odoo.
+    # These are keys and not a "clean on a bare GET" note like `/payment/pay`
+    # above for that reason: that one is held off the list by a rule
+    # `parse_targets` enforces, and a cookie by nothing.
+    #
+    # The channel pages: the attachment stream and the image stream
+    # (mail/controllers/discuss/binary.py:12 and :35, decorated at :19 and :45)
+    # and the public page `/discuss/channel/<id>` (discuss/public_page.py:52,
+    # decorated at :53). The POST-only JSON routes under the same prefix
+    # (discuss/channel.py) are refused with them, which costs nothing: a GET
+    # never reaches one. `/discuss/channel` is not a route, hence the slash.
+    "/discuss/channel/": "updates a guest's timezone through mail's guest-context decorator",
+    # `web`'s image route, which `mail` re-exposes to put that decorator on it:
+    # discuss/binary.py:65 is a bare `@route()` whose body is a plain `super()`
+    # call (:68) and whose routing is web/controllers/binary.py:164-182 -- 17
+    # paths, `type='http'`, `readonly=True` and no `methods`, so a GET reaches
+    # every one of them -- with the decorator at :66. No trailing slash, because
+    # `/web/image` itself is the first of the 17.
+    "/web/image": "updates a guest's timezone through mail's guest-context decorator",
+    # `mail`'s message redirect, in the controller #226 counted as read while
+    # recording only `/mail/unfollow` out of it: mail/controllers/mail.py:237
+    # carries the decorator at :238, and it redirects through
+    # `_redirect_to_record` (:72), which is the write on the key below. Both
+    # writes, one route. Slash-terminated because `/mail/message` is not a route;
+    # the JSON routes under it (`/mail/message/post`, `/mail/message/reaction`,
+    # `/mail/message/translate`, `/mail/message/update_content`) are refused with
+    # it and a GET never reaches one.
+    "/mail/message/": "updates a guest's timezone and stores an access_token on the record it redirects to",
+    # The same controller's notification entry point (mail/controllers/mail.py:182),
+    # which carries no decorator and writes anyway: `_redirect_to_record` asks the
+    # record for its access action (:129 and :131), and
+    # portal/models/portal_mixin.py:68 overrides that for a share user -- which an
+    # `auth='public'` visitor is -- to return `_get_share_url()` (:99), whose
+    # `_portal_ensure_token()` (:59) writes a fresh `access_token` at :33 on any
+    # portal record that has none. The portal pager's write, reached from a
+    # notification link instead of a portal page. An internal user's branch ends
+    # in `get_formview_action` (base/models/ir_ui_view.py:2427), which writes
+    # nothing -- so whether this route writes depends on who is logged in, the way
+    # the pager's depends on what was opened before it, and the prefix bounds the
+    # route either way.
+    "/mail/view": "stores an access_token on the record the notification link names",
 }
 
 

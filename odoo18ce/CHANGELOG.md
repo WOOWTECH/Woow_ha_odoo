@@ -2,6 +2,76 @@
 
 ## Unreleased
 
+### Added
+- `open`'s write bound now covers `mail`'s remaining **16 controllers** — the
+  sweep #226 stopped in front of. Of the five GET-reachable routes in them, three
+  write and two are clean, and the three write the same way: in a decorator they
+  share, not in their bodies. `@add_guest_to_context`
+  (`mail/models/discuss/mail_guest.py:18`) updates the guest's timezone at
+  `:30-33` through a raw `UPDATE mail_guest` (`:105-114`) on **every route it
+  decorates**, from two cookies and no query: the `dgid` a Discuss public page
+  left behind (`:136`) and a `tz` naming a zone `pytz` knows (`:90`). Nothing in
+  the pinned Odoo sets `tz` itself, so the write is dormant on a browser that has
+  only ever been here — but under Ingress the page is served from the Home
+  Assistant origin, where another application's cookie reaches Odoo, and a cookie
+  is not a bound this list can see. The list gains four prefixes, three of them
+  for that decorator: `/discuss/channel/` (the attachment and image streams,
+  `mail/controllers/discuss/binary.py:12` and `:35`), `/web/image` (`web`'s image
+  route in all 17 of its spellings, `web/controllers/binary.py:164-182`, which
+  `mail` re-exposes with a bare `@route()` at `discuss/binary.py:65` whose body is
+  a plain `super()` call — the decorator is the only thing the override adds),
+  `/mail/message/` (`mail/controllers/mail.py:237`) and `/mail/view` (`:182`,
+  which carries no decorator and writes anyway: `_redirect_to_record` asks the
+  record for its access action at `:129`/`:131`, and
+  `portal/models/portal_mixin.py:68` answers a share user — which an
+  `auth='public'` visitor is — with `_get_share_url()` at `:99`, whose
+  `_portal_ensure_token()` stores a fresh `access_token` at `:33`). The list goes
+  from 22 prefixes to 26.
+- `/discuss/channel/<id>` was recorded clean by #226 and is not clean: it carries
+  the same decorator (`mail/controllers/discuss/public_page.py:53`). The claim is
+  corrected where it was made, and the new `/discuss/channel/` key bounds that
+  page along with the two streams under it. The bodies of all three are clean, and
+  that is why the decorator is the entry: they search a channel and stream an
+  attachment through `ir.binary`, which has no create, write or unlink at the
+  pinned Odoo, resizes in memory (`base/models/ir_binary.py:160`) and reaches an
+  `ir.attachment` whose `validate_access` (`:723`) and `_to_http_stream` (`:805`)
+  write nothing either.
+- Read clean, so the next sweep need not read them again: the two worklet routes
+  (`mail/controllers/discuss/rtc.py:111` and `discuss/voice.py:10`), which answer
+  with a file read off the disk through `file_open`, reach no model at all and
+  carry no decorator.
+- A second reason `readonly=True` is not a write bound, and this one belongs to
+  the add-on rather than to Odoo. The decorator's guard is
+  `not req.env.cr.readonly`, and on this product that cursor is **not** readonly:
+  `Registry.cursor(readonly=True)` returns a read-only cursor only when
+  `_db_readonly` is set (`odoo/modules/registry.py:1015` and `:1028`), which needs
+  a `db_replica_host` (`:166`) that cont-init never writes
+  (`rootfs/etc/cont-init.d/10-odoo-config.sh:97-100`). So the guard that reads as
+  a write bound on a replica holds nothing here, and nothing raises
+  `ReadOnlySqlTransaction` to say so. A `readonly=True` route is not merely rolled
+  back and re-run after a write (`odoo/http.py:2157-2168`) — here it was never on
+  a read-only cursor at all.
+- The sweep also read the two routes in `mail/controllers/mail.py` that #226
+  counted as read while recording only `/mail/unfollow` out of it; both are the
+  new entries above. And the stop-line now points where the decorator goes next:
+  `im_livechat` applies it to 13 routes, `cloud_storage` and `website_livechat` to
+  one each, and `im_livechat` is an installed module — so the next sweep reads a
+  `type=`/`methods=` line per route rather than 13 bodies, because the write is
+  already read. Guard-only; no behaviour change and no version bump.
+- `odoo18ce/tests/e2e_collab_peer_snapshot_live.py`, the two-session Live-tier
+  run #243 needs for that row and the first script here that opens two sessions
+  on one record: session A types an unsaved marker, session B joins and the run
+  waits for that marker to arrive (the transport's own evidence, since nothing
+  stored it), B saves, and `project.task.description` is read back with every
+  prefix in it classified as the saving session's, the other session's, or one
+  nobody claims. `--pair ingress-public` is the pair that can produce a foreign
+  prefix on this host. **It has not been run** -- this Iteration was told not to
+  deploy and not to take the measurement -- and no token can reach its output:
+  every value passes through a redaction that puts a session's label where its
+  prefix was. Its pure parts are tested at the Static tier
+  (`tests/test_e2e_collab_peer_snapshot.py`), including that the prefix shape it
+  looks for is the gateway's own.
+
 ### Fixed
 - The markup strip that keeps the Ingress prefix out of a saved html field now
   removes **any** prefix the gateway would accept, not only the one this page
@@ -37,21 +107,6 @@
   link pasted to a colleague still does not open -- what refuses it is the
   `ingress_session` cookie their browser does not have. No version bump. Issue
   #234, ADR 0004 (third 2026-10-01 postscript), parent #148.
-
-### Added
-- `odoo18ce/tests/e2e_collab_peer_snapshot_live.py`, the two-session Live-tier
-  run #243 needs for that row and the first script here that opens two sessions
-  on one record: session A types an unsaved marker, session B joins and the run
-  waits for that marker to arrive (the transport's own evidence, since nothing
-  stored it), B saves, and `project.task.description` is read back with every
-  prefix in it classified as the saving session's, the other session's, or one
-  nobody claims. `--pair ingress-public` is the pair that can produce a foreign
-  prefix on this host. **It has not been run** -- this Iteration was told not to
-  deploy and not to take the measurement -- and no token can reach its output:
-  every value passes through a redaction that puts a session's label where its
-  prefix was. Its pure parts are tested at the Static tier
-  (`tests/test_e2e_collab_peer_snapshot.py`), including that the prefix shape it
-  looks for is the gateway's own.
 
 ## 0.4.9 — 2026-10-01
 
