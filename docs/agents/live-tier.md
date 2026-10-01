@@ -142,6 +142,15 @@ Three ways, in order of preference:
    then `ssh ha 'ha apps info 1b7b4ce7_odoo18ce --raw-json'` to confirm the
    version. This is the path a user takes, so it is the one that proves a
    Release.
+
+   **A completed Sync is not enough: reload the Supervisor's own copy first.**
+   `ha apps update` offers the newest version the Supervisor knows, and it
+   learns that from its cached copy of the **App Store mirror**, which it does
+   not refetch on demand. On 2026-10-01 (#235) the Sync had finished and the
+   mirror carried `0.4.9`, while `info --raw-json` still reported
+   `version_latest: 0.4.8` — so the update would have been a no-op against the
+   version already installed. `ssh ha 'ha store reload'` fixes it; read
+   `version_latest` and only then update.
 2. **A branch, without a Release.** `docs/testing/LOCAL_BUILD_ON_HOST.md` — the
    local add-on, its four traps, and the restore step at the end. It has no
    `public_url`, so it verifies Ingress only.
@@ -165,6 +174,15 @@ maintenance bootstrap writes `web.base.url`, `web.base.url.freeze` and
   when a decision changes their meaning, annotate them, do not rewrite them.
 - **A sentence about the host's state** in the pull request, when the run
   leaves fixtures behind or changes a setting.
+- **Rows no run asked for, on any run that opens a website page.** Serving a
+  tracked page writes a `website.visitor` and a `website.track` row, and the
+  page's own markup and JavaScript write too — so "read-only" here means **no
+  business writes**, not zero rows. Which writes, where they were read, and why
+  no targets file can bound them:
+  [ADR 0012, postscript 2026-10-01 (#227)](../adr/0012-sweeps-verify-on-the-test-host.md#postscript-2026-10-01-227).
+  Quote the guarantee that way in an evidence README; do not promise zero rows,
+  and do not delete the rows to make it true — #235's run exported the ones it
+  cleared and said why.
 
 ## When it cannot run
 

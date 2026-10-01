@@ -402,7 +402,8 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > `/web/action/load`，而待辦說明走 `/web/dataset/call_kw`，正是 ADR 0004 的 2026-09-28 附記拒絕改寫的
 > 紀錄內容。這一輪的證據在 `docs/testing/evidence/2026-09-29-issue-163/`。
 >
-> **待辦表單的 `GAP` 已於 2026-09-30 修正（#210），Live 重跑待 Deploy。** 依 ADR 0004 的 2026-09-30
+> **待辦表單的 `GAP` 已於 2026-09-30 修正（#210），並於 2026-10-01 在 Release 0.4.9 上完成 Live 重跑
+> （#235，改記 `PARITY`，詳見本附記末）。** 依 ADR 0004 的 2026-09-30
 > 附記，修法不是改寫 `call_kw` 回應，而是 HTML 編輯器內容的一組「進／出」Literal rewrite：Runtime shim
 > 另外發佈 `__WOOW_INGRESS_MARKUP_IN__`／`__WOOW_INGRESS_MARKUP_OUT__` 兩個唯讀的**字串** helper
 > （前綴一律走 shim 自己的 `path()`）。五個改寫點：`Editor.attachTo` 在值變成 DOM 之前先上前綴（圖片
@@ -414,8 +415,16 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > `/html_editor/get_image_info` 的 `src`，那個 route 只認 `/web/image` 開頭的路徑，不還原前綴
 > 裁圖會報「外部圖片」。所以資料庫存的仍是 root-relative，不會把 Supervisor token 寫進記錄。
 > 靜態層契約在 `odoo18ce/tests/test_ingress_todo_description.py`（含 2026-09-30 重新擷取的 bundle
-> 片段）。**這一列的 verdict 要等 Live 重跑才改**：兩面 `route_escape`／`http_4xx_5xx`／`console_error`
-> 皆為 0，且在 Ingress 下用編輯器存一次待辦後 `project.task.description` 的 `src` 仍是 root-relative。
+> 片段）。
+>
+> **Live 重跑已於 2026-10-01 在 Release 0.4.9 上完成（#235），這一列改記 `PARITY`。** 待辦表單在
+> 兩面的 `route_escape`／`http_4xx_5xx`／`console_error`／`pageerror`／`failed_requests` 皆為 0，
+> Ingress 側兩張圖的 `src` 帶前綴（`<INGRESS_PREFIX>/project_todo/static/img/…`）且**都載入成功**；
+> 在 Ingress 下用編輯器存一次待辦之後讀回 `project.task.description`，兩個 `src` 仍以
+> `/project_todo/` 開頭，整份 HTML 不含 `hassio_ingress` 字串、沒有任何絕對位址——存檔寫入是真的
+> （這一輪打的標記確實存進去了，之後才還原）。對照組在同一份證據裡：0.4.6 上同一畫面兩張圖
+> `img_loaded` 為 `[false, false]`、對 HA 根網址各 404 一次。單一 session；兩個 Ingress session 的
+> 協作快照是 #234，不在這一輪。證據見 `docs/testing/evidence/2026-10-01-issue-235/`。
 
 > **唯讀 html 欄位的兩個 render 點已於 2026-10-01 補上（#237，ADR 0004 的 2026-10-01 附記），Live
 > 重跑待 Deploy。** #210 修的是可編輯那條；唯讀 `HtmlViewer` 是 ADR 0004 附記裡「一次碰到兩處 markup」
@@ -575,8 +584,17 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 開啟某張圖片／某個文件連結的媒體對話框，對應附件被 highlight，兩面行為一致。image 那半值得**在網站
 > 編輯器的對話框上也跑一次**而不只是待辦表單：第 2 列的前綴只出現在 HTML 回應那條路上。
 
-> **網站頁「Edit this content」連結的前綴重複（`U-A2`）已於 2026-09-30 修正（#211），Live 重跑待
-> Deploy。** `/@/<website path>` 是 Odoo 18 從網站頁進後台的 route，也是唯一一條**尾段本身就是網站
+> **網站頁「Edit this content」連結的前綴重複（`U-A2`）已於 2026-09-30 修正（#211）；Live 重跑已於
+> 2026-10-01 在 Release 0.4.9 上完成（#235），改記 `PARITY`。** 連結在 Ingress 下讀到
+> `<INGRESS_PREFIX>/@/shop/payment`（前綴只加一次），**點下去真的在 web client 裡打開那一頁**：
+> 瀏覽器停在 route `/shop/payment`、有主導覽列，編輯器的第二個 preview frame 就是該頁本身
+> （route `/shop/payment`、標題 `Shop - Select Payment Method | My Website`，裡面有
+> `ecpay_invoice_website` 自己的 `.ecpay-invoice-info-form` 區塊），沒有 404、沒有 console error、
+> 沒有前綴逃逸。對照組：0.4.6 上同一個連結是 `<INGRESS_PREFIX>/@<INGRESS_PREFIX>/`，點下去
+> 404 在 `<INGRESS_BASE><INGRESS_PREFIX>`、編輯器停在 fallback frame。證據見
+> `docs/testing/evidence/2026-10-01-issue-235/`。
+>
+> 以下是修法本身。`/@/<website path>` 是 Odoo 18 從網站頁進後台的 route，也是唯一一條**尾段本身就是網站
 > 路徑**的 route。Odoo 把已經帶前綴的 `location.pathname` 接進那個尾段，shim 的 `path()` 只認第 0 位
 > 的前綴，於是又加一次，得到 `<INGRESS_PREFIX>/@<INGRESS_PREFIX>/shop/payment`。修法是 Ingress
 > asset location 上的兩條 Literal rewrite：連結改用 canonical path 組，前綴只在最前面加一次。前綴由
@@ -589,9 +607,9 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > **tagged template** 的引數。該運算式在 `web.assets_frontend_minimal`、`web.assets_frontend`、
 > `website.assets_wysiwyg` 三個 bundle 各出現一次，一條 `sub_filter_once off` 規則全數涵蓋。靜態層
 > 契約在 `odoo18ce/tests/test_ingress_at_route_links.py`（含以真正的 nginx 依樣板本身的規則行送出
-> 兩段 bundle 再比對位元組）。**這一列的 verdict 要等 Live 重跑才改**：`/shop/payment` 在帶此修正的
-> Release 上兩面重跑，Ingress 記錄的 `url_literals` 要讀到 `<INGRESS_PREFIX>/@/shop/payment` 且判定
-> `PARITY`。
+> 兩段 bundle 再比對位元組）。**Live 重跑已完成**，結果記在本附記開頭：2026-10-01 在 Release 0.4.9
+> 上兩面重跑 `/shop/payment`，Ingress 記錄的 `url_literals` 讀到 `<INGRESS_PREFIX>/@/shop/payment`，
+> 判定 `PARITY`（#235，見 `docs/testing/evidence/2026-10-01-issue-235/`）。
 
 ---
 
@@ -660,7 +678,7 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 | `sale_management` | 經 `sale` 選單，23 `PARITY`；自有畫面 3 `PARITY`（#163 以 `open` 直接開報價單表單的選購商品頁、報價範本清單與表單） | `U-E3`／`U-E2`／`U-C20`／`U-D5` → #145 |
 | `website_sale` | 15 `PARITY` | `U-D1`–`U-D6`、`U-B2` → #143；`U-D7`、`U-E6` 為 `STRUCTURAL`（RC-10） |
 | `point_of_sale` | 19 `PARITY` | `U-C27` 離線銷售、斷網重整各 1 `PARITY`（#161，見 10.1）；`U-F5` 收據列印、`U-C25` 商品掃描各 1 `PARITY`（#143，見 10.6）；`U-C24` 未測 |
-| ECPay 4 模組 | `ecpay_invoice_tw`、`payment_ecpay` 各 1 `PARITY`；另兩個無自有選單 | `U-E6`（#146，2026-09-27）：Public origin 上一筆 stage 信用卡付款（`S00022`），綠界的回呼經 Cloudflare tunnel 抵達 `/payment/ecpay/result_notify`，交易 `done`，電子發票 `LO22046163` 已開立；回呼網址、付款回呼 2 項 `STRUCTURAL`（Structural gap），後台 4 項（金流服務商、交易、訂單表單，與發票表單上的電子發票號碼）兩端 `PARITY`；`account`／`sale` 選單爬蟲 51 `PARITY`。見 `docs/testing/evidence/2026-09-27-issue-146/`。`ecpay_invoice_website` 於 2026-09-29 由 #163 以 `open` 補上自有判定：它掛在 `website_sale.payment`，電子發票區塊（電子發票／紙本／捐贈與載具）在 `/shop/payment` 兩面都算出來、五項訊號皆 0，但該頁的「Edit this content」連結在 Ingress 下前綴重複（`<INGRESS_PREFIX>/@<INGRESS_PREFIX>/shop/payment`，`U-A2`），故記 **`GAP`（important）**；該連結不限結帳頁，每個可編輯的網站頁都有。見 `docs/testing/evidence/2026-09-29-issue-163/`。**該 `GAP` 已於 2026-09-30 修正（#211），Live 重跑待 Deploy**（見 9 的附記）：連結改成 `<INGRESS_PREFIX>/@/shop/payment`，前綴只加一次；測試主機在 0.4.6、最新 Release 是 0.4.8，兩者都不含此修正，所以今天重跑量到的仍是舊字面，這一列的 verdict 要等帶修正的 Release 重跑後才改 |
+| ECPay 4 模組 | `ecpay_invoice_tw`、`payment_ecpay` 各 1 `PARITY`；另兩個無自有選單 | `U-E6`（#146，2026-09-27）：Public origin 上一筆 stage 信用卡付款（`S00022`），綠界的回呼經 Cloudflare tunnel 抵達 `/payment/ecpay/result_notify`，交易 `done`，電子發票 `LO22046163` 已開立；回呼網址、付款回呼 2 項 `STRUCTURAL`（Structural gap），後台 4 項（金流服務商、交易、訂單表單，與發票表單上的電子發票號碼）兩端 `PARITY`；`account`／`sale` 選單爬蟲 51 `PARITY`。見 `docs/testing/evidence/2026-09-27-issue-146/`。`ecpay_invoice_website` 於 2026-09-29 由 #163 以 `open` 補上自有判定：它掛在 `website_sale.payment`，電子發票區塊（電子發票／紙本／捐贈與載具）在 `/shop/payment` 兩面都算出來、五項訊號皆 0，但該頁的「Edit this content」連結在 Ingress 下前綴重複（`<INGRESS_PREFIX>/@<INGRESS_PREFIX>/shop/payment`，`U-A2`），故記 **`GAP`（important）**；該連結不限結帳頁，每個可編輯的網站頁都有。見 `docs/testing/evidence/2026-09-29-issue-163/`。**該 `GAP` 已於 2026-09-30 修正（#211），並於 2026-10-01 在 Release 0.4.9 上由 #235 完成 Live 重跑，這一列改記 `PARITY`**（見 9 的附記）：`/shop/payment` 在 `open-diff.jsonl` 為 `PARITY`，Ingress 側的 `url_literals` 讀到 `<INGRESS_PREFIX>/@/shop/payment`、Public 側讀到 `<PUBLIC_BASE>/@/shop/payment`，兩面五項訊號仍全為 0，電子發票區塊兩面照樣算出來。見 `docs/testing/evidence/2026-10-01-issue-235/` |
 | `survey` | 4 `PARITY`、**2 `GAP`**（同一動作） | 範例圖片逃逸 → **#158**；`U-E3`／`U-C4` → #145 |
 | `im_livechat` | 8 `PARITY` | 外嵌 script 為 `STRUCTURAL`（RC-10）；`U-C26` → #143 |
 | `event` | 7 `PARITY`、**1 `GAP`** | 報到台條碼音效逃逸 → **#159**；`U-E3`／`U-E4` → #145 |
@@ -669,8 +687,8 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 | `hr_attendance` / `hr_timesheet` | 5 / 7 `PARITY` | `U-C24`／`U-C25`／`U-F1` → #143 |
 | `hr_recruitment` | 14 `PARITY` | 對外職缺頁 `U-D7` 為 `STRUCTURAL`（RC-10） |
 
-第 9 節的 13 個 app 同一輪已比對的選單全為 `PARITY`（`project_todo` 只有一個跳過的 server action，其畫面於 2026-09-29 由 #163 的 `open` 另判：2 `PARITY` + 1 `GAP`），唯一例外是 `website` 的訪客清單：經 Ingress 瀏覽網站時，
-訪客紀錄把 HA 根網址存成頁面 URL（`U-C5`，#160）。
+第 9 節的 13 個 app 同一輪已比對的選單全為 `PARITY`（`project_todo` 只有一個跳過的 server action，其畫面於 2026-09-29 由 #163 的 `open` 另判：2 `PARITY` + 1 `GAP`，**該 `GAP` 已於 2026-10-01 由 #235 在 0.4.9 上重跑為 `PARITY`，三個畫面全數 `PARITY`**），唯一例外是 `website` 的訪客清單：經 Ingress 瀏覽網站時，
+訪客紀錄把 HA 根網址存成頁面 URL（`U-C5`，#160）——**此例外已於 2026-10-01 在 0.4.9 上消除（#235），動作 596 兩面 `PARITY`**。
 > #160 的修正（server-wide module `woow_visitor_url`，把訪客追蹤存下的網址改建在 **Canonical URL** 上，`website.get_base_url()`）
 > 在 Static 與 Build tier 通過，但 **2026-09-30 於 0.4.6 測試主機的 Live 重跑判定 `FAIL`**：經 Ingress 開一次首頁後，
 > 新存的 `website.track` 仍記錄完整的 HA 根網址（`http://192.168.50.192:8123/`，重啟後重測一致），動作 596 的爬蟲比對仍是 `GAP`。
@@ -685,8 +703,25 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 > —— wrapper 的轉發屬性沒有 deleter，所以不是刪快取而是寫回同一個網址。
 > Build tier 的 in-image probe 現在除了讀旗標，也在映像自己的 `odoo.http.HTTPRequest` 上真的換一次網址再讀回來，
 > 這正是 0.4.6 當時 Build 綠、主機無效的那一半。這仍是 Build-tier 與真實主機的環境差異，正是 Live tier（ADR 0012）存在的理由。
-> 證據：`docs/testing/evidence/2026-09-30-issue-160/`。既有紀錄不回填；
-> **Live 重跑仍欠**：要等帶著此修正的 Release 部署到測試主機，再經 Ingress 開一次網站頁面、重跑動作 596 的爬蟲比對才算收斂。
+> 證據：`docs/testing/evidence/2026-09-30-issue-160/`。既有紀錄不回填。
+>
+> **Live 重跑已於 2026-10-01 在 Release 0.4.9 上完成（#235），這一列改記 `PARITY`。** 判定前先讀了
+> 這個修正所依賴的基底——預設網站的 `domain`、`web.base.url` 系統參數、`website.get_base_url()`
+> 三者都是 **Canonical URL**（`web.base.url.freeze` 為 `True`），所以不存在「基底本身就是 HA 位址、
+> `tracked_url` 原封不動回傳、`stored == arrived` 提早返回而什麼都不記」的那種無聲失敗。
+> 經 Ingress 開一次首頁後新存的 `website.track`（列 258）記的是 **Canonical URL** 加路徑 `/`，
+> 不是 HA 位址、也不是只有路徑（只有路徑就代表基底是空的）。動作 596 的爬蟲比對為 `PARITY`、
+> severity `none`、兩面都沒有 `url_violations`：畫面上每一個訪客網址都讀作 `<PUBLIC_BASE>`，
+> 包含 0.4.6 當時讀作 `<HA_BASE>` 的那四個（`/`、`/contactus`、`/jobs/…job-3`、`/shop/…service-58`）。
+> add-on 自己的 log 也從裡面說了同一件事：0.4.9 啟動後每個 worker 都有
+> `website.visitor._handle_webpage_dispatch patched`，而 Deploy 之後
+> `the request's url could not be replaced` 一次都沒有（檔案裡的 12 次全在 Deploy 前的 0.4.6 對照組），
+> `could not be put back` 從頭到尾 0 次。
+>
+> 判定的前提是把舊列清掉：#160 決定**不回寫**舊列，而那些列就在動作 596 打開的畫面上，所以
+> 2026-10-01 這一輪先把 **88 筆**帶 HA 位址的 `website.track` 匯出再刪除（`9`–`253`，涵蓋 Issue 點名的
+> `226`／`227`／`239`–`243`，也涵蓋它沒點到的 `236`–`238` 與 #143／#144 留下的 78 筆）。沒有任何一列被
+> 回寫。證據與列號見 `docs/testing/evidence/2026-10-01-issue-235/`。
 
 ### 10.5 本輪未覆蓋的已知風險（明列，不假裝測過）
 
@@ -729,6 +764,15 @@ POS 兩項在 #161 之後於 2026-09-27 補跑，收據列印（`U-F5`）與相�
 `docs/testing/evidence/2026-09-29-issue-203/`。#203 的另一半——把媒體來源加進 `U-A6` 探測清單（`RC-12` 附記）——亦於同日完成：`U-A6` 新增一條 covered 途徑
 `media`，同時走 `new Audio`／`HTMLMediaElement.src`／`HTMLSourceElement.src`，在 0.4.5 上重跑該途徑有發出請求且未逃逸、`U-A6` 維持 `PARITY`（run
 `WOOW-PARITY-20260929T053445Z`，見 `ua6-media-checks.jsonl`）。
+2026-10-01 在 Release **0.4.9** 上又補跑了六項（#235）：#210 的待辦表單兩項、#211 的「Edit this content」兩項、
+#160 的訪客網址兩項，六項全過。**這一輪不動上面那 76 項的守恆數字**，因為這六項都不在共用層那一組裡——
+它們是第 9 節以 `open` 另判的畫面（`project_todo`、`ecpay_invoice_website`）與第 10 節 `website` 的動作 596，
+各自的列已在上面改記 `PARITY`。所以 76 項維持 **60 `PARITY` + 0 `GAP` + 2 `APPROVED-DIVERGENCE` +
+6 `STRUCTURAL` + 8 `NOT-RUN`**。這一輪另外跑了 `crawl --apps website` 兩面比對（30 判定 = 30 `PARITY`、
+1 跳過）與 #163 全部七個 target 兩面比對（7 判定 = 7 `PARITY`），後者是刻意跑整個 target 檔而不是只跑三行：
+0.4.9 是第一個部署 #238 那 182 行 Literal rewrite 的 Release，規則若在不該觸發的頁面觸發，會在無關 target 上
+顯示為字面值改變——沒有任何一個改變。證據見 `docs/testing/evidence/2026-10-01-issue-235/`。
+
 `NOT-RUN`：`U-A9`（無 60 秒以上的動作）、`U-C22`（只有一種語言）、`/event` 與活動報名
 （未裝 `website_event`）、CE 沒有該控制項的三個模組畫面（MRP 工作中心與工單、出勤 kiosk 全螢幕）。證據與方法見 `docs/testing/evidence/2026-09-25-issue-143/`。
 
@@ -736,7 +780,8 @@ POS 兩項在 #161 之後於 2026-09-27 補跑，收據列印（`U-F5`）與相�
   plain-http 不是安全環境（clipboard-write、camera、microphone）。`G-02` 的未知因此有答案：HA 沒有擋，
   複製鈕靠 #60 的 fallback，相機要 https 入口（實測可用）。
 - 390×844 行動版模擬爬蟲：299 個選單 = 281 `PARITY` + 4 `GAP` + 14 跳過，4 個 `GAP` 就是桌機已登記的
-  #158、#159、#160，行動版沒有新增。
+  #158、#159、#160，行動版沒有新增。三者今日皆已修正並在主機上重跑過（#158 於 0.4.5、#159 於 0.4.5、
+  #160 於 0.4.9），行動版本身沒有重跑——那是 `#147`，要真實裝置。
 - 2026-09-25 當時 P-5 未過：`website` 在 add-on 啟動後才安裝，`website.domain` 空白到下次重啟（#164），`U-D8` 因此是 `GAP`；2026-09-27 兩次補跑 P-5 都已 PASS。
 
 
@@ -882,6 +927,32 @@ python3 odoo18ce/tests/e2e_menu_action_adapter.py open --surface public     --ta
 python3 odoo18ce/tests/e2e_menu_action_adapter.py open --surface ha_ingress --targets targets.jsonl --env-file .env --out ingress-open.jsonl
 # targets.jsonl：每行一個 {"module": ..., "target": ...}；target 是 window action 的 xmlid 或路由，
 # 另需 "expect_model" 或 "expect_selector" 其一，用來確認載入的就是要判的那個畫面（等同爬蟲的 U-C12 檢查）
+# target 若指到 Odoo 在純 GET 就會寫入的路由（`GET_WRITING_ROUTES`），只有「收斂」的寫入可以指：
+# 再開一次會重算或重存出同一個狀態、渲染出同一個畫面——是 recompute 或 re-store，不是累加，也不是消耗
+# （#225 決議、#228 落地）。收斂才能跨 surface 決定性：每個 surface 看到的畫面都已包含自己那次寫入，
+# 所以**與順序無關**——兩個 surface 誰先誰後都不固定，也不允許變成前提。既有的例子是 `ensure_cart`：
+# 購物車非空就原封不動，正是為了讓兩個 surface 判到同一台車。三類與各自的理由：
+#   收斂（照舊只在 `odoo_parity` 可跑，ADR 0012）：`/shop/checkout`、`/shop/address`、
+#     `/shop/confirm_order`、`/shop/extra_info`、`/shop/payment`、`/shop/pricelist`、
+#     `/shop/change_pricelist`、`/website/lang`（都是在同一台不動的車上重算或重存同樣的值），
+#     加上 #228 依 pinned Odoo 稽核後放行的 `/shop/cart` 與 `/my/orders/`（能被 target 走到的寫入
+#     都是 idempotent 的 re-store；唯一不收斂的分支要帶 `access_token`／`revive` 查詢字串，而 target
+#     不准帶）。
+#   消耗 fixture（**任何資料庫都拒**）：`/shop/payment/validate`——確認草稿訂單並清掉購物車，
+#     第二個 surface 就沒有車可判，`ensure_cart` 還會默默建出另一張單。
+#   未分類（**任何資料庫都拒**，也是所有新增項目的預設）：#226 與 #247 加入的 15 條 portal／`mail`
+#     前綴（`/my/invoices/`、`/my/invoices/overdue`、`/my/purchase/`、`/my/projects/`、`/my/tasks/`、
+#     `/my/project/`、`/my/task/`、`/mail/unfollow`、`/digest/`、`/chat/`、`/meet/`、
+#     `/discuss/channel/`、`/web/image`、`/mail/message/`、`/mail/view`）——沒人照收斂準則讀過，
+#     讀過之前一律拒；這個守門寧可多拒。
+# 以上兩類的拒絕都發生在開瀏覽器之前（`require_convergent_writes`）。
+# target 指到 `GET_WRITING_ROUTES` 的路由時，畫面開完後會再讀一次該 session 的草稿訂單，
+# 以一般的 write 列（`sale.order` 的 id 與件數）寫進紀錄的 `writes`（#224）：兩個 surface 都有這一列，
+# `diff` 就能像判 cart 寫入一樣，判「這次純 GET 寫出來的東西有沒有跨 surface 分歧」——證據格式不變。
+# 那是一列「狀態讀數」而非寫入者宣告：`how` 會寫出前綴與 `GET_WRITING_ROUTES` 記的那筆寫入，
+# 因為可指的前綴裡有兩條寫在別處（`/my/orders/` 寫 `access_token`、`/website/lang` 寫訂單行），
+# 而 `writes` 只涵蓋 `sale.order`。沒指到前綴的 target 完全不做這次讀取（讀取本身是一次 `/shop/cart`
+# 導覽，也會寫），讀不到時不留空列，改把原因接在該筆紀錄的 `result` 後面。
 # 行動版模擬：crawl 加 --viewport 390x844
 # 共用層 F/A/B/C/D（#143）：先 P-Check、建 P-7 fixture，再跑全部 check，最後守恆檢查
 python3 odoo18ce/tests/e2e_parity_shared_layers_live.py pcheck --env-file .env --db <DB>

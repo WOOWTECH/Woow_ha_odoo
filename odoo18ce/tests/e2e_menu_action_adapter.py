@@ -25,7 +25,22 @@ Navigating writes too where Odoo writes on a plain GET: the checkout routes
 edit the draft order while rendering it. `GET_WRITING_ROUTES` names those
 routes and `require_write_database` holds them to the same database, so a
 target reaches one only on a run allowed to write -- whether or not it declared
-a cart.
+a cart. The record names that write as well: after such a navigation the run
+reads the session's draft order and puts it in the record's `writes`, on both
+surfaces, so `diff` judges a difference in what the GET wrote the way it judges
+one in what a cart step added.
+
+Being allowed to write is not enough to be judged, so a targets file may name
+such a route only when its write **converges**: a second visit re-derives the
+same state and renders the same screen -- a recompute or a re-store, never an
+accumulation and never a consumption. That is what makes the two surfaces see
+one screen whichever of them goes first, which is why the rule is
+order-independent, and `ensure_cart` leaving a non-empty cart alone is the
+existing example of it. A target naming a route that consumes the fixture
+(`/shop/payment/validate`), or one nobody has read against the rule, is a
+configuration error on **every** database -- `require_convergent_writes` refuses
+it before a browser launches. `GET_WRITING_ROUTES` carries the rule, the class
+of every route and the reason for each.
 
 Credentials come from the environment only:
 
@@ -227,7 +242,9 @@ class OpenTarget:
     `cart` names a product page to add to the cart before opening the target;
     it is the only field that writes. The `target` itself can write as well,
     when it names a route Odoo writes on while rendering a GET -- see
-    `GET_WRITING_ROUTES`.
+    `GET_WRITING_ROUTES`, which also says which of those routes a target may
+    name at all: only one whose write converges, so that both surfaces judge the
+    same screen whichever opens it first.
     """
 
     module: str
@@ -351,6 +368,31 @@ def session_database(reported: str | None) -> str:
     return reported
 
 
+# How a GET write behaves when the same screen is opened twice. The guard
+# branches on `CONVERGENT` alone; the other two names are what a refusal tells
+# the operator it refused for. See the rule in the comment below.
+CONVERGENT = "convergent"
+FIXTURE_CONSUMING = "fixture-consuming"
+UNCLASSIFIED = "unclassified"
+GET_WRITE_CLASSES = (CONVERGENT, FIXTURE_CONSUMING, UNCLASSIFIED)
+NOT_CONVERGENT_REASON = {
+    FIXTURE_CONSUMING: "its write consumes the state the other surface has to judge",
+    UNCLASSIFIED: "its write has not been read against the convergence rule, and an unread write is refused",
+}
+
+
+class GetWrite(NamedTuple):
+    """One `GET_WRITING_ROUTES` entry: the write that was read, and its class."""
+
+    write: str
+    classification: str
+
+    @property
+    def converges(self) -> bool:
+        """Whether a targets file may aim at this route at all -- the #225 rule."""
+        return self.classification == CONVERGENT
+
+
 # Routes that write while rendering a plain GET, and where that write was read.
 #
 # `open` navigates a target with `page.goto`, which is a GET and nothing more,
@@ -361,6 +403,72 @@ def session_database(reported: str | None) -> str:
 # both. The target list is the seam: the route is known before the first page
 # is opened, and the enum cannot help (`NON_MUTATING_OPERATIONS` is every
 # member of `Operation`, so nothing named there is ever refused).
+#
+# Being on this list bounds a route; it does not make the route aimable. #225
+# decided that on 2026-09-30 and #228 recorded it here: a targets file may name a
+# GET-writing route only when the route's write **converges** -- a second visit
+# re-derives the same state and renders the same screen, a recompute or a
+# re-store, never an accumulation and never a consumption. Convergence is what
+# makes such a write cross-surface deterministic: each surface's render includes
+# the effect of its own write, so both surfaces judge one screen. The rule is
+# therefore **order-independent** -- no ordering of the two surfaces is fixed,
+# and none may become load-bearing. The precedent is `ensure_cart`, which has
+# obeyed the rule since it was written: a non-empty cart is left exactly as it
+# is, precisely so both surfaces judge the same cart.
+#
+# Each entry carries its class beside its citation, and the guard
+# (`require_convergent_writes`) reads nothing else:
+#
+#   CONVERGENT         Allowed, bounded to `WRITE_DATABASE` the way it always
+#                      was. The eight #225 read -- `/shop/checkout`,
+#                      `/shop/address`, `/shop/confirm_order`,
+#                      `/shop/extra_info`, `/shop/payment`, `/shop/pricelist`,
+#                      `/shop/change_pricelist` and `/website/lang`, each of
+#                      which recomputes or re-stores the same values on a cart it
+#                      leaves in place -- plus the two #228 audited and promoted,
+#                      `/shop/cart` and `/my/orders/`.
+#   FIXTURE_CONSUMING  Refused on **every** database, `WRITE_DATABASE` included,
+#                      before the first screen opens. `/shop/payment/validate`
+#                      alone: it confirms the draft order into a sale and
+#                      `sale_reset()`s the cart, so the surface that opens it
+#                      second has no cart to judge at all and `ensure_cart` would
+#                      silently build a *different* order.
+#   UNCLASSIFIED       Refused the same way, and the default for every entry
+#                      nobody has read against the rule: the 15 portal and `mail`
+#                      prefixes #226 and #247 added, and anything added tomorrow.
+#                      Over-refusing is the direction this guard errs in, and no
+#                      targets file aims at any of them.
+#
+# `/shop/cart` and `/my/orders/` are the two #225 left pending; #228 read both
+# against the criterion at the pinned Odoo and promoted both, and their entries
+# below carry the audit. Each has one branch that does not converge -- the cart's
+# abandoned-cart revival, the order page's viewed-by-customer note -- and a query
+# is the only way to reach either (`access_token`, `revive`), which
+# `_TARGET_QUERY` refuses: a target may carry a view chooser and nothing else.
+# That dependency is the promotion's footing rather than a detail, so a static
+# test ties the two together; if the query rule ever widens, both entries have to
+# be read again. It is the reading this list already uses two entries below, for
+# `/payment/pay` and `/my/payment_method`: a write only a refused query reaches is
+# a write no target can make.
+#
+# A key is a prefix, so promoting these two promotes everything under them, and
+# what bounds the rest is that `open` makes a GET and nothing else. Under
+# `/shop/cart`: `/shop/cart/update` (controllers/main.py:803) accumulates a line
+# per call and is `methods=['POST']`, and `/shop/cart/update_json` (:838),
+# `/shop/cart/quantity` (:948) and `/shop/cart/clear` (:954, which empties the
+# cart) are `type='json'`. Under `/my/orders/`: `/my/orders/<id>/decline` (sale/
+# controllers/portal.py:329) is `methods=['POST']`, and `/accept` (:279),
+# `/transaction` (:382) and `website_sale`'s `/my/orders/reorder_modal_content`
+# (controllers/reorder.py:38) are `type='json'`. The two siblings a GET does
+# reach -- `/my/orders/page/<n>` (:110) and `/my/orders/<id>/document/<n>`
+# (:361) -- are the ones the entry below already records as writing nothing.
+#
+# One of the two promotions is load-bearing rather than theoretical, which #225
+# did not know when it wrote that no targets file aims at either:
+# `docs/testing/evidence/2026-09-30-issue-213/targets.jsonl` aims at `/shop/cart`,
+# and it is the Live check PR #229 owes. Refusing the route would have made that
+# check unrunnable, so the audit above is what the check rests on -- read it
+# again before changing either.
 #
 # A key is a route prefix: it bounds the route itself and everything under it,
 # so `/shop/change_pricelist` covers the `/shop/change_pricelist/<id>` the route
@@ -388,35 +496,26 @@ def session_database(reported: str | None) -> str:
 # re-runs the handler on a read/write cursor, so a `readonly` route that writes
 # writes anyway.
 #
-# Three limits on what that buys, none of them something a list keyed on the
-# target's route can see. The controller is not the whole request:
-# `views/templates.xml:13` calls `website.sale_get_order()` from the cart link of
-# every page header, which writes the same way `/shop/checkout` does
-# (models/website.py:457), so a page whose controller writes nothing can still
-# write. The target's GET is not the whole navigation: the page's own JavaScript
-# posts on its own account, and `/shop/products/recently_viewed_update`
-# (controllers/main.py:2288) writes a `website.visitor` from a product page
-# nobody asked to write. And the route navigated is not always the route
-# answered: `page.goto` follows a 30x, so a route that redirects into a listed
-# one writes behind the guard -- no `website_sale` route does (the set is closed
+# Four limits on what that buys, none of them something a list keyed on the
+# target's route can see. Three are writes a GET makes outside its own
+# controller, and what they mean for the read-only guarantee -- "no business
+# writes", not zero rows -- is recorded in
+# `docs/adr/0012-sweeps-verify-on-the-test-host.md` (postscript 2026-10-01,
+# #227) rather than here: the cart link of every page header calls
+# `website.sale_get_order()` from the template (`views/templates.xml:13`) and
+# writes the way `/shop/checkout` does (models/website.py:457); the page's own
+# JavaScript posts on its own account
+# (`/shop/products/recently_viewed_update`, controllers/main.py:2288); and
+# serving a tracked page writes a `website.visitor` and a `website.track` row
+# (`website/models/ir_http.py:203`), gated on the template the response rendered
+# rather than on the route, which is why no key can bound it. The fourth limit
+# is this list's own: the route navigated is not always the route answered,
+# since `page.goto` follows a 30x, so a route that redirects into a listed one
+# writes behind the guard -- no `website_sale` route does (the set is closed
 # under its own redirects), which is a property of today's Odoo and not of this
 # list. `project`'s two outdated portal prefixes are redirects of exactly that
 # shape and are listed below for it; they are the ones that were found, not the
 # ones that exist.
-#
-# One write outside the list was read and left outside it:
-# `website/models/ir_http.py:188-205` creates or touches a `website.visitor` on
-# a GET whose response is a tracked page, whichever module serves it. It is out
-# because it is not a property of the route: the gate is `view.track` on the
-# template the response happened to render (`response_template` in its
-# `qcontext`), so the same route can write on one website and not on another, and
-# no list keyed on a route can say which. Bounding it would mean bounding every
-# website page an `open` target can name -- `/`, `/contactus`, `/shop` -- which
-# is a decision about whether `open` may judge a website page off
-# `WRITE_DATABASE` at all, and that is the read-only guarantee as a whole and not
-# this seam. (`crawl` is not affected either way: it navigates only
-# `/odoo/action-<id>`, whose response is the web client bootstrap and not a
-# tracked page, so it never makes this write.)
 #
 # Most of the `/my/...` keys below are one write seen from several routes.
 # `_get_page_view_values` (portal/controllers/portal.py:437) calls
@@ -543,44 +642,55 @@ GET_WRITING_ROUTES = {
     # controllers/main.py:796 unlinks the cart lines of archived products, and
     # :785-786 rewrites an abandoned cart's lines onto the session cart and
     # cancels it when `?access_token=` revives one.
-    "/shop/cart": "unlinks the cart lines of archived products",
+    # #228's convergence audit, and the reason this is `CONVERGENT`: every write
+    # a target can reach is idempotent. :796 has nothing left to unlink on a
+    # second visit, and the surface that ran first already rendered the cart
+    # without those lines; :767 `sale_get_order()` moves the order onto the
+    # logged-in partner only while the two disagree (models/website.py:455-457);
+    # and :798 reaches sale/controllers/portal.py:270, whose
+    # `_portal_ensure_token()` stores an `access_token` only when the order has
+    # none (portal/models/portal_mixin.py:31-33), so the second surface reads the
+    # token the first one stored rather than minting another. The one
+    # consumption is :785-786, and it needs `?access_token=...&revive=merge`,
+    # which `_TARGET_QUERY` refuses.
+    "/shop/cart": GetWrite("unlinks the cart lines of archived products", CONVERGENT),
     # controllers/main.py:1056 persists a delivery method and its price on the
     # draft order (`_set_delivery_method`); :1039 runs `_check_cart_and_addresses`,
     # which reaches `_check_cart` at :2038, which at :2073-2076 stores a
     # `shop_warning` on the order and its zero-priced lines. `sale_get_order`
     # itself writes too: models/website.py:457 moves the order onto the
     # logged-in partner when the two disagree.
-    "/shop/checkout": "persists a delivery method on the draft sale.order",
+    "/shop/checkout": GetWrite("persists a delivery method on the draft sale.order", CONVERGENT),
     # controllers/main.py:1133 runs the same `_check_cart` before rendering the
     # address form, so the `shop_warning` writes at :2073-2076 apply here too.
-    "/shop/address": "stores a shop_warning on the cart through _check_cart",
+    "/shop/address": GetWrite("stores a shop_warning on the cart through _check_cart", CONVERGENT),
     # controllers/main.py:1797-1802 recomputes the order's taxes and prices and
     # re-applies its delivery method, all on the draft order.
-    "/shop/confirm_order": "recomputes the draft order's taxes, prices and delivery method",
+    "/shop/confirm_order": GetWrite("recomputes the draft order's taxes, prices and delivery method", CONVERGENT),
     # controllers/main.py:1820 runs `_check_cart` before rendering the extra
     # step, so the `shop_warning` writes at :2073-2076 apply.
-    "/shop/extra_info": "stores a shop_warning on the cart through _check_cart",
+    "/shop/extra_info": GetWrite("stores a shop_warning on the cart through _check_cart", CONVERGENT),
     # controllers/main.py:1931 runs `_check_cart_and_addresses`, so the
     # `shop_warning` writes at :2073-2076 apply.
-    "/shop/payment": "stores a shop_warning on the cart",
+    "/shop/payment": GetWrite("stores a shop_warning on the cart", CONVERGENT),
     # Under the same prefix, and its own entry because the longest match is what
     # a refusal reports and this write is not the one above: controllers/
     # main.py:1978-1979 confirms the draft order (`_check_cart_is_ready_to_be_paid`
     # then `_validate_order`), which is a sale and not a draft edit, and
     # `request.website.sale_reset()` then drops the cart the run was judging.
-    "/shop/payment/validate": "confirms the draft order into a sale and resets the cart",
+    "/shop/payment/validate": GetWrite("confirms the draft order into a sale and resets the cart", FIXTURE_CONSUMING),
     # controllers/main.py:737 and :747 set the cart's pricelist and recompute
     # its prices (`_cart_update_pricelist`, `_recompute_prices`).
-    "/shop/pricelist": "sets the cart's pricelist and recomputes its prices",
+    "/shop/pricelist": GetWrite("sets the cart's pricelist and recomputes its prices", CONVERGENT),
     # controllers/main.py:721 sets the cart's pricelist for the pricelist the
     # route names (`_cart_update_pricelist`).
-    "/shop/change_pricelist": "sets the cart's pricelist and recomputes its prices",
+    "/shop/change_pricelist": GetWrite("sets the cart's pricelist and recomputes its prices", CONVERGENT),
     # `website`'s route, and `website_sale` overrides it to write: controllers/
     # website.py:72-79 is a bare `@route()` over `/website/lang/<lang>`
     # (website/controllers/main.py:210, `type='http'` and not `readonly`), and
     # its body marks the cart's order lines for a recompute of their `name` in
     # the new language, which the request flushes onto `sale.order.line`.
-    "/website/lang": "recomputes the cart's order line names in the chosen language",
+    "/website/lang": GetWrite("recomputes the cart's order line names in the chosen language", CONVERGENT),
     # `sale`'s route, not `website_sale`'s, and on the list because the write was
     # read: sale/controllers/portal.py:270 `_portal_ensure_token()` stores a
     # fresh `access_token` on any order `_has_to_be_paid()`, and :168 posts a
@@ -593,14 +703,27 @@ GET_WRITING_ROUTES = {
     # nothing -- `/my/orders/page/<n>` (:110) and `/my/orders/<id>/document/<n>`
     # (:361) -- because no static prefix separates an order id from them, and
     # over-refusing is the direction a guard errs in.
-    "/my/orders/": "stores an access_token on an unpaid order and posts a viewed-by-customer note",
+    # #228's convergence audit, and the reason this is `CONVERGENT`: both writes
+    # a target reaches are the same guarded re-store -- :270's
+    # `_portal_ensure_token()` and the pager's two at :199
+    # (portal/controllers/portal.py:93 and :100), all three of them
+    # portal/models/portal_mixin.py:31-33, which writes only when the record has
+    # no token -- so the second surface renders the token the first one stored.
+    # The accumulation is :168's "Quotation viewed by customer" note, and it
+    # needs a share user *and* a truthy `access_token`, which only a query
+    # supplies; its `view_quote_<id>` session guard (:157-161) is per-session and
+    # two surfaces are two sessions, so what keeps the note out of a run is the
+    # query rule and not that guard.
+    "/my/orders/": GetWrite(
+        "stores an access_token on an unpaid order and posts a viewed-by-customer note", CONVERGENT),
     # `account`'s invoice page: account/controllers/portal.py:153 renders
     # `/my/invoices/<int:invoice_id>` through `_invoice_get_page_view_values`
     # (:47), which reaches the portal pager and stores an `access_token` on the
     # invoices either side of this one. Slash-terminated for the same reason as
     # the orders key: `/my/invoices` (:81) only fills `request.session`. It
     # over-refuses `/my/invoices/page/<n>` (:81), which writes nothing.
-    "/my/invoices/": "stores an access_token on the neighbouring invoices through the portal pager",
+    "/my/invoices/": GetWrite(
+        "stores an access_token on the neighbouring invoices through the portal pager", UNCLASSIFIED),
     # Under that prefix, and its own entry because the longest match is what a
     # refusal reports and this write is not the one above: the overdue-invoices
     # page (account_payment/controllers/portal.py:53) asks the company for a
@@ -608,7 +731,7 @@ GET_WRITING_ROUTES = {
     # invoice, and account/models/company.py:272 takes it from an `ir.sequence`
     # with `next_by_id()`, which bumps the sequence -- a write on the company's
     # numbering and not on any invoice.
-    "/my/invoices/overdue": "bumps the company's batch payment sequence",
+    "/my/invoices/overdue": GetWrite("bumps the company's batch payment sequence", UNCLASSIFIED),
     # `purchase`'s order page: purchase/controllers/portal.py:145 renders
     # `/my/purchase/<int:order_id>` through :110, which reaches the portal pager.
     # With a query it writes more: :158, :160 and :162 take `?confirm=` as the
@@ -617,7 +740,8 @@ GET_WRITING_ROUTES = {
     # (purchase/models/purchase_order.py:1125, :1143 and :1152), and the last one
     # also schedules an activity (:1153). `/my/purchase` (:126) and `/my/rfq`
     # (:112) write nothing; `/my/purchase/page/<n>` is over-refused.
-    "/my/purchase/": "stores an access_token on the neighbouring purchase orders and answers ?confirm= on the order",
+    "/my/purchase/": GetWrite(
+        "stores an access_token on the neighbouring purchase orders and answers ?confirm= on the order", UNCLASSIFIED),
     # `project`'s project page and the task pages under it:
     # project/controllers/portal.py:209 calls `generate_access_token()` on every
     # attachment of the task it is about to render, and
@@ -626,19 +750,21 @@ GET_WRITING_ROUTES = {
     # writes nothing. Over-refuses `/my/projects/<id>/page/<n>` (:125),
     # `/my/projects/<id>/project_sharing` (:186) and the subtask and recurrent
     # task lists (:214, :247), none of which write.
-    "/my/projects/": "stores access_tokens on a task's attachments and on the neighbouring records",
+    "/my/projects/": GetWrite(
+        "stores access_tokens on a task's attachments and on the neighbouring records", UNCLASSIFIED),
     # `project`'s standalone task page: project/controllers/portal.py:556 is the
     # same `generate_access_token()` write (ir_attachment.py:691), and :561
     # reaches the portal pager through :304. `/my/tasks` (:514) writes nothing.
-    "/my/tasks/": "stores access_tokens on a task's attachments and on the neighbouring tasks",
+    "/my/tasks/": GetWrite(
+        "stores access_tokens on a task's attachments and on the neighbouring tasks", UNCLASSIFIED),
     # The outdated spellings of the two above, and on the list because of what
     # they redirect into: project/controllers/portal.py:110 and :118 answer
     # `/my/project/...` and `/my/task/...` with a 30x onto `/my/projects/...` and
     # `/my/tasks/...`, and `page.goto` follows a 30x, so the landing page's write
     # is this route's write. Both keys end in a slash: `/my/task` redirects onto
     # the task list page, which writes nothing, and `/my/project` is not a route.
-    "/my/project/": "redirects onto /my/projects/<id>, which writes",
-    "/my/task/": "redirects onto /my/tasks/<id>, which writes",
+    "/my/project/": GetWrite("redirects onto /my/projects/<id>, which writes", UNCLASSIFIED),
+    "/my/task/": GetWrite("redirects onto /my/tasks/<id>, which writes", UNCLASSIFIED),
     # `mail`'s route, which `portal` overrides to add the portal layout
     # (portal/controllers/mail.py:172, a bare `@route()` over
     # mail/controllers/mail.py:217 -- `type='http'`, no `methods`, so a GET
@@ -646,7 +772,7 @@ GET_WRITING_ROUTES = {
     # query names from the record's followers, which unlinks a `mail.followers`
     # row. The token check in front of it (:219) is not a write bound; a wrong
     # token raises instead, and a guard errs towards refusing.
-    "/mail/unfollow": "unsubscribes a follower from the record",
+    "/mail/unfollow": GetWrite("unsubscribes a follower from the record", UNCLASSIFIED),
     # `digest`'s two GET-reachable routes, one key because the prefix is static
     # and the digest id is not: digest/controllers/portal.py:25 takes
     # `methods=['GET', 'POST']` and unsubscribes a user at :51 or :54
@@ -655,7 +781,7 @@ GET_WRITING_ROUTES = {
     # (digest/models/digest.py:128). The POST-only one-click route (:14) is under
     # the same prefix and is refused with them, which costs nothing: a GET never
     # reaches it.
-    "/digest/": "unsubscribes a user from a digest and sets the digest's periodicity",
+    "/digest/": GetWrite("unsubscribes a user from a digest and sets the digest's periodicity", UNCLASSIFIED),
     # `mail`'s Discuss public pages, and the only writes found outside a portal
     # controller that a *path* alone reaches -- no query, so the rule that bounds
     # `?confirm=` and `?report_type=` does not reach them, and the Runtime shim
@@ -674,8 +800,9 @@ GET_WRITING_ROUTES = {
     # step, which is why the key is not `/discuss/`. This comment also said that
     # page writes nothing: it carries `@add_guest_to_context` (:53), so it writes
     # what the four keys below write, and `/discuss/channel/` bounds it there.
-    "/chat/": "creates a mail.guest and a discuss.channel.member, and a discuss.channel from an unknown token",
-    "/meet/": "creates a discuss.channel from an unknown token, and a mail.guest in it",
+    "/chat/": GetWrite(
+        "creates a mail.guest and a discuss.channel.member, and a discuss.channel from an unknown token", UNCLASSIFIED),
+    "/meet/": GetWrite("creates a discuss.channel from an unknown token, and a mail.guest in it", UNCLASSIFIED),
     # #247's sweep of `mail`'s other 16 controllers, and one write answers for
     # the first three keys: `@add_guest_to_context`
     # (mail/models/discuss/mail_guest.py:18) updates the guest's timezone at
@@ -695,14 +822,14 @@ GET_WRITING_ROUTES = {
     # decorated at :53). The POST-only JSON routes under the same prefix
     # (discuss/channel.py) are refused with them, which costs nothing: a GET
     # never reaches one. `/discuss/channel` is not a route, hence the slash.
-    "/discuss/channel/": "updates a guest's timezone through mail's guest-context decorator",
+    "/discuss/channel/": GetWrite("updates a guest's timezone through mail's guest-context decorator", UNCLASSIFIED),
     # `web`'s image route, which `mail` re-exposes to put that decorator on it:
     # discuss/binary.py:65 is a bare `@route()` whose body is a plain `super()`
     # call (:68) and whose routing is web/controllers/binary.py:164-182 -- 17
     # paths, `type='http'`, `readonly=True` and no `methods`, so a GET reaches
     # every one of them -- with the decorator at :66. No trailing slash, because
     # `/web/image` itself is the first of the 17.
-    "/web/image": "updates a guest's timezone through mail's guest-context decorator",
+    "/web/image": GetWrite("updates a guest's timezone through mail's guest-context decorator", UNCLASSIFIED),
     # `mail`'s message redirect, in the controller #226 counted as read while
     # recording only `/mail/unfollow` out of it: mail/controllers/mail.py:237
     # carries the decorator at :238, and it redirects through
@@ -711,7 +838,8 @@ GET_WRITING_ROUTES = {
     # the JSON routes under it (`/mail/message/post`, `/mail/message/reaction`,
     # `/mail/message/translate`, `/mail/message/update_content`) are refused with
     # it and a GET never reaches one.
-    "/mail/message/": "updates a guest's timezone and stores an access_token on the record it redirects to",
+    "/mail/message/": GetWrite(
+        "updates a guest's timezone and stores an access_token on the record it redirects to", UNCLASSIFIED),
     # The same controller's notification entry point (mail/controllers/mail.py:182),
     # which carries no decorator and writes anyway: `_redirect_to_record` asks the
     # record for its access action (:129 and :131), and
@@ -724,7 +852,7 @@ GET_WRITING_ROUTES = {
     # nothing -- so whether this route writes depends on who is logged in, the way
     # the pager's depends on what was opened before it, and the prefix bounds the
     # route either way.
-    "/mail/view": "stores an access_token on the record the notification link names",
+    "/mail/view": GetWrite("stores an access_token on the record the notification link names", UNCLASSIFIED),
 }
 
 
@@ -787,8 +915,57 @@ def get_writing_route(route: str) -> str | None:
     return found
 
 
+def _writing_entries(targets: Sequence[OpenTarget]) -> list[tuple[OpenTarget, str, GetWrite]]:
+    """Each target that names a GET-writing route, with the prefix and entry it hit."""
+    found = []
+    for target in targets:
+        prefix = get_writing_route(target.route)
+        if prefix is not None:
+            found.append((target, prefix, GET_WRITING_ROUTES[prefix]))
+    return found
+
+
+def _non_convergent_reasons(targets: Sequence[OpenTarget]) -> list[str]:
+    """One reason per target naming a GET-writing route whose write does not converge."""
+    return ["target %s names %s, which %s (%s: %s)"
+            % (target.target, prefix, entry.write, entry.classification,
+               # A class added without a reason still refuses: a guard may not
+               # raise a KeyError where it owes the operator a sentence.
+               NOT_CONVERGENT_REASON.get(entry.classification, "its write does not converge"))
+            for target, prefix, entry in _writing_entries(targets) if not entry.converges]
+
+
+def _refused_everywhere_message(reasons: Sequence[str]) -> str:
+    """The refusal every non-convergent target gets, in one sentence."""
+    return ("%s; such a target is refused on every database, %s included -- a targets file may name a "
+            "GET-writing route only when its write converges (see GET_WRITING_ROUTES)"
+            % ("; also ".join(reasons), WRITE_DATABASE))
+
+
+def require_convergent_writes(targets: Iterable[OpenTarget]) -> None:
+    """A target may name a GET-writing route only when that write converges.
+
+    #225's rule (2026-09-30), and the half the database bound cannot express: a
+    bound says *where* a write is allowed, this says which writes may be aimed
+    at in the first place. A write that consumes or accumulates leaves the
+    second surface a different screen than the first surface judged, on
+    `WRITE_DATABASE` as much as anywhere else -- so this reads the target list
+    and no database, which is why `open_screens` runs it before a browser
+    launches rather than after the login. `GET_WRITING_ROUTES` carries the
+    classification and states the rule.
+
+    `require_write_database` makes the same refusal from the same helper, so the
+    driver's per-target check and every other caller of that guard get it from
+    the call they already make -- and get it in one message with whatever the
+    database bound refuses, rather than in two runs.
+    """
+    reasons = _non_convergent_reasons(tuple(targets))
+    if reasons:
+        raise RuntimeError("crawler configuration: %s" % _refused_everywhere_message(reasons))
+
+
 def require_write_database(targets: Iterable[OpenTarget], database: str | None) -> None:
-    """A target that writes the two ways a target can say so is bounded.
+    """A target that writes the two ways a target can say so is bounded, or refused.
 
     ADR 0012 allows the write on one database only, and a target says it writes
     two ways: it declares a `cart:`, or it names a route on `GET_WRITING_ROUTES`.
@@ -804,25 +981,33 @@ def require_write_database(targets: Iterable[OpenTarget], database: str | None) 
     `database` is what the session reported it is on. `None` -- it reported
     nothing -- refuses the write like any other wrong answer: a run that cannot
     say where it would write may not write.
+
+    The bound is not the whole rule: a route whose write does not converge is
+    refused on `WRITE_DATABASE` too -- the #225 rule `require_convergent_writes`
+    is named after. That refusal is made here as well, from the same helper and
+    before the bound is read, so it applies whatever the session answered.
     """
-    if database == WRITE_DATABASE:
-        return
-    # Read once: this walks the targets twice, and an `Iterable` may be a
-    # generator, which the first walk would leave empty for the second.
+    # Read once: this walks the targets several times, and an `Iterable` may be a
+    # generator, which the first walk would leave empty for the rest.
     targets = tuple(targets)
-    # Every reason at once. A file can hold both kinds, and reporting one of
-    # them sends the operator back for another browser launch and login to be
-    # refused for the other.
-    reasons = ["a target fills a cart, which writes"] if any(target.cart for target in targets) else []
-    for target in targets:
-        prefix = get_writing_route(target.route)
-        if prefix is not None:
-            reasons.append("target %s writes on a plain GET -- %s %s"
-                           % (target.target, prefix, GET_WRITING_ROUTES[prefix]))
-    if reasons:
-        raise RuntimeError("crawler configuration: %s; that write is allowed on %s only, and the "
-                           "session's database is %r"
-                           % ("; also ".join(reasons), WRITE_DATABASE, database))
+    banned = _non_convergent_reasons(targets)
+    bounded: list[str] = []
+    if database != WRITE_DATABASE:
+        # Every reason at once. A file can hold both kinds, and reporting one of
+        # them sends the operator back for another browser launch and login to be
+        # refused for the other. A banned route is reported as banned and not
+        # again as bounded: editing the file is the only answer to it, whatever
+        # database the next run is on.
+        bounded = ["a target fills a cart, which writes"] if any(target.cart for target in targets) else []
+        bounded += ["target %s writes on a plain GET -- %s %s" % (target.target, prefix, entry.write)
+                    for target, prefix, entry in _writing_entries(targets) if entry.converges]
+    if not banned and not bounded:
+        return
+    said = [_refused_everywhere_message(banned)] if banned else []
+    if bounded:
+        said.append("%s; that write is allowed on %s only, and the session's database is %r"
+                    % ("; also ".join(bounded), WRITE_DATABASE, database))
+    raise RuntimeError("crawler configuration: %s" % ". Also: ".join(said))
 
 
 # --- Home Assistant websocket messages -----------------------------------
@@ -1040,13 +1225,15 @@ class SurfaceObservation:
     url_literals: Sequence[str] = ()
     url_violations: Sequence[Mapping[str, str]] = ()
     http_5xx: int = 0
-    # The records an `open` target created to reach its screen -- the cart
-    # `ensure_cart` filled, or the one a failed cart step left empty, and
-    # nothing else. Empty does not mean the run wrote nothing: a target on
-    # `GET_WRITING_ROUTES` writes while its screen renders,
-    # bounded to `WRITE_DATABASE` but not reported here, and so do the page's own
-    # templates and JavaScript. Read it as "what the run set up", not as "what
-    # the database got".
+    # The records an `open` target created to reach its screen and the draft
+    # order its screen's own GET left behind -- the cart `ensure_cart` filled,
+    # or the one a failed cart step left empty, and the reading
+    # `_draft_order_after_visit` takes after a target on `GET_WRITING_ROUTES`.
+    # Empty still does not mean the run wrote nothing: that reading covers
+    # `sale.order` and no other model -- the `access_token` a portal route
+    # stores is outside it -- and the page's own templates and JavaScript write
+    # where nothing reads them. Read it as "what the run set up and what the
+    # draft order held after it", not as "what the database got".
     writes: Sequence[Mapping[str, Any]] = ()
 
 
@@ -1209,9 +1396,10 @@ def _judge(public: Mapping[str, Any], ingress: Mapping[str, Any]) -> tuple[str, 
     left_writes, right_writes = _written(public), _written(ingress)
     if left_writes != right_writes:
         # Both surfaces share the logged-in user, so a cart target fills one
-        # cart and the other run reuses it. Two different records mean the two
-        # screens were rendered from different data, and nothing below them can
-        # be attributed to the surface.
+        # cart and the other run reuses it, and a target on a GET-writing route
+        # reports the draft order its own navigation left. Two different records
+        # mean the two screens were rendered from different data, and nothing
+        # below them can be attributed to the surface.
         reasons.append("records written: public=%s ingress=%s"
                        % (", ".join(left_writes) or "none", ", ".join(right_writes) or "none"))
         blocker = True
@@ -1610,10 +1798,19 @@ class SurfaceDriver:
         """Open one named screen, the way `observe` opens a planned menu action.
 
         A target whose route writes on a plain GET is refused off
-        `WRITE_DATABASE`, the way `ensure_cart` refuses the declared cart write:
-        `open_screens` checks the whole target list before the first screen so a
-        misaimed run stops at once, and this is the check for every other caller
-        of this driver.
+        `WRITE_DATABASE`, the way `ensure_cart` refuses the declared cart write,
+        and refused on every database when that write does not converge:
+        `open_screens` checks the whole target list before the first screen -- the
+        convergence half before the browser even launches -- so a misaimed run
+        stops at once, and this is the check for every other caller of this
+        driver.
+
+        One that is allowed through writes while its screen renders, so the
+        observation carries what that left: `_draft_order_after_visit` reads
+        the session's draft order after the navigation and the row joins
+        whatever `ensure_cart` put there. A target under no `GET_WRITING_ROUTES`
+        prefix takes no such reading -- the reading is a `/shop/cart`
+        navigation, which writes -- and records exactly what it always did.
         """
         READ_ONLY_POLICY.require(Operation.NAVIGATE)
         require_write_database((target,), self.database)
@@ -1660,7 +1857,33 @@ class SurfaceDriver:
                 write = writes[0]
                 detail = ("; no record will name the cart: %s:%s holding %s item(s), %s"
                           % (write["model"], write["id"], write["items"], write["how"]))
+            # No draft-order reading is taken on this path: a configuration
+            # error from `_open` can be the ingress session failing *before*
+            # the navigation, and the message cannot say which, so a reading
+            # taken here would credit a GET that was never made.
             raise RuntimeError(self.masker.text(str(error) + detail)) from None
+        prefix = get_writing_route(target.route)
+        if prefix is not None:
+            # The navigation above was a plain GET and Odoo wrote while it
+            # rendered, so the record says what it left: the draft order, on
+            # both surfaces, which is what lets `_judge` compare them. Only a
+            # navigation that was actually made gets a reading -- a cart step
+            # that failed returns above, before its target ever asked for the
+            # route. A screen that loaded the wrong thing asked for it all the
+            # same, so it gets its row like any other.
+            left, unread = self._draft_order_after_visit(prefix)
+            if left is not None:
+                writes += (left,)
+            else:
+                # A reading that said nothing is not the silence this row
+                # exists to end: it goes on the observation beside the screen
+                # it was taken after, the way a failed cart step's does. It
+                # leaves no row, so a reading that failed on one surface only
+                # is a write difference at blocker severity -- which is the
+                # honest verdict (the comparison the row exists for cannot be
+                # made), and the `result` beside it in the joined record says
+                # it was the reading and not the database that differed.
+                observation = replace(observation, result="%s; %s" % (observation.result, unread))
         return replace(observation, writes=writes)
 
     def ensure_cart(self, product_route: str) -> dict[str, Any]:
@@ -2048,26 +2271,9 @@ class SurfaceDriver:
         None and the second half of the answer is the reason, which the caller
         puts on the observation beside the failure that brought us here.
         """
-        page = None
-        try:
-            if self.ingress:
-                # Best effort, and suppressed: this reading is the one thing
-                # standing between a cart the run filled and a `writes` that
-                # never names it, so a session that will not refresh must not
-                # cost it. A page that then fails is what the reason is for.
-                with contextlib.suppress(Exception):
-                    self.ingress.keep_alive()
-            page = self.context.new_page()
-            items, order = self._cart(page)
-        except Exception as error:  # noqa: BLE001 -- the failure that brought us here is the story
-            return None, ("the cart could not be read afterwards (%s)"
-                          % (str(error).splitlines() or [""])[0])
-        finally:
-            if page is not None:
-                with contextlib.suppress(Exception):
-                    page.close()
-        if items is None:
-            return None, "the cart page did not show afterwards how many items the cart holds"
+        items, order, unread = self._reread_cart()
+        if unread is not None:
+            return None, unread
         if not items:
             if not order:
                 # Read, and empty, and naming no order: there is no row to
@@ -2083,6 +2289,100 @@ class SurfaceDriver:
             return {"model": "sale.order", "id": order, "items": 0, "how": how}, None
         return ({"model": "sale.order", "id": order, "items": items,
                  "how": "the cart holds %d item(s) after the cart step failed" % items}, None)
+
+    def _draft_order_after_visit(self, prefix: str) -> tuple[dict[str, Any] | None, str | None]:
+        """The draft order a target on a GET-writing route left behind, and why none.
+
+        `open` navigates with `page.goto`, which is a GET and nothing more, and
+        the routes on `GET_WRITING_ROUTES` write while they render it: the run
+        mutates the database whether or not the target declared a `cart:`.
+        `require_write_database` has always bounded that write and no record
+        ever named it, so ADR 0012's "every mutation is accounted" held in the
+        bound alone and `_judge` compared "none" with "none" on both surfaces --
+        a cross-surface difference in what the GET wrote could not fire. This is
+        the row that makes it fire: the session's draft order after the
+        navigation, read the way `_cart_after_failure` reads it, so `diff_runs`
+        and `_judge` take it as the write row it is and need no new format.
+
+        It is a state reading and not a claim of authorship, which is what lets
+        one reading answer for every aimable prefix. Most of them write on the
+        cart itself (`/shop/checkout` persists a delivery method on it); the
+        two that do not -- `/my/orders/`, whose write is an `access_token`, and
+        `/website/lang`, whose write is on the order's lines -- still render a
+        screen the draft order is behind, and the row says what the order held
+        after the visit rather than what the route put there. The `how` names
+        the prefix and quotes the write `GET_WRITING_ROUTES` records for it, so
+        the record says which of the two kinds this row is.
+
+        Not covered, and deliberately: what the page's own templates and
+        JavaScript write, and any model but `sale.order` -- the `access_token`
+        the quoted write names for `/my/orders/` included, which is why the row
+        is a reading of the cart and not a reading of that token. `writes` says
+        what the run set up and what the draft order held after it, not
+        everything the database got.
+
+        It costs one more navigation per such target -- the cart page, with the
+        same minute's bound every other reading of it carries -- which a run
+        sizing its timeout around a GET-writing target should count.
+
+        Refuses to read unless the session is on `WRITE_DATABASE`: the reading
+        opens `/shop/cart`, which is itself on `GET_WRITING_ROUTES`, so it is
+        bounded where every other write in this driver is. `open_screen` has
+        already refused such a target off that database through
+        `require_write_database`, so nothing reaches this check by the ordinary
+        path -- it is the bound for a caller that skipped it, the way
+        `ensure_cart` keeps its own.
+        """
+        if self.database != WRITE_DATABASE:
+            raise RuntimeError("crawler configuration: reading what a GET-writing target wrote opens the cart "
+                               "page, which writes, and that is allowed on %s only; the session's database "
+                               "is %r" % (WRITE_DATABASE, self.database))
+        items, order, unread = self._reread_cart()
+        if unread is not None:
+            return None, unread
+        if not order:
+            # The badge renders "0" until the session has an order and
+            # `_cart` reads that as no order: there is nothing this run can
+            # name, and a row naming `sale.order:0` would claim a record that
+            # does not exist. Both surfaces say the same thing by saying
+            # nothing, which is the one case where silence is the reading.
+            return None, ("the cart named no order after the visit to %s, so this run has no draft order "
+                          "to report" % prefix)
+        return {"model": "sale.order", "id": order, "items": items,
+                "how": "the draft order the session held after the visit to %s, which %s"
+                       % (prefix, GET_WRITING_ROUTES[prefix].write)}, None
+
+    def _reread_cart(self) -> tuple[int | None, str | None, str | None]:
+        """The cart read again on a page of its own: the count, the order, and why neither.
+
+        The reading both after-the-fact readers take -- the one after a cart
+        step that failed and the one after a visit to a GET-writing route -- so
+        a cart page that will not answer reads the same way in both records.
+        "Afterwards", in the reasons below, is after whichever of the two the
+        caller just did. The reason is None exactly when there is a reading: a
+        caller gets a count to report or a sentence saying why there is none.
+        """
+        page = None
+        try:
+            if self.ingress:
+                # Best effort, and suppressed: this reading is the one thing
+                # standing between a write the run made and a `writes` that
+                # never names it, so a session that will not refresh must not
+                # cost it. A page that then fails is what the reason is for.
+                with contextlib.suppress(Exception):
+                    self.ingress.keep_alive()
+            page = self.context.new_page()
+            items, order = self._cart(page)
+        except Exception as error:  # noqa: BLE001 -- why the reading failed is the whole answer here
+            return None, None, ("the cart could not be read afterwards (%s)"
+                                % (str(error).splitlines() or [""])[0])
+        finally:
+            if page is not None:
+                with contextlib.suppress(Exception):
+                    page.close()
+        if items is None:
+            return None, None, "the cart page did not show afterwards how many items the cart holds"
+        return items, order, None
 
     def _cart(self, page) -> tuple[int | None, str | None]:
         """The number of items in the session's cart, and the order it is.
@@ -2253,9 +2553,15 @@ def open_screens(surface: Surface, targets: Sequence[OpenTarget], out_path: str,
 
     `out_path` is opened once the login and the write guard have passed, so a
     run that is refused leaves the evidence of the last one where it was.
+
+    A target naming a GET-writing route whose write does not converge is refused
+    here, before a browser launches: that refusal reads no database, so there is
+    nothing to wait for the login to report (#225's rule, `GET_WRITING_ROUTES`).
+    The database bound still needs the session's answer and is checked after it.
     """
     from playwright.sync_api import sync_playwright
 
+    require_convergent_writes(targets)
     size, client = parse_viewport(viewport)
     ignore_https = os.environ.get("IGNORE_HTTPS_ERRORS", "0") == "1"
     with sync_playwright() as playwright:
