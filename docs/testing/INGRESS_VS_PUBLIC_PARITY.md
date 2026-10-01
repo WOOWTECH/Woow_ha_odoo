@@ -769,6 +769,25 @@ python3 odoo18ce/tests/e2e_menu_action_adapter.py open --surface public     --ta
 python3 odoo18ce/tests/e2e_menu_action_adapter.py open --surface ha_ingress --targets targets.jsonl --env-file .env --out ingress-open.jsonl
 # targets.jsonl：每行一個 {"module": ..., "target": ...}；target 是 window action 的 xmlid 或路由，
 # 另需 "expect_model" 或 "expect_selector" 其一，用來確認載入的就是要判的那個畫面（等同爬蟲的 U-C12 檢查）
+# target 若指到 Odoo 在純 GET 就會寫入的路由（`GET_WRITING_ROUTES`），只有「收斂」的寫入可以指：
+# 再開一次會重算或重存出同一個狀態、渲染出同一個畫面——是 recompute 或 re-store，不是累加，也不是消耗
+# （#225 決議、#228 落地）。收斂才能跨 surface 決定性：每個 surface 看到的畫面都已包含自己那次寫入，
+# 所以**與順序無關**——兩個 surface 誰先誰後都不固定，也不允許變成前提。既有的例子是 `ensure_cart`：
+# 購物車非空就原封不動，正是為了讓兩個 surface 判到同一台車。三類與各自的理由：
+#   收斂（照舊只在 `odoo_parity` 可跑，ADR 0012）：`/shop/checkout`、`/shop/address`、
+#     `/shop/confirm_order`、`/shop/extra_info`、`/shop/payment`、`/shop/pricelist`、
+#     `/shop/change_pricelist`、`/website/lang`（都是在同一台不動的車上重算或重存同樣的值），
+#     加上 #228 依 pinned Odoo 稽核後放行的 `/shop/cart` 與 `/my/orders/`（能被 target 走到的寫入
+#     都是 idempotent 的 re-store；唯一不收斂的分支要帶 `access_token`／`revive` 查詢字串，而 target
+#     不准帶）。
+#   消耗 fixture（**任何資料庫都拒**）：`/shop/payment/validate`——確認草稿訂單並清掉購物車，
+#     第二個 surface 就沒有車可判，`ensure_cart` 還會默默建出另一張單。
+#   未分類（**任何資料庫都拒**，也是所有新增項目的預設）：#226 與 #247 加入的 15 條 portal／`mail`
+#     前綴（`/my/invoices/`、`/my/invoices/overdue`、`/my/purchase/`、`/my/projects/`、`/my/tasks/`、
+#     `/my/project/`、`/my/task/`、`/mail/unfollow`、`/digest/`、`/chat/`、`/meet/`、
+#     `/discuss/channel/`、`/web/image`、`/mail/message/`、`/mail/view`）——沒人照收斂準則讀過，
+#     讀過之前一律拒；這個守門寧可多拒。
+# 以上兩類的拒絕都發生在開瀏覽器之前（`require_convergent_writes`）。
 # 行動版模擬：crawl 加 --viewport 390x844
 # 共用層 F/A/B/C/D（#143）：先 P-Check、建 P-7 fixture，再跑全部 check，最後守恆檢查
 python3 odoo18ce/tests/e2e_parity_shared_layers_live.py pcheck --env-file .env --db <DB>

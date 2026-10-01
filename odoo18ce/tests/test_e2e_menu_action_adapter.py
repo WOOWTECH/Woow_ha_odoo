@@ -6,13 +6,19 @@ Nothing here opens a browser, a websocket or reads credentials.
 import contextlib
 import itertools
 import json
+import os
+import tempfile
 import unittest
 from unittest import mock
 from urllib.parse import urlsplit
 
 from e2e_menu_action_adapter import (
+    CONVERGENT,
     EVIDENCE_SCHEMA,
+    FIXTURE_CONSUMING,
+    GET_WRITE_CLASSES,
     GET_WRITING_ROUTES,
+    GetWrite,
     _is_cart_update,
     _reached,
     WRITE_DATABASE,
@@ -24,6 +30,7 @@ from e2e_menu_action_adapter import (
     RunInfo,
     SurfaceDriver,
     SurfaceObservation,
+    UNCLASSIFIED,
     addon_info_command,
     auth_message,
     count_signals,
@@ -32,11 +39,13 @@ from e2e_menu_action_adapter import (
     ingress_prefix_from_info,
     ingress_session_command,
     is_prefix_escape,
+    open_screens,
     parse_env_file,
     parse_targets,
     parse_viewport,
     plan_visits,
     read_records,
+    require_convergent_writes,
     require_write_database,
     scope_from_web_menus,
     skipped_record,
@@ -525,10 +534,145 @@ class OpenTargetTests(unittest.TestCase):
                                    ' "cart": "/shop/product/desk-1"}'])
         require_write_database(with_cart, WRITE_DATABASE)
 
+    def test_a_fixture_consuming_target_is_refused_on_every_database(self) -> None:
+        # #225's rule, and the half a database bound cannot express: this write
+        # confirms the draft order into a sale and resets the cart, so whichever
+        # surface opens it first leaves the second surface no cart to judge. The
+        # bound is upgraded to a ban -- `WRITE_DATABASE` is refused too.
+        validate = parse_targets(['{"module": "m", "target": "/shop/payment/validate",'
+                                  ' "expect_selector": "#x"}'])
+        for database in (WRITE_DATABASE, "odoo_test", None):
+            with self.subTest(database):
+                with self.assertRaises(RuntimeError) as caught:
+                    require_write_database(validate, database)
+                message = str(caught.exception)
+                self.assertIn("/shop/payment/validate", message)
+                self.assertIn("confirms the draft order", message)
+                self.assertIn(FIXTURE_CONSUMING, message)
+                self.assertIn("every database", message)
+                self.assertTrue(is_configuration_error(caught.exception))
+        # The ban reads nothing but the target list, which is why `open_screens`
+        # runs it before a browser launches rather than after the login.
+        with self.assertRaisesRegex(RuntimeError, "/shop/payment/validate"):
+            require_convergent_writes(validate)
+        require_convergent_writes(parse_targets(
+            ['{"module": "m", "target": "/shop/checkout", "expect_selector": "#x"}']))
+
+    def test_an_unclassified_route_is_refused_on_every_database(self) -> None:
+        # The default for an entry nobody has read against the convergence rule,
+        # which is every prefix added after #225's decision: refused like the
+        # fixture-consuming class until an audit promotes it. Over-refusing is
+        # the direction this guard errs in.
+        for route in ("/my/invoices/7", "/my/invoices/overdue", "/my/purchase/7",
+                      "/my/projects/7", "/my/tasks/9", "/my/project/7/task/9", "/my/task/9",
+                      "/mail/unfollow", "/digest/3/unsubscribe", "/chat/tok_1", "/meet/tok_1",
+                      "/discuss/channel/7", "/web/image/123", "/mail/message/7", "/mail/view"):
+            with self.subTest(route):
+                targets = parse_targets([
+                    json.dumps({"module": "m", "target": route, "expect_selector": "#x"}),
+                ])
+                for database in (WRITE_DATABASE, "odoo_test"):
+                    with self.assertRaises(RuntimeError) as caught:
+                        require_write_database(targets, database)
+                    message = str(caught.exception)
+                    self.assertIn(route, message)
+                    self.assertIn(get_writing_route(route), message)
+                    self.assertIn(UNCLASSIFIED, message)
+                    self.assertTrue(is_configuration_error(caught.exception))
+
+    def test_a_future_entry_with_no_classification_is_refused_rather_than_bounded(self) -> None:
+        # The rule is the default and not a list: an entry added tomorrow with
+        # `UNCLASSIFIED` is refused everywhere without anybody touching the
+        # guard, which is what makes forgetting to classify safe.
+        with mock.patch.dict(
+            "e2e_menu_action_adapter.GET_WRITING_ROUTES",
+            {"/shop/tomorrow": GetWrite("does something nobody has read", UNCLASSIFIED)},
+        ):
+            targets = parse_targets(['{"module": "m", "target": "/shop/tomorrow",'
+                                     ' "expect_selector": "#x"}'])
+            for database in (WRITE_DATABASE, "odoo_test", None):
+                with self.subTest(database):
+                    with self.assertRaisesRegex(RuntimeError, "/shop/tomorrow"):
+                        require_write_database(targets, database)
+
+    def test_the_convergent_routes_stay_bounded_rather_than_banned(self) -> None:
+        # The eight #225 read as convergent -- each one recomputes or re-stores
+        # the same values on a cart it leaves in place, so each surface's render
+        # includes the effect of its own write and both surfaces judge one
+        # screen. Today's behaviour, unchanged: allowed on the write database,
+        # refused off it.
+        for route in ("/shop/checkout", "/shop/address", "/shop/confirm_order",
+                      "/shop/extra_info", "/shop/payment", "/shop/pricelist",
+                      "/shop/change_pricelist/3", "/website/lang/fr_BE"):
+            with self.subTest(route):
+                targets = parse_targets([
+                    json.dumps({"module": "m", "target": route, "expect_selector": "#x"}),
+                ])
+                require_write_database(targets, WRITE_DATABASE)
+                require_convergent_writes(targets)
+                for unknown in ("odoo_test", None):
+                    with self.assertRaises(RuntimeError) as caught:
+                        require_write_database(targets, unknown)
+                    self.assertIn(get_writing_route(route), str(caught.exception))
+                    self.assertIn(WRITE_DATABASE, str(caught.exception))
+
+    def test_the_two_routes_the_audit_promoted_are_the_two_it_read(self) -> None:
+        # #228's audit against the pinned Odoo: both routes write only idempotent
+        # re-stores on the way to rendering, and the one branch of each that does
+        # not converge needs a query a target may not carry. Promoted, and pinned
+        # here so a later disagreement is one constant and this test.
+        for route in ("/shop/cart", "/my/orders/"):
+            with self.subTest(route):
+                self.assertEqual(GET_WRITING_ROUTES[route].classification, CONVERGENT)
+        for route in ("/shop/cart", "/my/orders/7"):
+            with self.subTest(route):
+                targets = parse_targets([
+                    json.dumps({"module": "m", "target": route, "expect_selector": "#x"}),
+                ])
+                require_write_database(targets, WRITE_DATABASE)
+                with self.assertRaisesRegex(RuntimeError, WRITE_DATABASE):
+                    require_write_database(targets, "odoo_test")
+
+    def test_the_promoted_routes_rest_on_the_query_a_target_may_not_carry(self) -> None:
+        # What the promotion above rests on. `/shop/cart?access_token=...&revive=merge`
+        # moves an abandoned cart's lines onto the session cart and cancels it (a
+        # consumption), and `/my/orders/<id>?access_token=...` posts a
+        # viewed-by-customer note once per session (an accumulation).
+        # `_TARGET_QUERY` admits a view chooser and nothing else, so no target
+        # reaches either -- and if that ever widens, this test is what says these
+        # two entries have to be read again.
+        for route in ("/shop/cart?access_token=tok_1&revive=merge",
+                      "/shop/cart?access_token=tok_1",
+                      "/my/orders/7?access_token=tok_1"):
+            with self.subTest(route):
+                with self.assertRaisesRegex(ValueError, "may not carry the query"):
+                    parse_targets([
+                        json.dumps({"module": "m", "target": route, "expect_selector": "#x"}),
+                    ])
+
+    def test_a_banned_route_and_a_bounded_write_are_both_reported(self) -> None:
+        # The same reason the bound reports every refusal at once: an operator who
+        # edits the banned route out of the file must not then be sent back for
+        # the cart, or for a convergent route the session cannot write on.
+        both = parse_targets([
+            '{"module": "m", "target": "/shop/payment/validate", "expect_selector": "#x"}',
+            '{"module": "m", "target": "/shop/confirm_order", "expect_selector": "#y",'
+            ' "cart": "/shop/product/desk-1"}',
+        ])
+        with self.assertRaises(RuntimeError) as caught:
+            require_write_database(both, "odoo_test")
+        message = str(caught.exception)
+        self.assertIn("/shop/payment/validate", message)
+        self.assertIn("every database", message)
+        self.assertIn("fills a cart", message)
+        self.assertIn("/shop/confirm_order", message)
+        self.assertIn(WRITE_DATABASE, message)
+
     def test_the_guard_reads_a_target_list_it_can_only_walk_once(self) -> None:
-        # The guard walks the targets twice -- once for a declared cart, once
-        # for a writing route -- and it takes an `Iterable`, so a generator
-        # would arrive empty at the second walk and permit the write.
+        # The guard walks the targets more than once -- for a declared cart, for
+        # a route whose write does not converge, for one that does -- and it
+        # takes an `Iterable`, so a generator would arrive empty at the second
+        # walk and permit the write.
         checkout = parse_targets(['{"module": "m", "target": "/shop/checkout", "expect_selector": "#x"}'])
         with self.assertRaisesRegex(RuntimeError, "/shop/checkout"):
             require_write_database((target for target in checkout), "odoo_test")
@@ -554,7 +698,7 @@ class OpenTargetTests(unittest.TestCase):
         # The list is not `website_sale`-only: a known GET write belongs on it
         # whichever module holds the route.
         self.assertIn("/my/orders/", GET_WRITING_ROUTES)
-        for prefix, where in GET_WRITING_ROUTES.items():
+        for prefix, entry in GET_WRITING_ROUTES.items():
             with self.subTest(prefix):
                 # A prefix is matched against a target's path, so it has to be
                 # one: no origin and no query. A trailing slash is allowed and
@@ -563,7 +707,11 @@ class OpenTargetTests(unittest.TestCase):
                 self.assertEqual(prefix, urlsplit(prefix).path)
                 self.assertTrue(prefix.startswith("/"))
                 self.assertFalse(prefix.endswith("//"))
-                self.assertTrue(where)
+                self.assertTrue(entry.write)
+                # And a classification from the documented set: the guard reads
+                # it, and an entry nobody classified is refused rather than
+                # bounded, so a typo must not read as `CONVERGENT`.
+                self.assertIn(entry.classification, GET_WRITE_CLASSES)
 
     def test_a_get_writing_route_is_matched_by_prefix_on_a_segment_boundary(self) -> None:
         # `/shop/payment/validate` is under `/shop/payment` and writes more than
@@ -629,7 +777,7 @@ class OpenTargetTests(unittest.TestCase):
             with self.subTest(order):
                 with mock.patch.dict(
                     "e2e_menu_action_adapter.GET_WRITING_ROUTES",
-                    {name: "cited" for name in order}, clear=True,
+                    {name: GetWrite("cited", CONVERGENT) for name in order}, clear=True,
                 ):
                     self.assertEqual(get_writing_route("/shop/payment/validate"), narrow)
                     self.assertEqual(get_writing_route("/shop/payment"), wide)
@@ -687,10 +835,11 @@ class OpenTargetTests(unittest.TestCase):
         self.assertEqual(get_writing_route("/my/invoices/7"), "/my/invoices/")
         self.assertIsNone(get_writing_route("/my/invoices"))
 
-    def test_a_portal_target_is_refused_off_the_write_database(self) -> None:
+    def test_a_portal_target_is_refused_whatever_the_database(self) -> None:
         # Each prefix the portal audit added, at the seam that uses it: a target
-        # naming one is refused before a browser opens, on the database the
-        # write is not allowed on.
+        # naming one is refused before a browser opens. #225's rule made that
+        # refusal database-independent -- none of these was read against the
+        # convergence criterion, and an unread write is refused.
         for route in ("/my/invoices/7", "/my/invoices/overdue", "/my/purchase/7",
                       "/my/projects/7", "/my/projects/7/task/9", "/my/tasks/9",
                       "/my/project/7/task/9", "/my/task/9",
@@ -700,12 +849,11 @@ class OpenTargetTests(unittest.TestCase):
                 targets = parse_targets([
                     json.dumps({"module": "m", "target": route, "expect_selector": "#x"}),
                 ])
-                with self.assertRaises(RuntimeError) as caught:
-                    require_write_database(targets, "odoo_test")
-                self.assertIn(route, str(caught.exception))
-                self.assertIn(get_writing_route(route), str(caught.exception))
-                # And permitted on the one database ADR 0012 allows it on.
-                require_write_database(targets, WRITE_DATABASE)
+                for database in ("odoo_test", WRITE_DATABASE):
+                    with self.assertRaises(RuntimeError) as caught:
+                        require_write_database(targets, database)
+                    self.assertIn(route, str(caught.exception))
+                    self.assertIn(get_writing_route(route), str(caught.exception))
 
     def test_the_mail_routes_the_sweep_read_a_write_on_are_bounded(self) -> None:
         # #247's sweep of `mail`'s 16 unread controllers, and it ends in one
@@ -743,11 +891,13 @@ class OpenTargetTests(unittest.TestCase):
             with self.subTest(clean):
                 self.assertIsNone(get_writing_route(clean))
 
-    def test_a_mail_sweep_target_is_refused_off_the_write_database(self) -> None:
+    def test_a_mail_sweep_target_is_refused_whatever_the_database(self) -> None:
         # Each prefix #247 added, at the seam that uses it. `/web/image` is the
         # one whose spelling is new to the list: a route `web` owns, on the list
         # only because `mail` re-exposes it, whose own bare path is a route with
-        # 17 spellings under it -- so it is exercised both bare and nested.
+        # 17 spellings under it -- so it is exercised both bare and nested. None
+        # of them is classified either, so the refusal does not read the
+        # database.
         for route in ("/discuss/channel/7", "/discuss/channel/7/attachment/9",
                       "/discuss/channel/7/image/9/64x64",
                       "/web/image", "/web/image/res.partner/3/image_128",
@@ -756,12 +906,29 @@ class OpenTargetTests(unittest.TestCase):
                 targets = parse_targets([
                     json.dumps({"module": "m", "target": route, "expect_selector": "#x"}),
                 ])
-                with self.assertRaises(RuntimeError) as caught:
-                    require_write_database(targets, "odoo_test")
-                self.assertIn(route, str(caught.exception))
-                self.assertIn(get_writing_route(route), str(caught.exception))
-                # And permitted on the one database ADR 0012 allows it on.
-                require_write_database(targets, WRITE_DATABASE)
+                for database in ("odoo_test", WRITE_DATABASE):
+                    with self.assertRaises(RuntimeError) as caught:
+                        require_write_database(targets, database)
+                    self.assertIn(route, str(caught.exception))
+                    self.assertIn(get_writing_route(route), str(caught.exception))
+
+    def test_a_banned_target_is_refused_before_a_browser_launches(self) -> None:
+        # "Before any screen opens" is stronger than "before the first target":
+        # the ban reads no database, so there is nothing to wait for the login to
+        # report, and `open_screens` makes it before Playwright starts. A browser
+        # launch would reach this patched launcher and fail the test.
+        import playwright.sync_api
+
+        targets = parse_targets(['{"module": "m", "target": "/shop/payment/validate",'
+                                 ' "expect_selector": "#x"}'])
+        with tempfile.TemporaryDirectory() as directory:
+            out = os.path.join(directory, "open.jsonl")
+            with mock.patch.object(playwright.sync_api, "sync_playwright",
+                                   side_effect=AssertionError("a browser was launched")):
+                with self.assertRaisesRegex(RuntimeError, "/shop/payment/validate"):
+                    open_screens(Surface.PUBLIC, targets, out)
+            # And the evidence of whatever ran last is left where it was.
+            self.assertFalse(os.path.exists(out))
 
     def test_the_get_writing_guard_did_not_move_into_the_operation_enum(self) -> None:
         # The enum only ever names reads: NON_MUTATING_OPERATIONS is every
