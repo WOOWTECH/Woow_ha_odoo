@@ -168,6 +168,53 @@ because the tests execute them: the listener against a document whose
 so the Runtime shim's own wrapper decides the address -- and the method
 against a link popover driven with one target.
 
+Derived 2026-10-01 from the pinned `.deb` (`ODOO_DEB_VERSION`
+18.0.20260930) through Odoo's own serve path, for the readonly html field of
+issue #237:
+
+| File | Bundle | What it holds |
+|---|---|---|
+| `html_viewer_iframe_content.js` | `web.assets_backend` | `HtmlViewer.updateIframeContent`, the whole method — the render site of the `hasFullHtml`/`cssAssetId` path, which picks `documentElement` or `#iframe_target` and then assigns the value to `innerHTML` |
+| `html_viewer_readonly_template.js` | `web.assets_backend` | the whole `registerTemplate("html_editor.HtmlViewer", …)` call the xml bundle appends — the render site of the plain path, `t-out="state.value"` on the `o_readonly` div |
+
+| Pattern | Bundles that carry it, once each | Bundles that carry it zero times |
+|---|---|---|
+| `iframeTarget.innerHTML=content;` | `web.assets_backend`, `web.assets_web`, `web.assets_web_print`, `project.webclient` | the twelve others of #210's table |
+| `<div t-ref="readonlyContent" class="o_readonly" t-out="state.value"/>` | the same four | the same twelve |
+
+Both live in `html_editor/static/src/fields/html_viewer.{js,xml}`, and
+`html_editor/static/src/**/*` is named by exactly two manifests:
+`html_editor`'s own, in `web.assets_backend` (so `web.assets_web` and
+`web.assets_web_print` carry it by inclusion), and `project`'s, in
+`project.webclient` — the bundle `project_sharing_project_task_templates.xml`
+calls for the project-sharing client, where a shared user's task description
+is readonly. That fourth bundle is wanted: it is the same escape on a portal
+screen. The twelve others #210's table lists carry neither pattern, because
+neither file is a member of any of them.
+
+**How each was counted.** Both patterns were counted in the served bytes of
+every `*/static/src/**/*.{js,xml}` file in the pinned package, reproducing
+`addons/base/models/assetsbundle.py`: for JavaScript,
+`rjsmin(transpile_javascript(url, source))`; for a template, lxml's
+`XMLAsset._fetch_content` unwrap followed by `generate_xml_bundle`'s
+`etree.tostring` inside `registerTemplate(name, path, template)`. A template
+is therefore served **unminified**, through the same Ingress asset location as
+the code, and reachable by an exact-expression rewrite — the same property the
+snippet-thumbnail rule of #170 uses.
+
+Both counts are one per bundle, and the anchors are longer than they look for
+measured reasons. `t-out="state.value"` alone occurs **twice** in
+`web.assets_backend`: the viewer's div and `web.MonetaryField`'s ghost value
+(`web/static/src/views/fields/monetary/monetary_field.xml`), so the rule
+carries the whole `<div>`. The attributes in it are single-spaced and the tag
+ends `"/>` although the source file has two spaces and a space before the
+slash: `etree.tostring` normalises both, which is why the pattern has to come
+from the serve path and not from the file. `iframeTarget.innerHTML` alone
+occurs three more times, all in the legacy `web_editor`'s html field
+(`iframeTarget.innerHTML!==this.props.record.data[this.props.name]`, the
+assignment beside it, and `iframeTarget.innerHTML=value;`) — none of them is
+`=content;`, and that editor is ADR 0004's own open item.
+
 ## Re-capturing
 
 The bundles are public, so no login is needed; the asset route redirects a

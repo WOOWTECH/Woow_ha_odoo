@@ -274,12 +274,27 @@ http {
     # occurrence of it in a record is the harm and not content worth keeping
     # -- including one a user typed, which the test says out loud.
     #
+    # `__WOOW_INGRESS_MARKUP_IN_VALUE__(value)` is `IN` for a value that may be
+    # an OWL `Markup` object rather than a string (issue #237, the readonly
+    # `HtmlViewer`). Every html field holds its value as `markup(...)` -- the
+    # relational model wraps an `html` field that way -- and `IN` returns a
+    # non-string as it came, so calling `IN` on one would be a silent no-op.
+    # This helper puts the wrapper back through the value's **own**
+    # constructor, because OWL's `t-out` inserts a `Markup` as HTML and
+    # *escapes* everything else: a prefixed plain string handed back there
+    # would be displayed as text rather than rendered, which is a worse bug
+    # than the one being fixed. A primitive string goes through `IN`
+    # unchanged, so one helper covers both of the viewer's insertions -- the
+    # `t-out` and the iframe's `innerHTML`, where a string is markup too --
+    # and anything else (an empty html field is `false`) comes back as it
+    # came rather than as the word "false".
+    #
     # Read-only and non-configurable like `__WOOW_INGRESS_URL__`, published
     # only when the Ingress prefix is non-empty because the IIFE returns
     # before this line otherwise, and every rewritten expression falls back to
     # the untouched value when the globals are absent.
     map $upstream_http_content_type $ingress_markup_global_shim {
-        default 'var mT=/<[A-Za-z][^<>]*>/g,mA=/(^|\s|[\x22\x27])([^\s=\/<>\x22\x27]+)(\s*=\s*)(?:([\x22\x27])((?:(?!\4)[^<>])*)(?=\4)|[^\s<>\x22\x27]+)/g,mU=function(n){return ",src,href,action,data-src,".indexOf(","+n.toLowerCase()+",")>=0},mF=function(m,s,n,e,q,v){return q&&mU(n)&&v.charAt(0)==="/"&&v.charCodeAt(1)!==47&&v.charCodeAt(1)!==92?s+n+e+q+path(v):m},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mA,mF)}):h},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
+        default 'var mT=/<[A-Za-z][^<>]*>/g,mA=/(^|\s|[\x22\x27])([^\s=\/<>\x22\x27]+)(\s*=\s*)(?:([\x22\x27])((?:(?!\4)[^<>])*)(?=\4)|[^\s<>\x22\x27]+)/g,mU=function(n){return ",src,href,action,data-src,".indexOf(","+n.toLowerCase()+",")>=0},mF=function(m,s,n,e,q,v){return q&&mU(n)&&v.charAt(0)==="/"&&v.charCodeAt(1)!==47&&v.charCodeAt(1)!==92?s+n+e+q+path(v):m},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mA,mF)}):h},mIV=function(v){return v instanceof String?new v.constructor(mIn(v.toString())):mIn(v)},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_IN_VALUE__",mIV);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
     }
 
     map $upstream_http_content_type $ingress_runtime_shim {
@@ -755,17 +770,90 @@ http {
             # comparisons, `ImageSelector.isInitialMedia` on `src` and
             # `DocumentSelector.fetchAttachments` on `href`; an unquoted
             # attribute value, which has no closing delimiter to anchor on;
-            # the readonly `HtmlViewer`, which reaches markup twice over --
-            # `t-out` on the plain path, `iframeTarget.innerHTML` on the
-            # full-HTML one; and the legacy `web_editor` editor behind
-            # `html_legacy` and `mass_mailing_html`, which carries none of
-            # these expressions.
+            # and the legacy `web_editor` editor behind `html_legacy` and
+            # `mass_mailing_html`, which carries none of these expressions.
+            # The readonly `HtmlViewer` was on that list and is the pair of
+            # rules below.
             # Each escapes rather than corrupts, and each is its own issue.
             sub_filter 'editable.innerHTML=fixInvalidHTML(this.config.content)' 'editable.innerHTML=(window.__WOOW_INGRESS_MARKUP_IN__||function(h){return h})(fixInvalidHTML(this.config.content))';
             sub_filter 'async updateValue(value,{changeId}={changeId:this.lastChangeId}){this.lastValue=normalizeHTML(value,this.clearElementToCompare.bind(this));' 'async updateValue(value,{changeId}={changeId:this.lastChangeId}){value=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(value);this.lastValue=normalizeHTML(value,this.clearElementToCompare.bind(this));';
             sub_filter 'const relativeSrc=srcUrl.pathname;' 'const relativeSrc=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(srcUrl.pathname);';
             sub_filter 'if(content){this.editable.innerHTML=content;}' 'if(content){this.editable.innerHTML=(window.__WOOW_INGRESS_MARKUP_IN__||function(h){return h})(content);}';
             sub_filter 'const comparisonValue=el.innerHTML;' 'const comparisonValue=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(el.innerHTML);';
+            # The readonly html field, both of its render paths (issue #237;
+            # ADR 0004's 2026-10-01 postscript has the decision, this comment
+            # has what an editor of these two lines needs). #210 fixed the
+            # *editable* path. Readonly is the more common one -- every form
+            # the user cannot edit, every record a portal shows
+            # (`project.webclient`, the project-sharing client, serves these
+            # same bytes), and the html field's history dialog, which mounts
+            # the same component -- and there the stored markup's pictures and
+            # linked documents were fetched from the Home Assistant root and
+            # 404'd.
+            #
+            # `HtmlViewer` chooses its path at `get showIframe()`
+            # (`hasFullHtml || cssAssetId`) and reaches markup once down each,
+            # so there are two rules here and not one:
+            #
+            # **The plain path** is `t-out="state.value"` in the component's
+            # own template. Odoo 18 appends OWL templates to the bundle after
+            # the JavaScript, as `registerTemplate(name, path, template)` with
+            # the template a literal, so a template is served through this
+            # location and an exact-expression rewrite can reach it -- the
+            # snippet-thumbnail rule above is the same trick. `t-out` over a
+            # `Markup` value inserts it as HTML, which makes this a markup
+            # insertion exactly like an `innerHTML`.
+            #
+            # Three things decide how that one is written. The anchor carries
+            # the whole `<div>` because `t-out="state.value"` on its own also
+            # occurs in `web.MonetaryField`'s ghost value, in the same bundle.
+            # The attributes are single-spaced and the tag closes `"/>` with
+            # no space because the served bytes are lxml's re-serialisation of
+            # the file and not the file -- `etree.tostring` normalises both,
+            # which is why the fixture is derived through Odoo's own serve
+            # path. And the fallback is an **arrow** function, where the five
+            # rules above write `function(h){return h}`: OWL compiles a
+            # template expression by rewriting every symbol it does not know
+            # into a `ctx[...]` lookup, and a `function`'s parameter is not
+            # exempt -- `function(h){return h}` compiles to
+            # `function(ctx['h']){return ctx['h']}`, a syntax error in the
+            # compiled template. An arrow's parameter is, because OWL tracks
+            # it as a local. `window` is one of OWL's reserved words, so the
+            # lookup survives; verified against the owl.js the pinned deb
+            # ships, and `test_ingress_readonly_html_viewer.py` pins it.
+            #
+            # **The iframe path** is `iframeTarget.innerHTML=content`, which
+            # serves both the `hasFullHtml` document (`documentElement`) and
+            # the `cssAssetId` fragment (`#iframe_target`). The helper runs in
+            # the parent realm on a string, so the `sandbox` the full-HTML
+            # iframe carries (`allow-same-origin allow-popups
+            # allow-popups-to-escape-sandbox`) is not in the way: the rewrite
+            # changes what is assigned, not who assigns it, and the iframe is
+            # `about:blank`, inheriting the page's base URL -- which is why a
+            # root-relative `src` resolved against the Home Assistant root
+            # there in the first place.
+            #
+            # Both go through `__WOOW_INGRESS_MARKUP_IN_VALUE__` rather than
+            # `__WOOW_INGRESS_MARKUP_IN__`, because the value here is an OWL
+            # `Markup` object and `IN` returns a non-string as it came: the
+            # plain `IN` would have been a silent no-op at both sites. The
+            # map comment at the top of this file has the rest of that.
+            #
+            # **Nothing stores anything, so there is no `OUT` half.** A viewer
+            # has no save, and the prefix is put on the value *as it is
+            # inserted*: the helper returns a new value, so `state.value` --
+            # and the revision the history dialog memoised -- still hold the
+            # record's own bytes. That is what makes the one write anywhere
+            # near here safe. The dialog's "Restore history" does **not** go
+            # through `HtmlField.updateValue`, so #210's `OUT` is not standing
+            # behind it: its only implementation
+            # (`project_task_form_controller.js`'s `restoreRequested`) calls
+            # `record.update()` with the memoised ORM revision directly. What
+            # keeps that clean is that nothing the viewer rendered is in that
+            # path, and the Static-tier test asserts the untouched original
+            # rather than trusting a strip that is not there.
+            sub_filter 'iframeTarget.innerHTML=content;' 'iframeTarget.innerHTML=(window.__WOOW_INGRESS_MARKUP_IN_VALUE__||function(h){return h})(content);';
+            sub_filter '<div t-ref="readonlyContent" class="o_readonly" t-out="state.value"/>' '<div t-ref="readonlyContent" class="o_readonly" t-out="(window.__WOOW_INGRESS_MARKUP_IN_VALUE__||((h)=>h))(state.value)"/>';
             # The `/@` links into the web client (issue #211, U-A2). `/@/<website
             # path>` is Odoo 18's route from a website page into the backend, and
             # it is the one route whose *tail* is itself a website path rather
