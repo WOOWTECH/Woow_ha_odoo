@@ -22,12 +22,12 @@ adds:
 * the wrapper still fits upstream. ``functools.wraps`` keeps the original
   under ``__wrapped__``; if a nightly changed its parameters the patch still
   installs and every tracked page view raises ``TypeError``;
-* the swap the patch performs takes on the request Odoo builds. This is the
-  half issue #160 was reopened over: the flag was on the host and every
-  Ingress page view still recorded the Home Assistant host, because
+* the url replacement the patch performs takes on the request Odoo builds.
+  This is the half issue #160 was reopened over: the flag was on the host and
+  every Ingress page view still recorded the Home Assistant host, because
   ``odoo.http.HTTPRequest`` forwards ``url`` through a plain ``property`` that
   never reads the instance ``__dict__``. A flag cannot see that; building this
-  image's own ``request`` and replacing the url on it can.
+  image's own ``request`` and having the module replace the url on it can.
 
 Prints one of ``visitor-url: applied``, ``visitor-url: not applied``,
 ``visitor-url: signature mismatch (...)``, ``visitor-url: url not replaceable
@@ -63,6 +63,13 @@ REPLACEMENT = "https://canonical.invalid/probe"
 # the Home Assistant host.
 UNPROVABLE = "url swap unprovable"
 NOT_REPLACEABLE = "url not replaceable"
+# The module Odoo's server-wide loader has already imported, and the function in
+# it that replaces a request's url. Read out of ``sys.modules`` and never
+# imported: importing it would apply the patch and make the flag above pass by
+# itself. Driving the module's own function is what keeps this from proving a
+# copy of the mechanism instead of the mechanism -- a copy is what the flag was.
+PATCH_MODULE = "odoo.addons.woow_visitor_url"
+SWAP_FUNCTION = "swap_url"
 
 
 def registry_visitor(website_visitor):
@@ -172,6 +179,23 @@ def probe_request(http):
         return None, f"odoo.http.Request could not be built over a bare environ: {exc!r}"
 
 
+def loaded_swap():
+    """``(function, None)`` for the module's own url replacement, or
+    ``(None, sentence)`` when it is not there to drive.
+
+    Odoo imported the module before this probe ran, or ``patched()`` above
+    would already have reported the dispatch unpatched; so the module is in
+    ``sys.modules`` and is read from there rather than imported.
+    """
+    module = sys.modules.get(PATCH_MODULE)
+    if module is None:
+        return None, f"{PATCH_MODULE} is not in sys.modules, so its {SWAP_FUNCTION} cannot be driven"
+    swap = getattr(module, SWAP_FUNCTION, None)
+    if not callable(swap):
+        return None, f"{PATCH_MODULE} has no callable {SWAP_FUNCTION} to drive"
+    return swap, None
+
+
 def url_swap(http):
     """``(None, None)`` when the url replacement the patch performs takes here,
     and ``(verdict, sentence)`` when it does not.
@@ -179,27 +203,32 @@ def url_swap(http):
     The verdict tells apart the two ways this can fail, because they mean
     different things to whoever reads the build:
 
-    * ``"url swap unprovable"`` -- this Odoo could not be asked. Its
-      ``odoo.http`` no longer has what the probe reads, or its request cannot
-      be built over a bare environ, or its url cannot be read. A nightly
-      changed the shape of the request; nothing is known about the patch.
-    * ``"url not replaceable"`` -- it was asked and the swap did not take, so a
-      page view would record the address the request arrived on. This is the
-      0.4.6 defect, and the half issue #160 was reopened over.
+    * ``"url swap unprovable"`` -- the replacement could not be performed. This
+      Odoo's ``odoo.http`` no longer has what the probe reads, its request
+      cannot be built over a bare environ, its url cannot be read, or the
+      module's own function is not where this reads it. A nightly changed a
+      shape; nothing is known about the patch.
+    * ``"url not replaceable"`` -- it was performed and the url did not change,
+      so a page view would record the address the request arrived on. This is
+      the 0.4.6 defect, and the half issue #160 was reopened over.
 
     ``http`` is Odoo's ``odoo.http``. What the dispatch reads is
     ``request.httprequest``, an ``odoo.http.HTTPRequest``: a wrapper that
     installs one plain ``property`` per forwarded attribute, ``url`` included,
     whose getter and setter reach the werkzeug request it wraps
-    (``make_request_wrap_methods``). The patch assigns to that attribute, so
-    this builds the request over a bare environ and asks it to read the
-    assignment back.
+    (``make_request_wrap_methods``). The module replaces that attribute, so
+    this builds the request over a bare environ, hands it to the module's own
+    replacement, and reads the url back itself -- a function that reported
+    success without changing anything would not get past the reading.
 
     What it does not read is Odoo's WSGI application putting that wrapper on
     the request in the first place. If a nightly interposes something else
     there, this stays green and the module's own read-back guard catches it at
     runtime -- a warning per page view, which is what the host logged on 0.4.6.
     """
+    swap, undrivable = loaded_swap()
+    if undrivable is not None:
+        return UNPROVABLE, undrivable
     request, unbuildable = probe_request(http)
     if unbuildable is not None:
         return UNPROVABLE, unbuildable
@@ -210,15 +239,18 @@ def url_swap(http):
     except Exception as exc:
         return UNPROVABLE, f"{name}.{URL_ATTRIBUTE} could not be read: {exc!r}"
     try:
-        setattr(httprequest, URL_ATTRIBUTE, REPLACEMENT)
+        refused = swap(httprequest, REPLACEMENT)
     except Exception as exc:
-        return NOT_REPLACEABLE, f"{name}.{URL_ATTRIBUTE} takes no assignment: {exc!r}"
-    replaced = getattr(httprequest, URL_ATTRIBUTE, None)
+        return UNPROVABLE, f"{PATCH_MODULE}.{SWAP_FUNCTION} raised on {name}: {exc!r}"
+    try:
+        replaced = getattr(httprequest, URL_ATTRIBUTE)
+    except Exception as exc:
+        return UNPROVABLE, f"{name}.{URL_ATTRIBUTE} could not be read back: {exc!r}"
     if replaced != REPLACEMENT:
         return NOT_REPLACEABLE, (
-            f"{name}.{URL_ATTRIBUTE} was assigned {REPLACEMENT!r} and reads back "
-            f"{replaced!r} (it arrived as {arrived!r}); a page view would record the "
-            "address the request arrived on"
+            f"{PATCH_MODULE}.{SWAP_FUNCTION} was asked for {REPLACEMENT!r} on {name} and it "
+            f"reads back {replaced!r} (it arrived as {arrived!r}), the module reporting "
+            f"{refused!r}; a page view would record the address the request arrived on"
         )
     return None, None
 

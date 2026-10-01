@@ -301,10 +301,11 @@ jobs:
       # module (the one the registry runs) carries the flag and whether the
       # wrapper still fits upstream's parameters. The second run leaves the
       # module out of --load and has to come back unpatched, which shows the
-      # check can go red. It also performs the url replacement the patch
-      # performs, on this image's own odoo.http.HTTPRequest: on 0.4.6 the flag
-      # was on and the replacement was a no-op, which only the Live tier saw
-      # (issue #160, reopened). No database, Supervisor or credential is used.
+      # check can go red. It also builds the request Odoo builds in this image,
+      # has the module's own swap_url replace that request's url, and reads the
+      # url back itself: on 0.4.6 the flag was on and the replacement was a
+      # no-op, which only the Live tier saw (issue #160, reopened). No
+      # database, Supervisor or credential is used.
       - name: In-image contract (visitor tracking URL)
         run: |
           set -euo pipefail
@@ -358,10 +359,11 @@ jobs:
             exit 1
           fi
           if grep -q '^visitor-url: url swap unprovable' <<< "${out}"; then
-            echo "::error::the probe could not build the request Odoo builds, so whether" \
-              "woow_visitor_url can replace its url is unknown; this is Odoo's odoo.http having" \
-              "changed shape, not the patch being broken. The probe line above names what it" \
-              "could not read."
+            echo "::error::the probe could not perform woow_visitor_url's url replacement on the" \
+              "request Odoo builds, so whether it works in this image is unknown; something the" \
+              "probe reads changed shape -- Odoo's odoo.http, or the module's own swap_url -- which" \
+              "is not the same as the patch being broken. The probe line above names what it could" \
+              "not read."
             exit 1
           fi
           if ! grep -qx 'visitor-url: applied' <<< "${out}"; then

@@ -79,20 +79,31 @@ def website_base():
     return website.get_base_url() if website else ""
 
 
-def swap_url(httprequest, value) -> bool:
-    """Make ``httprequest.url`` read as ``value``. False when it did not take.
+def swap_url(httprequest, value):
+    """Make ``httprequest.url`` read as ``value``. None when it took, and a
+    short reason why it did not when it did not.
 
-    Assignment is what reaches both shapes of request -- Odoo's wrapper and
-    the werkzeug request it wraps -- and the value is read back afterwards,
-    because a request that accepts the assignment and still reports the old
-    address would leave this patch looking applied while storing the address
-    the request arrived on. That is what issue #160 was reopened over.
+    Assignment is what reaches both shapes of request -- Odoo's wrapper and the
+    werkzeug request it wraps -- and the value is read back afterwards, because
+    a request that accepts the assignment and still reports the old address
+    would leave this patch looking applied while storing the address the
+    request arrived on. That is what issue #160 was reopened over.
+
+    Nothing a request's own ``url`` does is allowed to reach the browser as a
+    500: a page view is not worth a failed response, so every way this can go
+    wrong comes back as a reason for the caller to log.
     """
     try:
         setattr(httprequest, URL_ATTRIBUTE, value)
-    except (AttributeError, TypeError):
-        return False
-    return getattr(httprequest, URL_ATTRIBUTE, None) == value
+    except Exception as exc:
+        return f"assigning it raised {exc!r}"
+    try:
+        read_back = getattr(httprequest, URL_ATTRIBUTE)
+    except Exception as exc:
+        return f"reading it back raised {exc!r}"
+    if read_back != value:
+        return f"it reads back as {read_back!r}"
+    return None
 
 
 def restore_url(httprequest, arrived, was_cached) -> None:
@@ -103,12 +114,17 @@ def restore_url(httprequest, arrived, was_cached) -> None:
     dispatch is left with nothing cached, which is how it arrived; Odoo's
     wrapper has no deleter for a forwarded attribute, so there the arrived
     value is written back instead -- the same address, now cached.
+
+    This runs in a ``finally``, where an exception of its own would replace
+    whatever the dispatch was already raising, so nothing escapes it: a request
+    that will not take its own address back is left as it is, which is the same
+    value read a different way.
     """
     if not was_cached:
         try:
             delattr(httprequest, URL_ATTRIBUTE)
             return
-        except (AttributeError, TypeError):
+        except Exception:
             pass
     swap_url(httprequest, arrived)
 
@@ -137,7 +153,8 @@ def dispatch_on_the_canonical_url(original, self, website_page):
     if stored == arrived:
         return original(self, website_page)
 
-    if not swap_url(httprequest, stored):
+    refused = swap_url(httprequest, stored)
+    if refused is not None:
         # A request whose url refuses the assignment, or goes on reading as
         # the address it arrived on, would make the swap a silent no-op: the
         # page view is then stored as it arrived, and said so, rather than
@@ -145,9 +162,9 @@ def dispatch_on_the_canonical_url(original, self, website_page):
         # request is put back first.
         restore_url(httprequest, arrived, was_cached)
         _logger.warning(
-            "the request's url could not be replaced, so this page view records %s; "
-            "assigning %s on %s.%s does not change what it reads back",
-            arrived, URL_ATTRIBUTE,
+            "the request's url could not be replaced, so this page view records %s: "
+            "%s, on %s.%s",
+            arrived, refused,
             type(httprequest).__module__, type(httprequest).__qualname__,
         )
         return original(self, website_page)
