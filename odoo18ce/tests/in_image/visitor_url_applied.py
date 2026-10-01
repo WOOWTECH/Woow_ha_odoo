@@ -58,7 +58,12 @@ PROBE_ENVIRON = {
     "PATH_INFO": "/probe",
     "QUERY_STRING": "",
 }
-REPLACEMENT = "https://canonical.invalid/probe"
+# What the probe asks the module to put on that request. It carries a path and
+# a query, because a real tracked URL does, and the query holds a raw space,
+# which is not its own normal form: a request whose getter re-encodes what its
+# setter stored reads back as something else here, and would store every page
+# view with a query string on the Home Assistant host.
+REPLACEMENT = "https://canonical.invalid/probe/page?woow=1&x=a b"
 # The two ways the replacement can fail, kept apart because the build step says
 # something different about each: the first is a request that changed shape and
 # tells nothing about the patch, the second is a page view that would record
@@ -257,11 +262,15 @@ def url_swap(http):
         replaced = getattr(httprequest, URL_ATTRIBUTE)
     except Exception as exc:
         return UNPROVABLE, f"{name}.{URL_ATTRIBUTE} could not be read back: {exc!r}"
-    if replaced != REPLACEMENT:
+    # Both readings count. The module says whether the replacement took, which
+    # is what decides whether a page view records the arrived address; and the
+    # url is read here as well, because a module reporting success and changing
+    # nothing is the 0.4.6 defect.
+    if refused is not None or replaced != REPLACEMENT:
         return NOT_REPLACEABLE, (
-            f"{PATCH_MODULE}.{SWAP_FUNCTION} was asked for {REPLACEMENT!r} on {name} and it "
-            f"reads back {replaced!r} (it arrived as {arrived!r}), the module reporting "
-            f"{refused!r}; a page view would record the address the request arrived on"
+            f"{PATCH_MODULE}.{SWAP_FUNCTION} was asked for {REPLACEMENT!r} on {name} and "
+            f"reported {refused!r}; it arrived as {arrived!r} and reads back {replaced!r}. "
+            "A page view would record the address the request arrived on"
         )
     return None, None
 

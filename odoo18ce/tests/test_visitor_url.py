@@ -15,6 +15,7 @@ import importlib.util
 import re
 import sys
 import types
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -1082,6 +1083,17 @@ def test_the_probe_environ_names_an_address_that_is_not_the_replacement() -> Non
     assert probe.PROBE_ENVIRON["SERVER_PORT"] not in ("80", "443")
 
 
+def test_the_replacement_the_probe_asks_for_is_shaped_like_a_tracked_url() -> None:
+    """A path and a query, with the query not in its own normal form: a request
+    that re-encodes what it was handed reads back as something else, and would
+    store every page view carrying a query string on the Home Assistant host."""
+    replacement = load_probe().REPLACEMENT
+    parts = urllib.parse.urlsplit(replacement)
+    assert parts.scheme and parts.netloc
+    assert parts.path not in ("", "/") and parts.query
+    assert replacement != urllib.parse.quote(replacement, safe=":/?&=")
+
+
 def test_the_probe_performs_the_swap_on_the_request_odoo_builds() -> None:
     request = ingress_request()
     declared, _ = odoo_website_visitor(request)
@@ -1249,6 +1261,49 @@ def test_the_probe_reports_a_replacement_that_raises_rather_than_dying_with_it()
         verdict, sentence = probe.url_swap(odoo_http_module())
     assert verdict == probe.UNPROVABLE
     assert "RuntimeError" in sentence and "broken" in sentence
+
+
+def test_the_probe_does_not_ignore_the_modules_word_either() -> None:
+    """A replacement that leaves the right value and reports a refusal: the
+    module records the arrived address whenever it refuses, so the page view
+    goes on the Home Assistant host and the probe has to say so."""
+    probe = load_probe()
+    module = types.ModuleType(probe.PATCH_MODULE)
+
+    def swap_url(httprequest, value):
+        setattr(httprequest, "url", value)
+        return "it reads back as something else"
+
+    module.swap_url = swap_url
+    with loader_has(module):
+        verdict, sentence = probe.url_swap(odoo_http_module())
+    assert verdict == probe.NOT_REPLACEABLE
+    assert "it reads back as something else" in sentence
+
+
+def test_the_probe_fails_when_the_url_comes_back_re_encoded() -> None:
+    """The shape the probe's replacement is chosen for: a request that stores
+    what it is handed and reads it back normalised. The page view would carry a
+    query string, so the stored URL would not be the one asked for."""
+
+    class HTTPRequest:
+        url = property(
+            lambda self: urllib.parse.quote(self.read, safe=":/?&="),
+            lambda self, value: setattr(self, "read", value),
+        )
+
+        def __init__(self, environ):
+            self.read = werkzeug_url(environ)
+
+    probe = load_probe()
+    module = types.ModuleType(probe.PATCH_MODULE)
+    # Assigns and reports nothing wrong, which is what a swap_url blind to the
+    # read-back would do; the probe reads it back itself.
+    module.swap_url = lambda httprequest, value: setattr(httprequest, "url", value)
+    with loader_has(module):
+        verdict, sentence = probe.url_swap(odoo_http_module(HTTPRequest))
+    assert verdict == probe.NOT_REPLACEABLE
+    assert "a%20b" in sentence
 
 
 def test_the_probe_does_not_take_the_modules_word_for_the_replacement() -> None:
