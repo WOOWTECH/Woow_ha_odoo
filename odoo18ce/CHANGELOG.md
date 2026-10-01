@@ -3,6 +3,76 @@
 ## Unreleased
 
 ### Added
+- A targets file may now aim at a GET-writing route only when that route's write
+  **converges** — a second visit re-derives the same state and renders the same
+  screen, a recompute or a re-store, never an accumulation and never a
+  consumption. #225 decided the rule (being *bounded* to `odoo_parity` never made
+  a write *cross-surface deterministic*: the first surface's visit can edit the
+  very screen the second surface then judges), and this is it in the tree. Every
+  `GET_WRITING_ROUTES` entry now carries a class beside its citation, and the
+  guard reads nothing else: `CONVERGENT` keeps today's `odoo_parity` bound,
+  `FIXTURE_CONSUMING` and `UNCLASSIFIED` are refused **on every database**,
+  `odoo_parity` included. Because convergence makes each surface's render include
+  the effect of its own write, the rule is order-independent — no ordering of the
+  two surfaces is fixed, and none may become load-bearing — and `ensure_cart`,
+  which leaves a non-empty cart exactly as it is, is the precedent it was read
+  off.
+- `/shop/payment/validate` is the one fixture-consuming route and is now refused
+  everywhere rather than bounded: `website_sale/controllers/main.py:1978-1979`
+  confirms the draft order into a sale and `request.website.sale_reset()` drops
+  the cart, so the surface that opens it second has no cart to judge and
+  `ensure_cart` would silently build a *different* order. The refusal happens
+  before a browser launches — it reads the target list and no database, so there
+  is nothing to wait for the login to report.
+- The two routes #225 left pending were read against the criterion at the pinned
+  Odoo (18.0.20260930) and **both are promoted to `CONVERGENT`**. `/shop/cart`:
+  `main.py:796` has nothing left to unlink on a second visit and the first
+  surface already rendered the cart without those lines, `:767`
+  `sale_get_order()` moves the order onto the logged-in partner only while the
+  two disagree (`website_sale/models/website.py:455-457`), and `:798` reaches
+  `sale/controllers/portal.py:270`, whose `_portal_ensure_token()` stores an
+  `access_token` only when the order has none
+  (`portal/models/portal_mixin.py:31-33`). `/my/orders/`: the same guarded
+  re-store, from `:270` and from the pager at `:199`
+  (`portal/controllers/portal.py:93` and `:100`). Each route has exactly one
+  branch that does **not** converge — the cart's abandoned-cart revival
+  (`main.py:785-786`, which moves an abandoned order's lines and cancels it) and
+  the order page's "Quotation viewed by customer" note
+  (`sale/controllers/portal.py:168`, one per session) — and a query is the only
+  way to reach either (`access_token`, `revive`), which `_TARGET_QUERY` refuses: a
+  target may carry a view chooser and nothing else. That dependency is the
+  promotion's footing, so a static test ties the two together; if the query rule
+  ever widens, both entries have to be read again. A key is a prefix, so the
+  promotions reach the siblings too, and what bounds those is that `open` makes a
+  GET and nothing else: `/shop/cart/update` (`:803`), `/shop/cart/update_json`
+  (`:838`), `/shop/cart/quantity` (`:948`), `/shop/cart/clear` (`:954`),
+  `/my/orders/<id>/accept` (`sale/controllers/portal.py:279`), `/decline`
+  (`:329`), `/transaction` (`:382`) and `/my/orders/reorder_modal_content`
+  (`website_sale/controllers/reorder.py:38`) are each `type='json'` or
+  `methods=['POST']`, and the two siblings a GET does reach — `/my/orders/page/<n>`
+  and `/my/orders/<id>/document/<n>` — are the ones already recorded as writing
+  nothing.
+- `/shop/cart`'s promotion is load-bearing, which #225 did not know when it wrote
+  that no targets file aims at either route:
+  `docs/testing/evidence/2026-09-30-issue-213/targets.jsonl` aims at `/shop/cart`,
+  and it is the Live check PR #229 owes. Refusing the route would have made that
+  check unrunnable, so the audit is what the check now rests on.
+- The 15 portal and `mail` prefixes #226 and #247 added carry no classification
+  and are therefore `UNCLASSIFIED` — refused on `odoo_parity` too, where they used
+  to be allowed. Nothing aims at any of them (the two targets files in the
+  evidence tree name `/shop/payment` and `/shop/cart`, both convergent), reading
+  them against the criterion is out of #228's scope, and over-refusing is the
+  direction this guard errs in. Classifying one is a one-line promotion plus its
+  citation.
+- The rule is recorded where it is used: the convergence criterion, the three
+  classes route-by-route with the reason for each, `ensure_cart` as the precedent
+  and order-independence are stated beside `GET_WRITING_ROUTES` and in the
+  adapter's module docstring; the operator's command sheet
+  (`docs/testing/INGRESS_VS_PUBLIC_PARITY.md`, appendix A) says it in two lines;
+  and `docs/adr/0012-sweeps-verify-on-the-test-host.md` gains a dated
+  postscript recording the constraint on its write accounting, its original text
+  unchanged. Guard-only; no behaviour change in the add-on and no version bump.
+  Issue #228, decided on #225, parent #148.
 - `open`'s write bound now covers `mail`'s remaining **16 controllers** — the
   sweep #226 stopped in front of. Of the five GET-reachable routes in them, three
   write and two are clean, and the three write the same way: in a decorator they

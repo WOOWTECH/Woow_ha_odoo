@@ -83,3 +83,31 @@ the day the work is built.
   not loosen anything itself.
 - A Live run is still a Live run: it is slow, it needs the host to be free, and
   two Sweeps must not drive it at once.
+
+## Postscript (2026-10-01, #228)
+
+One constraint on the write accounting above, decided on #225 and built by
+#228. "Data a run creates is named after the run" bounds **where** a Live
+write may land; it says nothing about whether the second surface still has
+something to judge after the first surface's write. The dual-surface `open`
+run reaches Odoo routes that write while rendering a plain GET
+(`GET_WRITING_ROUTES` in `odoo18ce/tests/e2e_menu_action_adapter.py`), and
+one of them — `/shop/payment/validate` — confirms the draft order into a
+sale and resets the cart, so whichever surface opens it first leaves the
+other nothing to compare.
+
+A targets file may therefore name such a route only when its write
+**converges**: a second visit re-derives the same state and renders the same
+screen — a recompute or a re-store, never an accumulation and never a
+consumption. A route that consumes the fixture, and any route nobody has read
+against that rule, is a configuration error refused **on every database,
+`odoo_parity` included**, before a browser launches. Convergent routes keep
+the `odoo_parity` bound this ADR's boundary already gives them, unchanged.
+
+Nothing above is withdrawn: the boundary still permits the write, and the
+refusal is narrower than the boundary rather than an exception to it. What it
+adds is that a run inside the boundary can still be a run whose evidence
+means nothing, and that the guard — not the reviewer of the evidence — is
+where that is caught. The rule, each route's class and the reason for it live
+beside the list in the adapter; `ensure_cart` leaving a non-empty cart alone
+is the precedent it was read off.
