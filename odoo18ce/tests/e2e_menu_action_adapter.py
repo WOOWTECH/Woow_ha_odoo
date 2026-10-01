@@ -25,7 +25,10 @@ Navigating writes too where Odoo writes on a plain GET: the checkout routes
 edit the draft order while rendering it. `GET_WRITING_ROUTES` names those
 routes and `require_write_database` holds them to the same database, so a
 target reaches one only on a run allowed to write -- whether or not it declared
-a cart.
+a cart. The record names that write as well: after such a navigation the run
+reads the session's draft order and puts it in the record's `writes`, on both
+surfaces, so `diff` judges a difference in what the GET wrote the way it judges
+one in what a cart step added.
 
 Being allowed to write is not enough to be judged, so a targets file may name
 such a route only when its write **converges**: a second visit re-derives the
@@ -1231,13 +1234,15 @@ class SurfaceObservation:
     url_literals: Sequence[str] = ()
     url_violations: Sequence[Mapping[str, str]] = ()
     http_5xx: int = 0
-    # The records an `open` target created to reach its screen -- the cart
-    # `ensure_cart` filled, or the one a failed cart step left empty, and
-    # nothing else. Empty does not mean the run wrote nothing: a target on
-    # `GET_WRITING_ROUTES` writes while its screen renders,
-    # bounded to `WRITE_DATABASE` but not reported here, and so do the page's own
-    # templates and JavaScript. Read it as "what the run set up", not as "what
-    # the database got".
+    # The records an `open` target created to reach its screen and the draft
+    # order its screen's own GET left behind -- the cart `ensure_cart` filled,
+    # or the one a failed cart step left empty, and the reading
+    # `_draft_order_after_visit` takes after a target on `GET_WRITING_ROUTES`.
+    # Empty still does not mean the run wrote nothing: that reading covers
+    # `sale.order` and no other model -- the `access_token` a portal route
+    # stores is outside it -- and the page's own templates and JavaScript write
+    # where nothing reads them. Read it as "what the run set up and what the
+    # draft order held after it", not as "what the database got".
     writes: Sequence[Mapping[str, Any]] = ()
 
 
@@ -1400,9 +1405,10 @@ def _judge(public: Mapping[str, Any], ingress: Mapping[str, Any]) -> tuple[str, 
     left_writes, right_writes = _written(public), _written(ingress)
     if left_writes != right_writes:
         # Both surfaces share the logged-in user, so a cart target fills one
-        # cart and the other run reuses it. Two different records mean the two
-        # screens were rendered from different data, and nothing below them can
-        # be attributed to the surface.
+        # cart and the other run reuses it, and a target on a GET-writing route
+        # reports the draft order its own navigation left. Two different records
+        # mean the two screens were rendered from different data, and nothing
+        # below them can be attributed to the surface.
         reasons.append("records written: public=%s ingress=%s"
                        % (", ".join(left_writes) or "none", ", ".join(right_writes) or "none"))
         blocker = True
@@ -1807,6 +1813,13 @@ class SurfaceDriver:
         convergence half before the browser even launches -- so a misaimed run
         stops at once, and this is the check for every other caller of this
         driver.
+
+        One that is allowed through writes while its screen renders, so the
+        observation carries what that left: `_draft_order_after_visit` reads
+        the session's draft order after the navigation and the row joins
+        whatever `ensure_cart` put there. A target under no `GET_WRITING_ROUTES`
+        prefix takes no such reading -- the reading is a `/shop/cart`
+        navigation, which writes -- and records exactly what it always did.
         """
         READ_ONLY_POLICY.require(Operation.NAVIGATE)
         require_write_database((target,), self.database)
@@ -1853,7 +1866,33 @@ class SurfaceDriver:
                 write = writes[0]
                 detail = ("; no record will name the cart: %s:%s holding %s item(s), %s"
                           % (write["model"], write["id"], write["items"], write["how"]))
+            # No draft-order reading is taken on this path: a configuration
+            # error from `_open` can be the ingress session failing *before*
+            # the navigation, and the message cannot say which, so a reading
+            # taken here would credit a GET that was never made.
             raise RuntimeError(self.masker.text(str(error) + detail)) from None
+        prefix = get_writing_route(target.route)
+        if prefix is not None:
+            # The navigation above was a plain GET and Odoo wrote while it
+            # rendered, so the record says what it left: the draft order, on
+            # both surfaces, which is what lets `_judge` compare them. Only a
+            # navigation that was actually made gets a reading -- a cart step
+            # that failed returns above, before its target ever asked for the
+            # route. A screen that loaded the wrong thing asked for it all the
+            # same, so it gets its row like any other.
+            left, unread = self._draft_order_after_visit(prefix)
+            if left is not None:
+                writes += (left,)
+            else:
+                # A reading that said nothing is not the silence this row
+                # exists to end: it goes on the observation beside the screen
+                # it was taken after, the way a failed cart step's does. It
+                # leaves no row, so a reading that failed on one surface only
+                # is a write difference at blocker severity -- which is the
+                # honest verdict (the comparison the row exists for cannot be
+                # made), and the `result` beside it in the joined record says
+                # it was the reading and not the database that differed.
+                observation = replace(observation, result="%s; %s" % (observation.result, unread))
         return replace(observation, writes=writes)
 
     def ensure_cart(self, product_route: str) -> dict[str, Any]:
@@ -2241,26 +2280,9 @@ class SurfaceDriver:
         None and the second half of the answer is the reason, which the caller
         puts on the observation beside the failure that brought us here.
         """
-        page = None
-        try:
-            if self.ingress:
-                # Best effort, and suppressed: this reading is the one thing
-                # standing between a cart the run filled and a `writes` that
-                # never names it, so a session that will not refresh must not
-                # cost it. A page that then fails is what the reason is for.
-                with contextlib.suppress(Exception):
-                    self.ingress.keep_alive()
-            page = self.context.new_page()
-            items, order = self._cart(page)
-        except Exception as error:  # noqa: BLE001 -- the failure that brought us here is the story
-            return None, ("the cart could not be read afterwards (%s)"
-                          % (str(error).splitlines() or [""])[0])
-        finally:
-            if page is not None:
-                with contextlib.suppress(Exception):
-                    page.close()
-        if items is None:
-            return None, "the cart page did not show afterwards how many items the cart holds"
+        items, order, unread = self._reread_cart()
+        if unread is not None:
+            return None, unread
         if not items:
             if not order:
                 # Read, and empty, and naming no order: there is no row to
@@ -2276,6 +2298,100 @@ class SurfaceDriver:
             return {"model": "sale.order", "id": order, "items": 0, "how": how}, None
         return ({"model": "sale.order", "id": order, "items": items,
                  "how": "the cart holds %d item(s) after the cart step failed" % items}, None)
+
+    def _draft_order_after_visit(self, prefix: str) -> tuple[dict[str, Any] | None, str | None]:
+        """The draft order a target on a GET-writing route left behind, and why none.
+
+        `open` navigates with `page.goto`, which is a GET and nothing more, and
+        the routes on `GET_WRITING_ROUTES` write while they render it: the run
+        mutates the database whether or not the target declared a `cart:`.
+        `require_write_database` has always bounded that write and no record
+        ever named it, so ADR 0012's "every mutation is accounted" held in the
+        bound alone and `_judge` compared "none" with "none" on both surfaces --
+        a cross-surface difference in what the GET wrote could not fire. This is
+        the row that makes it fire: the session's draft order after the
+        navigation, read the way `_cart_after_failure` reads it, so `diff_runs`
+        and `_judge` take it as the write row it is and need no new format.
+
+        It is a state reading and not a claim of authorship, which is what lets
+        one reading answer for every aimable prefix. Most of them write on the
+        cart itself (`/shop/checkout` persists a delivery method on it); the
+        two that do not -- `/my/orders/`, whose write is an `access_token`, and
+        `/website/lang`, whose write is on the order's lines -- still render a
+        screen the draft order is behind, and the row says what the order held
+        after the visit rather than what the route put there. The `how` names
+        the prefix and quotes the write `GET_WRITING_ROUTES` records for it, so
+        the record says which of the two kinds this row is.
+
+        Not covered, and deliberately: what the page's own templates and
+        JavaScript write, and any model but `sale.order` -- the `access_token`
+        the quoted write names for `/my/orders/` included, which is why the row
+        is a reading of the cart and not a reading of that token. `writes` says
+        what the run set up and what the draft order held after it, not
+        everything the database got.
+
+        It costs one more navigation per such target -- the cart page, with the
+        same minute's bound every other reading of it carries -- which a run
+        sizing its timeout around a GET-writing target should count.
+
+        Refuses to read unless the session is on `WRITE_DATABASE`: the reading
+        opens `/shop/cart`, which is itself on `GET_WRITING_ROUTES`, so it is
+        bounded where every other write in this driver is. `open_screen` has
+        already refused such a target off that database through
+        `require_write_database`, so nothing reaches this check by the ordinary
+        path -- it is the bound for a caller that skipped it, the way
+        `ensure_cart` keeps its own.
+        """
+        if self.database != WRITE_DATABASE:
+            raise RuntimeError("crawler configuration: reading what a GET-writing target wrote opens the cart "
+                               "page, which writes, and that is allowed on %s only; the session's database "
+                               "is %r" % (WRITE_DATABASE, self.database))
+        items, order, unread = self._reread_cart()
+        if unread is not None:
+            return None, unread
+        if not order:
+            # The badge renders "0" until the session has an order and
+            # `_cart` reads that as no order: there is nothing this run can
+            # name, and a row naming `sale.order:0` would claim a record that
+            # does not exist. Both surfaces say the same thing by saying
+            # nothing, which is the one case where silence is the reading.
+            return None, ("the cart named no order after the visit to %s, so this run has no draft order "
+                          "to report" % prefix)
+        return {"model": "sale.order", "id": order, "items": items,
+                "how": "the draft order the session held after the visit to %s, which %s"
+                       % (prefix, GET_WRITING_ROUTES[prefix].write)}, None
+
+    def _reread_cart(self) -> tuple[int | None, str | None, str | None]:
+        """The cart read again on a page of its own: the count, the order, and why neither.
+
+        The reading both after-the-fact readers take -- the one after a cart
+        step that failed and the one after a visit to a GET-writing route -- so
+        a cart page that will not answer reads the same way in both records.
+        "Afterwards", in the reasons below, is after whichever of the two the
+        caller just did. The reason is None exactly when there is a reading: a
+        caller gets a count to report or a sentence saying why there is none.
+        """
+        page = None
+        try:
+            if self.ingress:
+                # Best effort, and suppressed: this reading is the one thing
+                # standing between a write the run made and a `writes` that
+                # never names it, so a session that will not refresh must not
+                # cost it. A page that then fails is what the reason is for.
+                with contextlib.suppress(Exception):
+                    self.ingress.keep_alive()
+            page = self.context.new_page()
+            items, order = self._cart(page)
+        except Exception as error:  # noqa: BLE001 -- why the reading failed is the whole answer here
+            return None, None, ("the cart could not be read afterwards (%s)"
+                                % (str(error).splitlines() or [""])[0])
+        finally:
+            if page is not None:
+                with contextlib.suppress(Exception):
+                    page.close()
+        if items is None:
+            return None, None, "the cart page did not show afterwards how many items the cart holds"
+        return items, order, None
 
     def _cart(self, page) -> tuple[int | None, str | None]:
         """The number of items in the session's cart, and the order it is.

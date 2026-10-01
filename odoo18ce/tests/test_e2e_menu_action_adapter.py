@@ -1566,6 +1566,173 @@ class CartStepTests(unittest.TestCase):
         ])
 
 
+CHECKOUT_TARGET = '{"module": "m", "target": "/shop/checkout", "expect_selector": "#x"}'
+CHECKOUT_WRITE = GET_WRITING_ROUTES["/shop/checkout"].write
+
+
+def screen_driver(context, *, database=WRITE_DATABASE) -> SurfaceDriver:
+    """A cart driver whose navigation is already done, so `open_screen` is what runs.
+
+    `_open` is the part that needs a browser; what this file is about is what
+    `open_screen` records around it -- here, the draft order a GET-writing
+    route left behind once its screen had rendered.
+    """
+    driver = cart_driver(context, database=database)
+    driver._open = lambda *args, **kwargs: observation()
+    return driver
+
+
+class GetWriteEvidenceTests(unittest.TestCase):
+    """What a target on a `GET_WRITING_ROUTES` route puts in `writes`. No browser."""
+
+    def test_a_get_writing_target_names_the_draft_order_the_visit_left(self) -> None:
+        # The navigation is a plain GET and Odoo writes while it renders, so the
+        # record said nothing about a mutation ADR 0012 has accounted for -- and
+        # `_judge` compared "none" with "none" whatever the two surfaces wrote.
+        target, = parse_targets([CHECKOUT_TARGET])
+        page = FakePage([1], order="7")
+        observed = screen_driver(FakeContext(page)).open_screen(target)
+        self.assertTrue(observed.available)
+        self.assertEqual(list(observed.writes), [
+            {"model": "sale.order", "id": "7", "items": 1,
+             "how": "the draft order the session held after the visit to /shop/checkout,"
+                    " which " + CHECKOUT_WRITE},
+        ])
+        # Read the way a failed cart step reads it: the cart page, once.
+        self.assertEqual(page.opened, [("/shop/cart", "domcontentloaded")])
+
+    def test_the_row_quotes_the_write_the_table_says_the_route_makes(self) -> None:
+        # The `how` is not a sentence of its own: it names the prefix the target
+        # fell under and the write `GET_WRITING_ROUTES` recorded for it, so an
+        # entry re-read later says in the evidence what it says in the table.
+        target, = parse_targets(['{"module": "m", "target": "/shop/pricelist", "expect_selector": "#x"}'])
+        observed = screen_driver(FakeContext(FakePage([2], order="7"))).open_screen(target)
+        self.assertEqual(observed.writes[0]["how"],
+                         "the draft order the session held after the visit to /shop/pricelist, which "
+                         + GET_WRITING_ROUTES["/shop/pricelist"].write)
+
+    def test_an_empty_draft_order_after_the_visit_is_a_row_like_any_other(self) -> None:
+        # `items: 0` is the #213 shape, and it joins and compares the same way:
+        # an order that lost its lines on one surface only is the difference
+        # this evidence exists to show.
+        target, = parse_targets([CHECKOUT_TARGET])
+        observed = screen_driver(FakeContext(FakePage([0], order="7"))).open_screen(target)
+        self.assertEqual(list(observed.writes), [
+            {"model": "sale.order", "id": "7", "items": 0,
+             "how": "the draft order the session held after the visit to /shop/checkout,"
+                    " which " + CHECKOUT_WRITE},
+        ])
+
+    def test_a_visit_that_left_no_draft_order_names_none_and_says_so(self) -> None:
+        # The badge carries "0" until the session has an order: there is no row
+        # to report, and a row naming `sale.order:0` would claim a record that
+        # does not exist. #213 settled that for the cart step
+        # (`test_an_empty_cart_naming_no_order_is_a_record_nobody_created`) and
+        # a GET that wrote on no draft order is the same reading: both surfaces
+        # say "none" because that is what the visit left, and the record says
+        # so in words rather than inventing a row to break the tie with.
+        target, = parse_targets([CHECKOUT_TARGET])
+        for missing in (None, "0", ""):
+            observed = screen_driver(FakeContext(FakePage([0], order=missing))).open_screen(target)
+            self.assertEqual(list(observed.writes), [], msg=repr(missing))
+            self.assertEqual(observed.result,
+                             "loaded; the cart named no order after the visit to /shop/checkout,"
+                             " so this run has no draft order to report")
+
+    def test_a_draft_order_that_could_not_be_read_is_no_row_and_the_record_says_why(self) -> None:
+        # Silence is what this issue is about, so a reading that failed is not
+        # silence either: the screen still loaded and the record carries both.
+        target, = parse_targets([CHECKOUT_TARGET])
+        unreadable = screen_driver(FakeContext(FakePage([None]))).open_screen(target)
+        self.assertEqual(list(unreadable.writes), [])
+        self.assertTrue(unreadable.available)
+        self.assertIn("did not show afterwards how many items", unreadable.result)
+        self.assertTrue(unreadable.result.startswith("loaded; "), unreadable.result)
+        gone = screen_driver(FakeContext(fail_after=0)).open_screen(target)
+        self.assertEqual(list(gone.writes), [])
+        self.assertIn("could not be read afterwards", gone.result)
+
+    def test_a_target_under_no_listed_prefix_is_recorded_exactly_as_before(self) -> None:
+        # The reading is a `/shop/cart` navigation, which writes: a target that
+        # named no GET-writing route must not get one.
+        target, = parse_targets(['{"module": "m", "target": "/odoo/action-1", "expect_model": "res.partner"}'])
+        context = FakeContext()
+        observed = screen_driver(context).open_screen(target)
+        self.assertEqual(list(observed.writes), [])
+        self.assertEqual(observed.result, "loaded")
+        self.assertEqual(context.made, 0)
+
+    def test_a_cart_target_names_the_cart_it_filled_and_the_order_the_visit_left(self) -> None:
+        # Two writes, two rows: `ensure_cart` says what the run set up before
+        # the screen, and this says what the screen's own GET left behind.
+        target, = parse_targets([CART_TARGET])
+        filling, after = FakePage([0, 1], order="7"), FakePage([1], order="7")
+        observed = screen_driver(FakeContext(filling, after)).open_screen(target)
+        self.assertEqual([(item["id"], item["items"]) for item in observed.writes], [("7", 1), ("7", 1)])
+        self.assertIn("added the product on /shop/product/desk-1", observed.writes[0]["how"])
+        self.assertIn("after the visit to /shop/checkout", observed.writes[1]["how"])
+
+    def test_a_failed_cart_step_takes_no_reading_for_a_visit_it_never_made(self) -> None:
+        # The cart step failed, so the screen was never opened and the route
+        # never wrote: the only row is the one the cart step left.
+        target, = parse_targets([CART_TARGET])
+        observed = screen_driver(FakeContext(FakePage([0, 0, 0, 0]), FakePage([1]))).open_screen(target)
+        self.assertFalse(observed.available)
+        self.assertEqual([item["how"] for item in observed.writes],
+                         ["the cart holds 1 item(s) after the cart step failed"])
+
+    def test_the_reading_is_refused_off_the_parity_database(self) -> None:
+        # The reading opens `/shop/cart`, which is itself a GET-writing route:
+        # it is bounded where every other write in this driver is. A target
+        # never gets here off `WRITE_DATABASE` -- `require_write_database`
+        # refuses it first -- so this is the bound for a caller that skipped it.
+        driver = screen_driver(FakeContext(), database="odoo_test")
+        with self.assertRaises(RuntimeError) as caught:
+            driver._draft_order_after_visit("/shop/checkout")
+        self.assertTrue(is_configuration_error(caught.exception))
+        self.assertIn("'odoo_test'", str(caught.exception))
+
+    def test_a_difference_in_what_the_get_wrote_is_judged_like_a_cart_write(self) -> None:
+        # The judgement this evidence unlocks: before it both surfaces reported
+        # "none" and a real divergence in what the GET wrote could never fire.
+        # No new evidence format -- `diff_runs` reads the same rows.
+        row = lambda items: {"model": "sale.order", "id": "7", "items": items,
+                             "how": "the draft order the session held after the visit to /shop/checkout,"
+                                    " which " + CHECKOUT_WRITE}
+        judge = lambda right: diff_runs(
+            [evidence_record(RUN, Surface.PUBLIC, module="m", identity="open:route:/shop/checkout",
+                             observation=observation(writes=(row(1),)))],
+            [evidence_record(RUN, Surface.HA_INGRESS, module="m", identity="open:route:/shop/checkout",
+                             observation=observation(writes=right))],
+        )[0]
+        self.assertEqual(judge((row(1),))["verdict"], "PARITY")
+        differs = judge((row(2),))
+        self.assertEqual((differs["verdict"], differs["severity"]), ("GAP", "blocker"))
+        self.assertIn("records written: public=sale.order:7 holding 1 ingress=sale.order:7 holding 2",
+                      differs["notes"])
+
+    def test_a_reading_that_failed_on_one_surface_is_a_difference_and_not_a_silence(self) -> None:
+        # The cost of leaving no row where the reading failed, written down: the
+        # surface that could not read its cart compares as "none" against the
+        # other surface's row and the pair is a blocker. That is the honest
+        # verdict -- the comparison the row exists for cannot be made -- and the
+        # `result` beside it in the joined record says it was the reading that
+        # failed and not the database that differed.
+        row = {"model": "sale.order", "id": "7", "items": 1,
+               "how": "the draft order the session held after the visit to /shop/checkout,"
+                      " which " + CHECKOUT_WRITE}
+        judged = diff_runs(
+            [evidence_record(RUN, Surface.PUBLIC, module="m", identity="open:route:/shop/checkout",
+                             observation=observation(writes=(row,)))],
+            [evidence_record(RUN, Surface.HA_INGRESS, module="m", identity="open:route:/shop/checkout",
+                             observation=observation(
+                                 result="loaded; the cart could not be read afterwards (Timeout 60000ms exceeded)"))],
+        )[0]
+        self.assertEqual((judged["verdict"], judged["severity"]), ("GAP", "blocker"))
+        self.assertIn("records written: public=sale.order:7 holding 1 ingress=none", judged["notes"])
+        self.assertIn("could not be read afterwards", judged["ingress"]["result"])
+
+
 TODO_TARGET = OpenTarget(module="project_todo", target="project_todo.project_task_action_todo",
                          label="To-do kanban", expect_model="project.task")
 

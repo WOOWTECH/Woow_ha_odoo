@@ -885,6 +885,13 @@ python3 odoo18ce/tests/e2e_menu_action_adapter.py open --surface ha_ingress --ta
 #     `/discuss/channel/`、`/web/image`、`/mail/message/`、`/mail/view`）——沒人照收斂準則讀過，
 #     讀過之前一律拒；這個守門寧可多拒。
 # 以上兩類的拒絕都發生在開瀏覽器之前（`require_convergent_writes`）。
+# target 指到 `GET_WRITING_ROUTES` 的路由時，畫面開完後會再讀一次該 session 的草稿訂單，
+# 以一般的 write 列（`sale.order` 的 id 與件數）寫進紀錄的 `writes`（#224）：兩個 surface 都有這一列，
+# `diff` 就能像判 cart 寫入一樣，判「這次純 GET 寫出來的東西有沒有跨 surface 分歧」——證據格式不變。
+# 那是一列「狀態讀數」而非寫入者宣告：`how` 會寫出前綴與 `GET_WRITING_ROUTES` 記的那筆寫入，
+# 因為可指的前綴裡有兩條寫在別處（`/my/orders/` 寫 `access_token`、`/website/lang` 寫訂單行），
+# 而 `writes` 只涵蓋 `sale.order`。沒指到前綴的 target 完全不做這次讀取（讀取本身是一次 `/shop/cart`
+# 導覽，也會寫），讀不到時不留空列，改把原因接在該筆紀錄的 `result` 後面。
 # 行動版模擬：crawl 加 --viewport 390x844
 # 共用層 F/A/B/C/D（#143）：先 P-Check、建 P-7 fixture，再跑全部 check，最後守恆檢查
 python3 odoo18ce/tests/e2e_parity_shared_layers_live.py pcheck --env-file .env --db <DB>

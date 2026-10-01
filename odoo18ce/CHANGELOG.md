@@ -193,6 +193,36 @@
   link pasted to a colleague still does not open -- what refuses it is the
   `ingress_session` cookie their browser does not have. No version bump. Issue
   #234, ADR 0004 (third 2026-10-01 postscript), parent #148.
+- The `open` subcommand now **reports** the write it has been bounding. A target
+  on a `GET_WRITING_ROUTES` route writes while its screen renders — Odoo edits
+  the draft order on a plain GET — and since #212 that write has been held to
+  `odoo_parity` and named in no record: ADR 0012's "every mutation is
+  accounted" lived in the bound alone, and `_judge`'s "records written"
+  comparison, the one that raises a Blocker on a cross-surface difference,
+  compared "none" with "none" on both surfaces, so a real divergence in what
+  the GET wrote could never fire. After such a navigation the driver now reads
+  the session's draft order — the same cart reading a failed cart step takes,
+  factored out so both readers share it — and puts it in the record's `writes`
+  as an ordinary `{"model": "sale.order", "id", "items", "how"}` row, on both
+  surfaces, so `diff` judges it exactly as it judges a cart-write difference.
+  No new evidence format. The row is a *state* reading and says so: its `how`
+  names the prefix and quotes `GET_WRITING_ROUTES` for the write that was read,
+  because two aimable prefixes write elsewhere (`/my/orders/` stores an
+  `access_token`, `/website/lang` writes the order's lines) and `writes` still
+  covers `sale.order` and nothing else. A target under no listed prefix takes
+  no reading at all and records exactly what it did before — the reading is
+  itself a `/shop/cart` navigation, which writes, so it is bounded to
+  `odoo_parity` like every other write in this driver and costs one more
+  navigation per GET-writing target. A cart page that would not answer leaves
+  no row and the reason on the record's `result`, rather than the silence this
+  change exists to end; a reading that failed on one surface only is then a
+  write difference at Blocker severity, which is the verdict a comparison that
+  could not be made deserves, and the `result` beside it in the joined record
+  says it was the reading and not the database that differed. A visit that left
+  no draft order at all leaves no row either, for #213's reason: a row naming
+  `sale.order:0` would claim a record nobody created, and "none" on both
+  surfaces is what the visit actually left. Future runs only: the #163 evidence
+  is not rewritten. Issue #224, parent #148.
 
 ## 0.4.9 — 2026-10-01
 
