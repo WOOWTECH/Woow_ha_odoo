@@ -624,7 +624,11 @@ collaboration transport on the test host (it needs two simultaneous Ingress
 sessions on one to-do), and a strip that removes a *foreign* prefix has to
 reason about what an Ingress prefix looks like, which today only nginx's
 `safe_ingress_path` map does. It belongs to its own issue with its own
-measurement. Also open: the media dialog's two preselection comparisons --
+measurement -- and is closed by the third postscript below (#234), which found
+that the token in that prefix is the **add-on's** rather than the session's, so
+the two simultaneous Ingress sessions this paragraph asks for share one prefix
+and the pair that can carry a foreign one is an Ingress session beside a
+Public-origin one. Also open: the media dialog's two preselection comparisons --
 `ImageSelector.isInitialMedia`, which compares a prefixed `src` with
 `attachment.image_src`, and `DocumentSelector.fetchAttachments`, which compares
 a prefixed `href` with `/web/content/<id>` -- so reopening the dialog on an
@@ -639,8 +643,8 @@ below (#237). The legacy `web_editor` editor behind `html_legacy` and
 `mass_mailing_html` was on it too, "which carries none of these expressions",
 and is closed by the second postscript below (#238) -- which also found a third
 widget on that editor the list never named. None has been measured escaping --
-except the peer snapshot, which is unmeasured rather than clean -- and each is
-its own issue.
+the peer snapshot included, which was unmeasured rather than clean and whose
+Live row #243 now carries -- and each is its own issue.
 
 All five patterns were measured on 2026-09-30 across every bundle the control
 group serves; `odoo18ce/tests/fixtures/bundles/README.md` carries the counts.
@@ -916,3 +920,121 @@ afterwards -- both, because the inlined second field does not go through
 mailing's body, which is the readonly iframe's own screen and needs no save.
 Rules 9 and 10 have no screen on this database and are recorded there as
 unreachable with that reason rather than dropped.
+
+## Postscript (2026-10-01, the collaborative peer snapshot)
+
+The last item the 2026-09-30 postscript left open was the only one on its list
+that is a **token write** and not a render escape: a snapshot a collaborative
+peer sends, whose URLs carry the sending page's prefix, stored by the receiving
+session because "the strip removes only the prefix of the session doing the
+saving". This closes it (#234). The fix is the one that postscript predicted --
+the strip stops being about one value and becomes about the *shape* of a prefix
+-- and the reason for it is not the one it gave.
+
+**The premise did not survive reading what the token in the path is.** It is
+the **add-on's** `ingress_token`, not the user's and not the session's: one
+persisted secret per installed add-on, defaulted once by `secrets.token_urlsafe`
+in Supervisor's app user-data schema, while the per-user session is a separate
+secret that travels as the `ingress_session` cookie and never appears in a path.
+This repository says the same thing from the other side and has since #144: the
+menu/action adapter reads the prefix from `/addons/<slug>/info` **once** and
+uses it for every session it opens (`e2e_menu_action_adapter.py:789`), which
+would be broken if a prefix belonged to a session. So two Ingress sessions on
+one add-on edit the same to-do under the *same* prefix, `path()` recognises what
+the peer sent, and #210's literal strip already covered that pair. "A second
+editor could store another user's Supervisor token" is not the shape of this
+hole, and the measurement #234 was written around -- two Ingress sessions, one
+to-do -- cannot by itself produce a foreign prefix.
+
+**What is left is still a token write, and it is wider than two sessions.** A
+value reaches the field carrying a prefix this page was not handed whenever the
+add-on's token is not the one in the value:
+
+- the add-on's token changes -- an uninstall and reinstall mints a new one, and
+  so does a restored backup -- so every URL stored under the old one is now a
+  prefix nothing recognises, in a record that is still served;
+- a second add-on, or a second Home Assistant, reaching the same database;
+- **a peer on the Public origin**, which is the realistic pair and the one that
+  can put the token in the record today. That surface serves no Runtime shim and
+  no Literal rewrite -- ADR 0003 keeps it the control group -- so a prefix it
+  receives over the collaboration transport is a prefix it stores, and it has
+  nothing to strip with. The Ingress side cannot prevent that write. What the
+  wider strip does for it is **heal** the record: the next Ingress session to
+  save the field removes the prefix, whoever put it there.
+
+**What the transport actually carries**, which is what decides where the strip
+has to be and how wide. It is not a serialised document: the collaboration
+plugin ships *steps over serialised nodes*, each attribute's value byte for byte
+(`html_editor/static/src/core/history_plugin.js:1168`), and the peer that joins
+second is handed the first peer's whole document as a snapshot. The receiver
+applies each one with `node.setAttribute(key, value)` (`:1198`, and `:1087` for
+a later attribute mutation) -- which the Runtime shim wraps, so the value goes
+through the shim's own `path()`. `path()` does not recognise a prefix that is
+not this page's, treats the whole thing as a root-relative path and prefixes it
+**again**: the receiving editable holds `<this page's prefix><the sender's
+prefix>/web/image/...`. That is why the rule is every occurrence of *a* prefix
+and not one leading prefix, and the Static-tier contract executes the stacking
+rather than describing it.
+
+**The fix is one expression, and it keeps one authority for what a prefix is.**
+`__WOOW_INGRESS_MARKUP_OUT__` now removes every occurrence of `__INGRESS_PATH__`
+*and* every match of the shape nginx's `$safe_ingress_path` map validates. Both
+halves are needed and the order is not arbitrary: the prefix the gateway handed
+this page is removed whatever its shape, because the gateway is what decided it
+was a prefix and the value is in the page -- #210's own contract renders the
+shim with `/api/hassio_ingress/token`, which that map would refuse, and it keeps
+passing untouched. The shape half is for prefixes this page never saw. The map
+stays the single place that says what an Ingress prefix looks like;
+`odoo18ce/tests/test_ingress_peer_snapshot_prefix.py` derives the strip's
+pattern and the map's from the template and refuses a difference, bounds and
+character class included. The shape is *not* published as a global: no rewritten
+expression needs it, the strip is its only reader, and the prefix script -- the
+parameter that is short of room, which `test_nginx_parameter_budget.py` now
+measures -- is where a published global would have had to go.
+
+**A token longer than the map accepts is left alone, not cut to the bound.**
+The pattern ends in a lookahead at the token class, so a 129-character token
+fails to match rather than matching its first 128 characters and leaving the
+rest joined to the path. A URL with bytes taken out of its middle is worse than
+the escape it was: the escape is measured, reversible and already named here,
+while `/api/hassio_ingress/xxx…x` turned into `xxx/web/image/1` is a value
+nobody can read back. The same rule as the two shapes `IN` refuses.
+
+**And the two costs, said rather than discovered.** Prefix-shaped text a user
+typed into a description is removed on save -- the same decision #210 made for
+this page's prefix, for the same reason, which is that those bytes are a
+Supervisor token and de-tokenising a credential is the right answer for a value
+on its way to storage. And `IN` is deliberately **not** taught the shape: a
+foreign prefix is not healed on render, it is stacked on as before, so a picture
+a peer sent is fetched from a path that 404s until the value is saved and
+reloaded. Healing on the way *in* would mean rewriting somebody else's address
+into ours while the value is still the record's; the record is made clean on the
+way out, where the token is the harm. That is the same half-rule the
+snippet-thumbnail postscript states, applied to a value that arrived from
+somewhere else.
+
+No new global, no new rewrite and no new `sub_filter`: every save site in this
+family already calls this helper, so the five of #210 and the four `OUT` rules
+of #238 are all covered by the one change -- including the mailing's inlined
+`body_html`, the one value in this family that leaves the installation. Group B
+stays uncovered, the Public origin stays untouched, and `U-A6`'s probe list is
+not extended.
+
+What proves it at the Static tier is
+`odoo18ce/tests/test_ingress_peer_snapshot_prefix.py`: the two patterns derived
+from the template and held together, the bounds from both sides, the stacking
+the peer path produces executed through the published `path()`, and the
+rewritten `updateValue` and `_commitChanges` bytes driven over a peer value --
+including that the urgent-save comparison still holds, since both of its sides
+go through the same strip. **The Live row belongs to #243**, which carries this
+family's reruns, and this Iteration refined that row rather than leaving it to
+guess: two Ingress sessions on one to-do will show the *same* prefix and the row
+must record both rather than assume a difference, and the pair that can produce
+a foreign prefix on this host is one Ingress session and one Public-origin
+session on the same record. The script for it is left behind and **has not been
+run** -- `odoo18ce/tests/e2e_collab_peer_snapshot_live.py`, whose pure parts
+(the prefix shape, the redaction that puts a session's label where its token
+was, the verdict and the report) are tested at the Static tier by
+`test_e2e_collab_peer_snapshot.py`. Until that run reads a stored prefix, #234
+stays `severity: important`: nothing has measured an escape here, which is what
+its own criteria say the escalation to blocker waits for.

@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- The markup strip that keeps the Ingress prefix out of a saved html field now
+  removes **any** prefix the gateway would accept, not only the one this page
+  was handed. The To-do description is a collaborative field: the collaboration
+  transport ships serialised nodes -- each attribute's value byte for byte --
+  and the peer that joins second is handed the first peer's whole document, so
+  the sending page's prefix arrives in the receiving editable (through
+  `setAttribute`, which the shim wraps and which prefixes it *again*, so the
+  value carries two) and the receiving session's save is what would store it.
+  `__WOOW_INGRESS_MARKUP_OUT__` now strips every occurrence of
+  `__INGRESS_PATH__` **and** every match of the shape nginx's
+  `$safe_ingress_path` map validates, so a prefix a value arrived with is
+  removed whoever put it there. One authority for that shape: the map is where
+  it is written, and a test derives both patterns from the template and refuses
+  a difference. A token longer than the map accepts is left alone rather than
+  cut to the bound, because a URL with bytes taken out of its middle is worse
+  than the escape. No new global and no new rewrite: every save site of #210
+  and #238 calls this helper, the mailing's inlined `body_html` included.
+- The issue's premise was corrected on the way: the token in an Ingress path is
+  the **add-on's** `ingress_token`, one persisted secret per installed add-on,
+  not the user's and not the session's (the per-user session is a separate
+  secret carried in the `ingress_session` cookie). So two Ingress sessions on
+  one add-on edit under the same prefix and #210's strip already covered that
+  pair. A prefix this page never saw comes from a reinstall or a restored
+  backup minting a new token, a second add-on or a second Home Assistant on the
+  same database, or **a peer on the Public origin**, which serves no shim and
+  no rewrite and therefore stores what it is sent. The Ingress side cannot
+  prevent that write; what this change does for it is heal the record on the
+  next Ingress save. The Public origin is untouched, and `U-A6`'s probe list is
+  not extended. No version bump. Issue #234, ADR 0004 (third 2026-10-01
+  postscript), parent #148.
+
+### Added
+- `odoo18ce/tests/e2e_collab_peer_snapshot_live.py`, the two-session Live-tier
+  run #243 needs for that row and the first script here that opens two sessions
+  on one record: session A types an unsaved marker, session B joins and the run
+  waits for that marker to arrive (the transport's own evidence, since nothing
+  stored it), B saves, and `project.task.description` is read back with every
+  prefix in it classified as the saving session's, the other session's, or one
+  nobody claims. `--pair ingress-public` is the pair that can produce a foreign
+  prefix on this host. **It has not been run** -- this Iteration was told not to
+  deploy and not to take the measurement -- and no token can reach its output:
+  every value passes through a redaction that puts a session's label where its
+  prefix was. Its pure parts are tested at the Static tier
+  (`tests/test_e2e_collab_peer_snapshot.py`), including that the prefix shape it
+  looks for is the gateway's own.
+
 ## 0.4.9 — 2026-10-01
 
 ### Added

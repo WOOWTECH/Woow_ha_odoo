@@ -473,6 +473,42 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 下開啟並儲存郵件設計器的 body，兩面 `route_escape`／`http_4xx_5xx`／`console_error` 皆為 0，且
 > `mailing.mailing` 的 `body_arch` **與** `body_html` 存後仍是 root-relative。
 
+> **協作 peer snapshot 的前綴（`project.task.description` 的 token write）已於 2026-10-01 修正
+> （#234，ADR 0004 的第三個 2026-10-01 附記），Live 量測由 #243 執行。** 這是 ADR 0004 開放清單裡
+> 唯一一個「寫進資料庫」而不只是畫面錯的項目：To-do 的 description 是 `'collaborative': true`，協作
+> 傳輸送的是**序列化節點**（每個 attribute 的值逐位元組，`history_plugin.js:1168`），後加入的 peer 會
+> 拿到先加入那個 peer 的整份文件作為 snapshot，接收端用 `node.setAttribute(key, value)` 套上去
+> （`:1198`）——而 shim 包了 `setAttribute`，`path()` 認不出不屬於本頁的前綴，會**再加一次**，所以接收
+> 端的 editable 裡是 `<本頁前綴><對方前綴>/web/image/…`。
+>
+> **issue 的前提要修正，而結論不變。** 路徑裡的 token 是**add-on 的** `ingress_token`（Supervisor 的
+> app user-data schema 用 `secrets.token_urlsafe` 預設一次，每個安裝的 add-on 一份），不是使用者的也
+> 不是 session 的；per-user 的 session 是另一個 secret，走 `ingress_session` cookie，不出現在路徑裡。
+> 本 repo 自己的 adapter 也是這樣用的：prefix 只從 `/addons/<slug>/info` 讀一次，所有 session 共用
+> （`e2e_menu_action_adapter.py:789`）。所以**同一個 add-on 的兩個 Ingress session 前綴相同**，#210 的
+> 字面 strip 本來就蓋得住那一組；會出現「本頁沒見過的前綴」的情況是：add-on 重裝或還原備份換了
+> token、第二個 add-on／第二套 HA 連同一個資料庫，以及**另一個 peer 在 Public origin**——那一面沒有
+> shim 也沒有 rewrite（ADR 0003 的對照組），收到什麼就存什麼，也沒有東西可以剝。Ingress 這邊擋不住
+> 那一次寫入，能做的是**下一次 Ingress 存檔時把記錄治好**。
+>
+> 修法是一個運算式：`__WOOW_INGRESS_MARKUP_OUT__` 除了去掉 `__INGRESS_PATH__` 的每一次出現，也去掉
+> 每一個符合 nginx `$safe_ingress_path` map 形狀的前綴。兩半都要：gateway 交給本頁的那個不論形狀都要
+> 去掉（#210 的契約用的 `/api/hassio_ingress/token` 正是 map 會拒絕的形狀，而它**原封不動**仍然通
+> 過），形狀那半是給本頁沒見過的前綴。形狀只寫在 map 那一處，`test_ingress_peer_snapshot_prefix.py`
+> 從 template 把兩邊都解出來比對，字元類與上下界都比。比上界長一個字元的 token **整個不動**（pattern
+> 尾端的 lookahead），因為把 URL 中間挖掉比原本那個已經量過、可回復的逃逸更糟。`IN` 刻意**不**學這個
+> 形狀：對方的前綴不在 render 時治好，所以 peer 傳來的圖在存檔並重新載入前仍是 404——治在「出」那一
+> 邊，token 的危害在那裡。沒有新 global、沒有新 `sub_filter`，#210 的五個點與 #238 的四個 `OUT` 規則
+> 一次全覆蓋（含郵件那個會寄出去的 `body_html`）。`U-A6` 的探測清單**不**擴充。
+>
+> **Live（由 #243 執行）**：#234 原本寫的「兩個 Ingress session 開同一張 to-do」照跑，但要**記下兩邊
+> 的前綴**而不是假設不同——同一個 add-on 會相同，那正是這一組本來就乾淨的原因；會產生 foreign 前綴
+> 的組合是「一個 Ingress session ＋ 一個 Public origin session 開同一筆記錄」。腳本已留下且
+> **尚未執行過**：`odoo18ce/tests/e2e_collab_peer_snapshot_live.py`（`probe` 不存檔只看傳輸到不到、
+> `run` 才存檔並把 `description` 讀回來分類；輸出一律把前綴換成 session 標籤，不會有 token 落地），
+> 純函式部分由 `test_e2e_collab_peer_snapshot.py` 在靜態層跑過。讀回來存著 foreign 前綴才把 #234
+> 升為 `severity: blocker`（parity plan 1.3），在那之前維持 `severity: important`。
+
 > **網站頁「Edit this content」連結的前綴重複（`U-A2`）已於 2026-09-30 修正（#211），Live 重跑待
 > Deploy。** `/@/<website path>` 是 Odoo 18 從網站頁進後台的 route，也是唯一一條**尾段本身就是網站
 > 路徑**的 route。Odoo 把已經帶前綴的 `location.pathname` 接進那個尾段，shim 的 `path()` 只認第 0 位
