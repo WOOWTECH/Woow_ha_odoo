@@ -150,8 +150,13 @@ def test_no_picture_at_all_is_named_rather_than_passed():
 
 
 def test_a_third_party_picture_is_not_this_surface_s_question():
-    """A font or a CDN image is not a prefix question; the adapter says so."""
-    assert ingress_verdict("https://cdn.example.test/logo.png") == markup.UNDER_PREFIX
+    """And it is *named* as such rather than counted as a prefixed picture.
+
+    `is_prefix_escape` answers `False` both for "this is fine" and for "this is
+    none of my business", so a verdict built on it alone would report
+    `UNDER-PREFIX` -- asserting the prefix was involved when it never was.
+    """
+    assert ingress_verdict("https://cdn.example.test/logo.png") == markup.NOT_A_PREFIX_QUESTION
 
 
 # --- The screen's verdict: the worst picture on it ----------------------------
@@ -419,3 +424,105 @@ def test_every_flow_s_extra_keys_stay_clear_of_the_record_s_own():
             "replace_control", "theme", "saved", "unsaved_after_save", "body_arch_before",
             "body_restored", "revisions", "has_description_history", "form"}
     assert not (used & markup.RESERVED_RECORD_KEYS)
+
+
+# --- The entrypoint, and the ordering bug that made the driver unrunnable ------
+
+
+def test_the_entrypoint_guard_comes_after_every_handler():
+    """The driver was once entirely unrunnable, and no test noticed.
+
+    `if __name__ == "__main__": raise SystemExit(main())` sat above the eight
+    `do_*` definitions, so executing the file -- the only way it is ever used --
+    reached `handler_for` before those names were bound and every subcommand died
+    with `KeyError: 'do_readonly_plain'`. Importing the module binds everything
+    first, which is why `hasattr` passed and the bug survived a green suite and a
+    `--help` smoke test (both exit before the lookup).
+    """
+    source = open(markup.__file__, encoding="utf-8").read().split("\n")
+    guard = [n for n, line in enumerate(source) if line.startswith('if __name__ ==')]
+    handlers = [n for n, line in enumerate(source) if line.startswith("def do_")]
+    assert guard, "the module has no __main__ guard"
+    assert handlers
+    assert guard[0] > max(handlers), (
+        "the __main__ guard is above a do_* handler, so running the file cannot "
+        "resolve it: move the guard to the end of the module")
+
+
+def test_resolving_every_handler_is_what_running_the_file_does():
+    """`handler_for`, not `hasattr` -- the lookup the driver actually performs."""
+    for check in markup.CHECKS:
+        assert callable(markup.handler_for(check))
+
+
+# --- A URL the prefix has no claim on ------------------------------------------
+
+
+@pytest.mark.parametrize("url", ["data:image/png;base64,iVBORw0KGgo=",
+                                 "blob:http://192.0.2.10:8123/a-b-c",
+                                 "https://cdn.example.test/x.png"])
+def test_a_source_the_prefix_has_no_claim_on_is_named_not_passed(url):
+    """`data:` and `blob:` sources are routine in the mail designer and the
+    website preview, so this is the common case, not an edge one."""
+    assert ingress_verdict(url) == markup.NOT_A_PREFIX_QUESTION
+    assert not markup.is_pass(markup.NOT_A_PREFIX_QUESTION)
+
+
+def test_such_a_source_neither_outvotes_a_real_picture_nor_rescues_a_screen():
+    assert markup.screen_verdict(
+        [markup.UNDER_PREFIX, markup.NOT_A_PREFIX_QUESTION]) == markup.UNDER_PREFIX
+    assert markup.screen_verdict(
+        [markup.ESCAPED, markup.NOT_A_PREFIX_QUESTION]) == markup.ESCAPED
+    # All of them: the screen measured nothing, which is ABSENT for the same
+    # reason an empty screen is.
+    assert markup.screen_verdict([markup.NOT_A_PREFIX_QUESTION]) == markup.ABSENT
+
+
+def test_the_same_origin_test_is_the_adapter_s_netloc():
+    """One notion of same-origin, so this cannot disagree with is_prefix_escape."""
+    assert markup.is_prefix_question(INGRESS_BASE + PICTURE, INGRESS, HA_ORIGIN)
+    assert not markup.is_prefix_question("data:image/png;base64,x", INGRESS, HA_ORIGIN)
+    # A default port spelled out is still the same origin, which is the case a
+    # string comparison would get wrong.
+    assert markup.is_prefix_question("https://odoo.example.test:443" + PICTURE,
+                                     PUBLIC, PUBLIC_ORIGIN)
+
+
+# --- A stored prefix is never erased ------------------------------------------
+
+
+def test_a_stored_prefix_outranks_an_unreadable_screen():
+    """The worst finding this run can make must not be filed as NOT-RUN.
+
+    `summarise` skips `NOT-RUN`, and the check *was* seen so it is not in
+    `not_run` either -- so the old order dropped a prefix-reached-a-write out of
+    the tally entirely. `do_readonly_iframe` reaches this: it returns no pictures
+    when the field renders no iframe, and still reads the field back.
+    """
+    stored = '<img src="%s%s">' % (PREFIX, PICTURE)
+    record = markup.evidence_record(
+        check="readonly-iframe", issue=237, run_id="R", database="odoo_parity",
+        target="local", surface=INGRESS, screen="/x", pictures=None,
+        stored={"project.task.description": stored},
+    )
+    assert record["verdict"] == markup.PREFIX_STORED
+    summary = markup.summarise([record])
+    assert summary["failed"] == 1
+    assert summary["failures"] == ["readonly-iframe/ha_ingress: " + markup.PREFIX_STORED]
+
+
+# --- The values this driver writes name their run -----------------------------
+
+
+def test_both_seeded_values_name_the_run_that_wrote_them():
+    """ADR 0012 / live-tier.md: a writing step is marked with its run id. These
+    two replace a real user's signature and a real mailing's body, so attributing
+    them later matters more than for a scratch record that can be deleted."""
+    run_id = "WOOW-MARKUP-20261001T073009Z"
+    assert run_id in markup.signature_value(run_id)
+    assert run_id in markup.mailing_body_value(run_id)
+    # And they are still the shapes the checks need.
+    assert "<head>" not in markup.signature_value(run_id)
+    assert 'src="/' in markup.signature_value(run_id)
+    assert markup.stored_verdict(markup.signature_value(run_id)) == (markup.CLEAN, 0)
+    assert markup.stored_verdict(markup.mailing_body_value(run_id)) == (markup.CLEAN, 0)

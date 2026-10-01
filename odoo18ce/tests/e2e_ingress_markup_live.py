@@ -84,6 +84,7 @@ import os
 import re
 import sys
 from typing import Any, Mapping, Sequence
+from urllib.parse import urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -111,8 +112,15 @@ AT_ORIGIN_ROOT = "AT-ORIGIN-ROOT"    # Public: resolved at the origin root
 NOT_LOADED = "NOT-LOADED"            # resolved where it should, and never arrived
 ESCAPED = "ESCAPED"                  # resolved somewhere this surface must not reach
 ABSENT = "ABSENT"                    # no picture on the screen at all
+# A `data:` or `blob:` source, or one on a third-party origin. The prefix has no
+# claim on it, so neither surface's expectation applies -- and saying
+# `UNDER-PREFIX` of it would assert something nobody checked. Routine in the mail
+# designer and the website preview, which is why it is named rather than folded
+# into a pass.
+NOT_A_PREFIX_QUESTION = "NOT-A-PREFIX-QUESTION"
 
-PICTURE_VERDICTS = (UNDER_PREFIX, AT_ORIGIN_ROOT, NOT_LOADED, ESCAPED, ABSENT)
+PICTURE_VERDICTS = (UNDER_PREFIX, AT_ORIGIN_ROOT, NOT_LOADED, ESCAPED, ABSENT,
+                    NOT_A_PREFIX_QUESTION)
 
 # Worst wins. `ABSENT` outranks `ESCAPED` because an escape is a measurement and
 # an empty screen is not one: #240's row warns that a full-HTML value renders no
@@ -124,6 +132,9 @@ PICTURE_SEVERITY = {
     NOT_LOADED: 1,
     ESCAPED: 2,
     ABSENT: 3,
+    # Ranked, but `screen_verdict` drops it before ranking: it is neither a pass
+    # nor a failure, it is a picture that was not this check's subject.
+    NOT_A_PREFIX_QUESTION: 0,
 }
 
 PASSING = frozenset({UNDER_PREFIX, AT_ORIGIN_ROOT})
@@ -158,6 +169,22 @@ def expected_verdict(surface: Surface) -> str:
     return UNDER_PREFIX if surface is Surface.HA_INGRESS else AT_ORIGIN_ROOT
 
 
+def is_prefix_question(url: str, surface: Surface, origin: str) -> bool:
+    """Whether the prefix has any claim on `url` at all.
+
+    `adapter.is_prefix_escape` returns `False` both for "this is fine" and for
+    "this is none of my business" -- a non-http scheme (`:1160`) and a different
+    netloc (`:1164`) -- so on its own it cannot tell a prefixed picture from a
+    `data:` URI. The netloc comparison is the adapter's own `_netloc`, not a
+    second one written here, so the two functions agree about what same-origin
+    means by construction.
+    """
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https", "ws", "wss"):
+        return False
+    return adapter._netloc(url) == adapter._netloc(origin)
+
+
 def picture_verdict(
     surface: Surface, origin: str, prefix: str | None, resolved: str | None, loaded: bool,
 ) -> str:
@@ -173,16 +200,25 @@ def picture_verdict(
         return ABSENT
     if adapter.is_prefix_escape(resolved, surface, origin, prefix):
         return ESCAPED
+    if not is_prefix_question(resolved, surface, origin):
+        return NOT_A_PREFIX_QUESTION
     if not loaded:
         return NOT_LOADED
     return expected_verdict(surface)
 
 
 def screen_verdict(verdicts: Sequence[str]) -> str:
-    """The worst picture on the screen, and `ABSENT` when there was none."""
-    if not verdicts:
+    """The worst picture the prefix had a claim on, and `ABSENT` when none.
+
+    Pictures that were never a prefix question are dropped rather than ranked: a
+    `data:` URI beside a prefixed one must not outvote it, and a screen whose
+    pictures were *all* `data:` URIs measured nothing, which is `ABSENT` for the
+    same reason an empty screen is.
+    """
+    judged = [verdict for verdict in verdicts if verdict != NOT_A_PREFIX_QUESTION]
+    if not judged:
         return ABSENT
-    return max(verdicts, key=lambda verdict: PICTURE_SEVERITY[verdict])
+    return max(judged, key=lambda verdict: PICTURE_SEVERITY[verdict])
 
 
 def stored_verdict(value: Any) -> tuple[str, int]:
@@ -267,7 +303,24 @@ FULL_HTML_VALUE = (
 # `HtmlViewer` instead of a `Wysiwyg`, so `this.editor` is `undefined` and
 # `toggleCodeView` never reaches the assignment the rules patch -- the check
 # would pass while testing nothing.
-SIGNATURE_VALUE = '<p>x</p><img src="/web/image/res.company/1/logo" alt="logo"/>'
+SIGNATURE_VALUE_TEMPLATE = (
+    '<p>%s</p><img src="/web/image/res.company/1/logo" alt="logo"/>'
+)
+
+
+def signature_value(run_id: str) -> str:
+    """The seeded signature, naming the run that seeded it.
+
+    `docs/agents/live-tier.md` wants every writing step marked with its run id so
+    the host stays readable and a later reader can tell whose text is whose. This
+    value replaces a real user's signature, so that matters more here than it does
+    for a scratch record that can simply be deleted.
+    """
+    return SIGNATURE_VALUE_TEMPLATE % marker_for(run_id)
+
+
+# Kept for the Static tier's shape assertions; the run uses `signature_value`.
+SIGNATURE_VALUE = SIGNATURE_VALUE_TEMPLATE % "x"
 
 MARKER_PREFIX = "WOOW-MARKUP hand check"
 
@@ -320,12 +373,17 @@ def evidence_record(
         if verdict == PREFIX_STORED:
             worst_stored = PREFIX_STORED
 
-    if pictures is None:
+    if worst_stored == PREFIX_STORED:
+        # Before the `pictures is None` branch, deliberately. A prefix that
+        # reached a write is the worst thing this run can find, and a check whose
+        # screen could not be read still read the database -- reporting that as
+        # `NOT-RUN` would drop it out of the tally entirely, since `summarise`
+        # skips `NOT-RUN` and the check was seen so it is not in `not_run` either.
+        verdict = PREFIX_STORED
+    elif pictures is None:
         verdict = NOT_RUN
     else:
         verdict = screen_verdict([picture["verdict"] for picture in pictures])
-        if worst_stored == PREFIX_STORED:
-            verdict = PREFIX_STORED
 
     record: dict[str, Any] = {
         "schema": EVIDENCE_SCHEMA,
@@ -566,6 +624,24 @@ def run_check(
     row = CHECKS[check]
     handler = handler_for(check)
     records: list[dict[str, Any]] = []
+
+    def keep(record: dict[str, Any], side=None) -> None:
+        """Append one record to `--out` the moment it exists.
+
+        Buffering them to the end loses the evidence for writes already made when
+        a *later* surface fails -- and this driver writes. `Env.mask` runs over the
+        finished record rather than only over the picture URLs: `redact` removes
+        the Supervisor token and nothing else, while the values read back here are
+        production field values that carry absolute base URLs and `access_token`
+        path tokens (`mailing.mailing.body_html` especially).
+        """
+        masked = side.env.mask(record) if side is not None else record
+        records.append(masked)
+        with open(out_path, "a", encoding="utf-8") as out:
+            out.write(json.dumps(masked, ensure_ascii=False, sort_keys=True) + "\n")
+        print("%s/%s %s  (expected %s)" % (
+            masked["check"], masked["surface"], masked["verdict"], masked["expected"]))
+
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=not headed)
         try:
@@ -600,19 +676,36 @@ def run_check(
                         extra=outcome.get("extra"),
                         notes=outcome.get("notes", ""),
                     )
-                    records.append(record)
+                    keep(record, side)
+                except Exception as error:  # noqa: BLE001 -- the surface itself failed
+                    # `open_one`, `side.close()` and `evidence_record`'s own
+                    # collision guard all sit outside the handler's `try`. Letting
+                    # one escape would have abandoned the whole run with `--out`
+                    # never opened, leaving a host this driver had already written
+                    # to with no evidence line accounting for it.
+                    keep({
+                        "schema": EVIDENCE_SCHEMA, "run_id": run_id, "check": check,
+                        "issue": row["issue"], "database": db, "target": os.environ.get(
+                            "PARITY_TARGET", "local"),
+                        "surface": surface.value, "screen": row["screen"],
+                        "expected": expected_verdict(surface), "verdict": NOT_RUN,
+                        "stored_verdict": NOT_RUN, "pictures": None, "stored": {},
+                        "stored_values": {}, "signals": {},
+                        "notes": "the surface could not be driven: %s: %s" % (
+                            type(error).__name__, adapter.sanitize_diagnostic(str(error))),
+                    })
                 finally:
                     if side is not None:
-                        side.close()
+                        try:
+                            side.close()
+                        except Exception:  # noqa: BLE001 -- a context already gone
+                            pass
         finally:
             browser.close()
 
-    with open(out_path, "a", encoding="utf-8") as out:
-        for record in records:
-            out.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
-    for record in records:
-        print("%s/%s %s  (expected %s)" % (
-            record["check"], record["surface"], record["verdict"], record["expected"]))
+    if not records:
+        print("no record was written: nothing ran")
+        return 1
     return 0 if all(is_pass(record["verdict"]) for record in records) else 1
 
 
@@ -662,14 +755,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             parse_env_file(handle, os.environ)
     surfaces = ["ingress", "public"] if args.surface == "both" else [args.surface]
     surfaces = [name for name in surfaces if name in CHECKS[args.command]["surfaces"]]
+    if not surfaces:
+        # Otherwise the loop never runs, `all(...)` over an empty list is True and
+        # a run that measured nothing exits 0 -- the one outcome this whole verdict
+        # scheme exists to refuse.
+        parser.error("%s does not run on surface %r; it runs on %s" % (
+            args.command, args.surface, ", ".join(CHECKS[args.command]["surfaces"])))
     return run_check(
         args.command, surfaces, db=args.db, out_path=args.out, run_id=args.run_id,
         task_id=args.task_id, mailing_id=args.mailing_id, cleanup=args.cleanup, headed=args.headed,
     )
 
-
-if __name__ == "__main__":
-    raise SystemExit(main())
 
 
 # --- #237: the readonly html field --------------------------------------------
@@ -816,8 +912,25 @@ def do_codeview(side, run_id: str, *, cleanup=False, **_) -> dict[str, Any]:
     # Seeded over RPC rather than typed, so the value under test is exactly the
     # one the Static tier measured and the check does not also depend on the
     # code view's own typing working.
-    write_field(side, "res.users", uid, "signature", SIGNATURE_VALUE)
+    write_field(side, "res.users", uid, "signature", signature_value(run_id))
+    try:
+        return _codeview_after_seeding(side, run_id, uid, before, extra, cleanup=cleanup)
+    except Exception:
+        # A real user's signature was replaced by this check. Every step after the
+        # write can raise -- the `?debug=1` navigation, the Preferences dialog, the
+        # floating toolbar, the textarea, the save -- and `run_check` swallows the
+        # exception and discards the returned outcome, so without this the original
+        # value would exist nowhere: not on the host, not in the evidence.
+        # `--cleanup` does not cover it; that is only reached on the success path.
+        try:
+            write_field(side, "res.users", uid, "signature", before or False)
+        except Exception:  # noqa: BLE001 -- the session itself may be gone
+            pass
+        raise
 
+
+def _codeview_after_seeding(side, run_id, uid, before, extra, *, cleanup=False) -> dict[str, Any]:
+    """The browser half of `do_codeview`, split out so the seed has a restore."""
     # Debug mode first: `codeview` is `Boolean(odoo.debug && options.codeview)`
     # (`html_field.js:375`), so without it the toolbar item is never registered
     # and there is nothing to toggle.
@@ -1253,10 +1366,18 @@ MAILING_THEME_SELECTOR = ".o_mail_theme_selector_new"
 MAILING_THEME_BASIC = "a#basic, #basic"
 
 # A root-relative picture, so there is something for the rules to get wrong.
-MAILING_BODY_VALUE = (
-    '<div class="o_layout"><p>WOOW parity</p>'
+MAILING_BODY_TEMPLATE = (
+    '<div class="o_layout"><p>%s</p>'
     '<img src="/web/image/res.company/1/logo" alt="logo"></div>'
 )
+
+
+def mailing_body_value(run_id: str) -> str:
+    """The seeded mailing body, naming the run that seeded it."""
+    return MAILING_BODY_TEMPLATE % marker_for(run_id)
+
+
+MAILING_BODY_VALUE = MAILING_BODY_TEMPLATE % "WOOW parity"
 
 
 def do_mailing_editable(side, run_id: str, *, mailing_id=None, cleanup=False, **_) -> dict[str, Any]:
@@ -1285,8 +1406,24 @@ def do_mailing_editable(side, run_id: str, *, mailing_id=None, cleanup=False, **
     }
     # Seeded over RPC so the value under test is exactly the measured one, and so
     # the check does not also depend on the designer's own typing working.
-    write_field(side, "mailing.mailing", mailing_id, "body_arch", MAILING_BODY_VALUE)
+    write_field(side, "mailing.mailing", mailing_id, "body_arch", mailing_body_value(run_id))
+    try:
+        return _mailing_after_seeding(side, mailing_id, before, extra, cleanup=cleanup)
+    except Exception:
+        # Same reason as `do_codeview`: this replaced a real mailing's body, every
+        # step after it can raise, and `run_check` discards the outcome on a raise.
+        try:
+            side.rpc("mailing.mailing", "write", [[mailing_id], {
+                "body_arch": before.get("body_arch") or False,
+                "body_html": before.get("body_html") or False,
+            }])
+        except Exception:  # noqa: BLE001 -- the session itself may be gone
+            pass
+        raise
 
+
+def _mailing_after_seeding(side, mailing_id, before, extra, *, cleanup=False) -> dict[str, Any]:
+    """The browser half of `do_mailing_editable`, split out for the same reason."""
     side.goto("/odoo/mailing.mailing/%d" % mailing_id)
     side.wait_webclient()
     side.close_chat_windows()
@@ -1312,11 +1449,26 @@ def do_mailing_editable(side, run_id: str, *, mailing_id=None, cleanup=False, **
     pictures = read_pictures(frame, MAILING_EDITABLE + " img", side)
 
     save = side.root.locator(SAVE_BUTTON).first
-    if save.count():
-        save.click()
-        side.settle(6000)
-        extra["saved"] = True
-        extra["unsaved_after_save"] = side.root.locator(UNSAVED).count() > 0
+    if not save.count():
+        # Without the save, #238's whole subject is untouched: `getEditingValue`
+        # (rule 7) never runs and `commitChanges` never inlines `body_html` (rule
+        # 8). And `body_arch` read back would be the value *this function* seeded
+        # over RPC -- root-relative, so `CLEAN` -- which with the pictures already
+        # read would score a pass for a check that exercised neither rule. The
+        # form is loaded clean precisely because the seed was an RPC write, so this
+        # path is likely rather than hypothetical.
+        extra["saved"] = False
+        return {"screen": "/odoo/mailing.mailing/%d (mail designer)" % mailing_id,
+                "pictures": None, "extra": extra,
+                "notes": "no %s on the form, so nothing was saved: the two rules this check is "
+                         "about are the save seam, and a read-back of the RPC-seeded body_arch "
+                         "would have scored a pass without exercising either" % SAVE_BUTTON}
+    save.click()
+    side.settle(6000)
+    extra["saved"] = True
+    extra["unsaved_after_save"] = side.root.locator(UNSAVED).count() > 0
+    if extra["unsaved_after_save"]:
+        extra["save_incomplete"] = True
     after = side.rpc("mailing.mailing", "read", [[mailing_id], ["body_arch", "body_html"]])[0]
     stored = {
         "mailing.mailing.body_arch": after.get("body_arch"),
@@ -1330,3 +1482,6 @@ def do_mailing_editable(side, run_id: str, *, mailing_id=None, cleanup=False, **
         extra["body_restored"] = True
     return {"screen": "/odoo/mailing.mailing/%d (mail designer)" % mailing_id,
             "pictures": pictures, "stored": stored, "extra": extra}
+
+if __name__ == "__main__":
+    raise SystemExit(main())
