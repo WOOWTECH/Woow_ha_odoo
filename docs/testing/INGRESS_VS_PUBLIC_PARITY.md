@@ -917,6 +917,18 @@ plan item 在兩個 surface 上的同一個控制項」，所以塞不進上面�
 secret。欄位與判定由 `odoo18ce/tests/test_e2e_collab_peer_snapshot.py` 固定，schema 名稱與本節這一段由同
 一個測試綁在一起。
 
+**第三個 schema：`odoo-parity-ambient/v1`（#256，2026-10-01）。** 任何一次開過 website 頁面的 run
+都會留下沒人要求的列：tracked page 的 GET 會 upsert 一筆 `website.visitor` 並插入一筆
+`website.track`，頁面自己的 markup 跟 JavaScript 也寫（理由與出處見 [ADR 0012 postscript
+2026-10-01 (#227)](../adr/0012-sweeps-verify-on-the-test-host.md#postscript-2026-10-01-227)）。
+以前「留了幾筆」要事後上主機數（#235 的 19 筆就是這樣來的）；現在 `crawl` 與 `open` 在登入後與
+最後一次導覽後各數一次，把差值寫在證據旁，檔名就是記錄檔換上 `.ambient.json` 這個副檔名
+（`ingress-open.jsonl` → `ingress-open.ambient.json`）：**只有數字**，不記 URL、不記訪客身分，
+所以沒有可去識別化的東西。這是**記帳而非判定**：`diff` 不讀它（`read_records` 拒收
+這個 schema），也和 `woow.peer-snapshot.v1` 一樣**不**進 `conservation`——它不是 U/AD/G 項目、
+不佔守恆檢查的分母，§10.6 的 76 項數字不因它而動。兩個 surface 走的是同一批頁面，所以兩邊的
+delta 不相等只是先後順序的產物（第一輪建的 visitor 列第二輪已經在了），不是落差。
+
 落差報告最終彙整為：
 
 ```

@@ -175,9 +175,13 @@ back as its measurement. For that check the ambient write is the instrument,
 not only a side effect.
 
 So the guarantee is quoted as **no business writes**, not as zero rows, and the
-boundary above is unchanged: nothing here widens what a run may touch. Making
-a run *name* these ambient writes in its own evidence — a `website.track` count
-delta per run — is a feature with an Issue of its own (#256), not part of this
-statement. `GET_WRITING_ROUTES`' comment points here rather than carrying the
-only copy, and the citations are read from the Odoo the add-on pins
-(`ODOO_DEB_VERSION`, `odoo18ce/Dockerfile`) the way that list's are.
+boundary above is unchanged: nothing here widens what a run may touch. The
+figure is no longer reconstructed by hand the way #235's was: since #256 the
+adapter's `crawl` and `open` count `website.track` and `website.visitor` after
+the login and again after the last navigation and write the delta beside the
+run's records, under the records' own name with `.ambient.json` for its
+extension (`ingress-open.jsonl` → `ingress-open.ambient.json`) — counts only,
+accounting rather than a verdict, and judged by nothing. `GET_WRITING_ROUTES`'
+comment points here rather than carrying the only copy, and the citations are
+read from the Odoo the add-on pins (`ODOO_DEB_VERSION`, `odoo18ce/Dockerfile`)
+the way that list's are.

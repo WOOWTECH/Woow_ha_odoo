@@ -11,9 +11,11 @@ Public origin run and an Ingress run by control identity and gives each
 `PARITY` or `GAP`; it judges an `open` run exactly as it judges a crawl.
 
 The adapter only reads, with one named exception. It fetches the menu tree
-with one GET and then navigates to each action's route; it never clicks, types
-into Odoo records or calls an RPC, and a menu whose action could write (a
-server action) is listed as skipped, never planned. The exception is an `open`
+with one GET, counts the rows of two models with one read-only RPC each
+(`count_rows`, the ambient accounting below) and then navigates to each
+action's route; it never clicks, types into Odoo records or calls an RPC that
+writes, and a menu whose action could write (a server action) is listed as
+skipped, never planned. The exception is an `open`
 target that asks for a cart: reaching the website checkout needs one, so
 `SurfaceDriver.ensure_cart` adds a product to the logged-in user's cart when it
 is empty, and the record names the `sale.order` that made. That write is
@@ -41,6 +43,21 @@ existing example of it. A target naming a route that consumes the fixture
 configuration error on **every** database -- `require_convergent_writes` refuses
 it before a browser launches. `GET_WRITING_ROUTES` carries the rule, the class
 of every route and the reason for each.
+
+Every run also accounts for the rows it leaves that no targets file can bound.
+Serving a tracked page writes a `website.visitor` and a `website.track` row and
+the page's own JavaScript writes too, so a read-only run makes no business
+writes but never leaves zero rows -- ADR 0012's postscript 2026-10-01 (#227)
+says which writes and where they were read. `crawl` and `open` count both
+models after the login and again after the last navigation, and write the delta
+beside the evidence under the same name with `.ambient.json` for its extension
+(`ingress-open.jsonl` -> `ingress-open.ambient.json`): counts only, no URL and
+no visitor identity. It is accounting and not a verdict -- `diff` never reads that file,
+`read_records` refuses its schema, and the parity plan's conservation tally does
+not move for it -- which is why it sits beside the records rather than in them.
+A `crawl`'s figure is the interesting zero: it navigates `/odoo/action-<id>`,
+which renders no tracked page, so the claim that a crawl leaves nothing is now
+measured per run rather than asserted.
 
 Credentials come from the environment only:
 
@@ -1461,6 +1478,213 @@ def verdict_lines(merged: Iterable[Mapping[str, Any]]) -> list[str]:
     return lines
 
 
+# --- Ambient writes -------------------------------------------------------
+
+AMBIENT_SCHEMA = "odoo-parity-ambient/v1"
+# The two models a run's page views write without being aimed at. ADR 0012's
+# postscript 2026-10-01 (#227) reads both writes out of the pinned Odoo: serving
+# a tracked page upserts a `website.visitor` and inserts a `website.track` row in
+# one statement (`website/models/website_visitor.py:288-300` and `:239-251`), so
+# on a tracked page's GET the two counts move together -- and apart everywhere
+# else, because `/shop/products/recently_viewed_update`, which a product page's
+# own JavaScript calls, creates a visitor and no track row.
+AMBIENT_MODELS = ("website.track", "website.visitor")
+# What the figure is, said where it is read. A delta is an accounting row and
+# not a verdict, and a reader who takes it for one has a parity signal that does
+# not exist: see `ambient_summary`.
+AMBIENT_NOTE = (
+    "Counts only, and a net figure over one surface's run. The window runs from after the login to "
+    "after the last navigation, so a row the login itself left is outside it; another session writing "
+    "on the same database during the run is inside it; and the `website.visitor` GC cron takes a "
+    "visitor's `website.track` rows with it, so a delta below zero is a vacuum that ran during the run "
+    "and not a deletion the run made. No URL and no visitor identity is read -- nothing here to mask. "
+    "`diff` does not judge it: both surfaces visit the same pages, so an unequal delta is an ordering "
+    "artefact -- the visitor the first run created already exists for the second -- and not a gap. "
+    "Why these rows exist and why no targets file can bound them: ADR 0012, postscript 2026-10-01 "
+    "(#227)."
+)
+
+
+@dataclass(frozen=True)
+class AmbientReading:
+    """One count per `AMBIENT_MODELS` model at one moment, and why any is missing.
+
+    Per model rather than per reading: `website` uninstalled leaves neither
+    count, but a user who may count visitors and not tracks leaves one, and a
+    reading that reported one count and called itself failed would throw the
+    count away.
+    """
+
+    counts: Mapping[str, int] = field(default_factory=dict)
+    unread: Mapping[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def none(cls, reason: str) -> "AmbientReading":
+        """No reading at all -- the same reason against every model."""
+        return cls(unread={model: reason for model in AMBIENT_MODELS})
+
+
+def _ambient_unread(model: str, before: AmbientReading, after: AmbientReading) -> str:
+    """Why `model` has no delta: whichever of the two readings is missing it."""
+    return "; ".join("%s the run: %s" % (when, reading.unread.get(model) or "no count was taken")
+                     for when, reading in (("before", before), ("after", after))
+                     if model not in reading.counts)
+
+
+def ambient_deltas(before: AmbientReading, after: AmbientReading) -> dict[str, dict[str, Any]]:
+    """Per model: the two counts and `after - before`, or the reason for neither.
+
+    The subtraction is the whole arithmetic, and it is deliberately not clamped
+    or signed away. Zero is a reading and not a silence -- it is how a `crawl`
+    shows the claim ADR 0012's postscript makes about it, that navigating
+    `/odoo/action-<id>` reaches no tracked page -- and a negative delta is the
+    GC cron, which the summary's note says rather than hiding by taking an
+    absolute value.
+    """
+    rows: dict[str, dict[str, Any]] = {}
+    for model in AMBIENT_MODELS:
+        if model in before.counts and model in after.counts:
+            rows[model] = {"before": before.counts[model], "after": after.counts[model],
+                           "delta": after.counts[model] - before.counts[model]}
+        else:
+            rows[model] = {"unread": _ambient_unread(model, before, after)}
+    return rows
+
+
+def ambient_summary(
+    run: RunInfo, surface: Surface, *, command: str, navigations: int,
+    before: AmbientReading, after: AmbientReading,
+) -> dict[str, Any]:
+    """One surface's run and the ambient rows it left, as its own record.
+
+    Its own schema, and its own file beside the evidence (`ambient_summary_path`),
+    for the reason `diff` does not judge it: a delta is a property of one run,
+    not of a control identity, and `_judge` reads every difference between two
+    surfaces as a difference the surfaces caused. Both surfaces visit the same
+    pages, so their deltas differ whenever one of them went first -- the visitor
+    row the first run upserted is already there for the second -- and judging
+    that would raise a Blocker on the order the two runs happened to run in.
+    `read_records` refuses this schema, so a summary that reached the evidence
+    file is a refusal rather than a verdict.
+
+    It is none of the parity plan's conservation tally's business either: that
+    tally is over control identities with verdicts (section 12), and this record
+    holds neither.
+    """
+    return {
+        "schema": AMBIENT_SCHEMA,
+        "run_id": run.run_id,
+        "target": run.target,
+        "database": run.database,
+        "client": run.client,
+        "surface": _SURFACE_KEY[surface],
+        "command": command,
+        "navigations": int(navigations),
+        "models": ambient_deltas(before, after),
+        "notes": AMBIENT_NOTE,
+    }
+
+
+def ambient_summary_path(out_path: str) -> str:
+    """The summary's path: `out_path`'s extension replaced by `.ambient.json`.
+
+    `ingress-open.jsonl` -> `ingress-open.ambient.json`, so the pair sorts
+    together in an evidence directory and neither name carries two extensions.
+    """
+    return os.path.splitext(out_path)[0] + ".ambient.json"
+
+
+def clear_ambient_summary(out_path: str) -> None:
+    """Remove any earlier run's summary from beside `out_path`."""
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(ambient_summary_path(out_path))
+
+
+def write_ambient_summary(out_path: str, summary: Mapping[str, Any]) -> str:
+    """Write the summary beside `out_path` and answer where it went."""
+    path = ambient_summary_path(out_path)
+    with open(path, "w", encoding="utf-8") as out:
+        out.write(json.dumps(summary, ensure_ascii=False, sort_keys=True) + "\n")
+    return path
+
+
+def ambient_line(summary: Mapping[str, Any]) -> str:
+    """The one line the run prints, so the figure is read without the file."""
+    said = ["%s %+d" % (model, row["delta"]) if "delta" in row else "%s unread (%s)" % (model, row["unread"])
+            for model, row in summary["models"].items()]
+    return "%s over %d navigation(s)" % (", ".join(said), summary["navigations"])
+
+
+def _ambient_navigations(driver) -> int:
+    """How many navigations this driver has made (`SurfaceDriver._goto`).
+
+    Read before and after like the row counts, and for the same reason: what the
+    figure is per is the page views *inside* the window, and only the driver
+    knows how many it made. Counting the loop instead would count a cart target
+    once when it opened the product page and the cart page too -- both of which
+    are tracked website pages, so both write the rows being counted.
+    """
+    return int(getattr(driver, "navigations", 0))
+
+
+def _ambient_reading(driver) -> AmbientReading:
+    """A reading that never raises -- the accounting may not break the run.
+
+    `SurfaceDriver.ambient_reading` already answers a reason per model rather
+    than raising, so this is the bound for a driver that does not: the figure is
+    worth a run and not the other way round.
+    """
+    try:
+        return driver.ambient_reading()
+    except Exception as error:  # noqa: BLE001 -- the reason belongs in the record, not in a traceback
+        return AmbientReading.none(sanitize_diagnostic(str(error)))
+
+
+@contextlib.contextmanager
+def ambient_accounting(driver, run: RunInfo, surface: Surface, out_path: str, *, command: str):
+    """Count the ambient rows around a run's navigations and write the summary.
+
+    The reading before is taken as early as a reading can be: it goes over the
+    session's own RPC, so the login has to have happened, and a row the login
+    left is therefore outside the window the summary reports -- which is what its
+    note says. The reading after is taken on the way out rather than at the end
+    of the loop, so a run that failed still accounts for what it left, which is
+    when the figure is worth the most.
+
+    The accounting may not replace the run's own failure: a summary that cannot
+    be read or written says so on stderr and lets the exception through, because
+    an operator debugging a dead run must see why it died and not why its
+    accounting did. On a run that otherwise passed it is raised instead -- an
+    accounting that failed quietly is the thing #256 exists to stop.
+
+    Any summary of an earlier run is removed first, the way `out_path` is
+    truncated before the first visit. A figure is written at the end, so without
+    that a run whose summary could not be written would leave the last run's
+    numbers sitting beside this run's records under a different `run_id`.
+    """
+    clear_ambient_summary(out_path)
+    before, navigated = _ambient_reading(driver), _ambient_navigations(driver)
+    ran = False
+    try:
+        yield
+        ran = True
+    finally:
+        try:
+            summary = ambient_summary(run, surface, command=command,
+                                      navigations=_ambient_navigations(driver) - navigated,
+                                      before=before, after=_ambient_reading(driver))
+            print("ambient rows: %s; %s" % (ambient_line(summary), write_ambient_summary(out_path, summary)),
+                  file=sys.stderr)
+        except Exception as error:  # noqa: BLE001 -- said either way, raised only when it is the only failure
+            print("ambient accounting failed (%s)" % sanitize_diagnostic(str(error)), file=sys.stderr)
+            if ran:
+                # The run itself passed, so this is the run's only failure and
+                # swallowing it would leave a figure nobody wrote and nobody
+                # missed -- which is the thing #256 exists to stop. When the run
+                # was already failing, that failure is the one the operator needs.
+                raise
+
+
 # --- Runtime (Live tier) --------------------------------------------------
 
 
@@ -1713,6 +1937,10 @@ class SurfaceDriver:
     # Class attributes, so a driver that has opened no cart still answers.
     cart_before: str | None = None
     cart_before_read: bool = False
+    # Every navigation this driver has made, for the ambient-row figure to be
+    # read per page view. A class attribute like the two above, so a driver that
+    # has navigated nowhere still answers.
+    navigations: int = 0
 
     def __init__(
         self, surface: Surface, browser, *, ignore_https_errors: bool, viewport: tuple[int, int] = (1920, 1080),
@@ -1758,11 +1986,28 @@ class SurfaceDriver:
                 "secure": host.scheme == "https", "httpOnly": False, "sameSite": "Lax",
             }])
 
+    def _goto(self, page, route: str, **kwargs) -> None:
+        """Navigate `page` to a route on this surface, and count it.
+
+        The one place this driver navigates, because the ambient-row figure
+        (`ambient_accounting`) is read *per navigation* and a `page.goto` written
+        beside this one would leave that denominator short while looking right.
+        What counts is the GET being made, not its landing: a navigation that
+        timed out still asked, and asking is what writes.
+
+        The login is counted here like any other, and falls outside the figure
+        for a different reason -- the window opens at the first reading, which
+        cannot be taken until a session exists.
+        """
+        self.navigations += 1
+        page.goto(self.base + route, **kwargs)
+
     def log_in(self) -> None:
         page = self.context.new_page()
         try:
             db = os.environ.get("ODOO_DB")
-            page.goto(self.base + "/web/login" + ("?db=" + db if db else ""), wait_until="domcontentloaded", timeout=120000)
+            self._goto(page, "/web/login" + ("?db=" + db if db else ""),
+                       wait_until="domcontentloaded", timeout=120000)
             if page.locator('input[name="login"]').count():
                 page.locator('input[name="login"]').fill(self.login)
                 page.locator('input[name="password"]').fill(self.password)
@@ -1780,6 +2025,79 @@ class SurfaceDriver:
         if response.status != 200:
             raise RuntimeError("load_menus answered HTTP %d" % response.status)
         return response.json()
+
+    def count_rows(self, model: str) -> int:
+        """`search_count` with an empty domain, over the session's own RPC.
+
+        The one RPC this driver makes, and it is a read: a domain goes in and an
+        integer comes out, so there is no record to name, no field to read and
+        nothing a mutation could ride in on. `READ_ONLY_POLICY` is still the seam
+        it passes through (`Operation.COUNT_ROWS`), because a request this driver
+        makes belongs in the enum rather than beside it, and the RPC the shared
+        layers' Live harness already uses is the shape it is read off
+        (`e2e_parity_shared_layers_live.py`).
+
+        Taking the reading does not add to what it reads. The ambient write this
+        counts is gated on the `track` flag of the template a *response*
+        rendered (ADR 0012, postscript 2026-10-01), and a `call_kw` POST renders
+        no template -- so the count is not a count of itself.
+        """
+        READ_ONLY_POLICY.require(Operation.COUNT_ROWS)
+        response = self.context.request.post(
+            self.base + "/web/dataset/call_kw/%s/search_count" % model,
+            data={"jsonrpc": "2.0", "method": "call", "params": {
+                "model": model, "method": "search_count", "args": [[]], "kwargs": {},
+            }},
+        )
+        # The status before the body, the way `web_menus` reads it: a lapsed
+        # session and a gateway that answered 502 both send HTML, and a JSON
+        # parse error would record "Expecting value: line 1 column 1" where the
+        # record owes the operator the status -- the per-model reason exists to
+        # tell "the session died" from "the model is not installed".
+        if response.status != 200:
+            raise RuntimeError("%s.search_count answered HTTP %d" % (model, response.status))
+        try:
+            body = response.json()
+        except Exception as error:  # noqa: BLE001 -- an answer that is not JSON is the reason
+            raise RuntimeError("%s.search_count answered no JSON (%s)"
+                               % (model, (str(error).splitlines() or [""])[0])) from None
+        error = body.get("error") or {}
+        if error:
+            raise RuntimeError("%s.search_count failed: %s"
+                               % (model, (error.get("data") or {}).get("message")
+                                  or error.get("message") or "no message"))
+        count = body.get("result")
+        # `True` is an `int` in Python and would pass as a count of one. A method
+        # that answered something other than a number did not answer this one.
+        if not isinstance(count, int) or isinstance(count, bool):
+            raise RuntimeError("%s.search_count answered no count: %r" % (model, count))
+        return count
+
+    def ambient_reading(self) -> AmbientReading:
+        """A count of each `AMBIENT_MODELS` model now, and the reason for any missing.
+
+        One failure per model, not one for the reading: a database without
+        `website` has neither model and a run on it reports two reasons, while a
+        session that lost one answer still reports the count it got. The reason
+        is masked, because it goes into a record a pull request quotes and a raw
+        Playwright message carries the host and the ingress token.
+
+        The session is refreshed first and a refresh that fails is suppressed,
+        the way `_reread_cart` suppresses it: a dead websocket is a reason for the
+        count to be missing, which the reading already records, and not a reason
+        for the run to stop.
+        """
+        if self.ingress:
+            with contextlib.suppress(Exception):
+                self.ingress.keep_alive()
+        counts: dict[str, int] = {}
+        unread: dict[str, str] = {}
+        for model in AMBIENT_MODELS:
+            try:
+                counts[model] = self.count_rows(model)
+            except Exception as error:  # noqa: BLE001 -- why a count is missing is the record's answer
+                unread[model] = self.masker.text((str(error).splitlines() or [""])[0])
+        return AmbientReading(counts=counts, unread=unread)
 
     def _route(self, url: str) -> str | None:
         try:
@@ -2161,7 +2479,7 @@ class SurfaceDriver:
         a cart that stayed empty rather than failing the run on the first miss.
         """
         try:
-            page.goto(self.base + product_route, wait_until="load", timeout=60000)
+            self._goto(page, product_route, wait_until="load", timeout=60000)
         except Exception:  # noqa: BLE001 -- re-raised below unless the page arrived
             # One sub-resource that never finishes would otherwise cost the whole
             # target a blocker GAP, and the page is up: its bundle has very
@@ -2389,7 +2707,7 @@ class SurfaceDriver:
 
         The count is None when the cart page did not show one.
         """
-        page.goto(self.base + "/shop/cart", wait_until="domcontentloaded", timeout=60000)
+        self._goto(page, "/shop/cart", wait_until="domcontentloaded", timeout=60000)
         # website_sale puts both on every page's navbar badge; one reading, so
         # the count and the order id come from the same DOM state.
         state = page.evaluate(_CART_STATE_JS) or {}
@@ -2430,7 +2748,7 @@ class SurfaceDriver:
         page.on("websocket", lambda socket: urls.append(socket.url))
         available, result, screen, literals, shown = True, "loaded", {}, [], True
         try:
-            page.goto(self.base + route, wait_until="load", timeout=60000)
+            self._goto(page, route, wait_until="load", timeout=60000)
             if backend:
                 # An action with target "new" (a wizard) opens in a dialog and
                 # leaves the action manager empty.
@@ -2523,7 +2841,8 @@ def crawl(surface: Surface, apps: Sequence[str], out_path: str, *, viewport: str
             scope = scope_from_web_menus(driver.web_menus(), apps)
             visits = plan_visits(scope)
             signalled = 0
-            with open(out_path, "w", encoding="utf-8") as out:
+            with open(out_path, "w", encoding="utf-8") as out, \
+                    ambient_accounting(driver, run, surface, out_path, command="crawl"):
                 for skipped in scope.skipped:
                     identity = control_identity(skipped.menu_id, *skipped.action_ref.split(","))
                     record = skipped_record(run, surface, module=skipped.app, identity=identity, reason=skipped.reason)
@@ -2579,7 +2898,8 @@ def open_screens(surface: Surface, targets: Sequence[OpenTarget], out_path: str,
             driver.check_selectors(targets)
             run = RunInfo(new_run_id(), os.environ.get("PARITY_TARGET", "local"), database, client)
             signalled = 0
-            with open(out_path, "w", encoding="utf-8") as out:
+            with open(out_path, "w", encoding="utf-8") as out, \
+                    ambient_accounting(driver, run, surface, out_path, command="open"):
                 for target in targets:
                     observation = driver.open_screen(target)
                     record = evidence_record(
@@ -2599,13 +2919,18 @@ def open_screens(surface: Surface, targets: Sequence[OpenTarget], out_path: str,
             browser.close()
 
 
+_OUT_HELP = ("JSONL evidence file to write; the run's ambient-row figure goes beside it, this name "
+             "with .ambient.json for its extension (ingress-open.jsonl -> ingress-open.ambient.json): "
+             "counts only, judged by nothing")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
     crawl_parser = commands.add_parser("crawl", help="open every menu action of the chosen apps on one surface")
     crawl_parser.add_argument("--surface", required=True, choices=[surface.value for surface in Surface])
     crawl_parser.add_argument("--apps", required=True, help="comma-separated module names, e.g. contacts,project")
-    crawl_parser.add_argument("--out", required=True, help="JSONL evidence file to write")
+    crawl_parser.add_argument("--out", required=True, help=_OUT_HELP)
     crawl_parser.add_argument("--env-file", help="read unset credentials from this NAME=value file")
     crawl_parser.add_argument("--viewport", default="1920x1080",
                               help="WIDTHxHEIGHT; below 768 wide Odoo uses its mobile layout (default 1920x1080)")
@@ -2616,7 +2941,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--targets", required=True,
         help='JSONL file, one target per line: {"module": ..., "target": ..., and an "expect_model" '
              'or an "expect_selector" that says the right screen loaded}')
-    open_parser.add_argument("--out", required=True, help="JSONL evidence file to write")
+    open_parser.add_argument("--out", required=True, help=_OUT_HELP)
     open_parser.add_argument("--env-file", help="read unset credentials from this NAME=value file")
     open_parser.add_argument("--viewport", default="1920x1080",
                              help="WIDTHxHEIGHT; below 768 wide Odoo uses its mobile layout (default 1920x1080)")
