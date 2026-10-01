@@ -25,7 +25,7 @@
   `discuss.channel` itself from an unknown token (`:69`) -- with a
   `request.env.cr.commit()` on the concurrent-insert path (`:81`) that a rollback
   cannot take back. The Runtime shim already rewrites the invitation link that
-  leads there (`nginx.conf.template:576`), so it is a route this product
+  leads there (`nginx.conf.template:591`), so it is a route this product
   navigates. Every other GET write the audit deferred needs a query that
   `parse_targets` refuses; these two need nothing.
 - The list's comment now records which controllers were read and **found clean**
@@ -69,6 +69,29 @@
   shim** that publishes nothing), and a test reads the cap out of the script
   so the two numbers cannot drift apart. That cap is the one behaviour change
   here; it needs no version bump of its own.
+- The **Build tier** now reads the gateway config with the nginx the add-on
+  ships. Correcting the docstring above said where the measurement stops; this
+  moves the stopping point. `tests/in_image/gateway_config_loads.py` runs
+  inside the image this build produced and checks three things against
+  `/usr/sbin/nginx` there: that the token buffer is the size the budget assumes
+  (a token at the limit parses, one byte more does not), that the shipped
+  template loads for every start shape -- `public_url` set, unset, and unset
+  with no LAN address -- for an empty **Generated rewrite** file and a
+  populated one, and that a **Canonical URL** at the new cap still loads while
+  one far over the cliff does not. Every number comes from the file that states
+  it: `TOKEN_LIMIT` from the budget test, `CANONICAL_URL_MAX` from the shipped
+  cont-init. So the budget's worst case for the Canonical URL is now verified
+  against a real nginx rather than assumed, and a differing buffer in the
+  image's nginx fails a pull request instead of a **Deploy**.
+- The renderer behind both tiers exists once, in `tests/gateway_render.py`
+  (stdlib only, because the probe imports it inside the image where pytest and
+  PyYAML are not). `test_dual_gateway.py` renders through it, so the **Static
+  tier** and the Build tier cannot measure different files.
+  `tests/test_gateway_config_in_image.py` proves the probe's own logic against
+  the runner's nginx -- including both ways it goes red, each injected from the
+  real defect it stands for -- and pins the Build-tier step to the
+  unconditional amd64 build, this build's image, and a timeout. A probe that
+  silently broke would otherwise pass in the one tier nothing watches.
 
 ### Changed
 - The weekly bump bot proposes the Debian **base-image** bump in a pull

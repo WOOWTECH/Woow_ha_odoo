@@ -613,7 +613,7 @@ GET_WRITING_ROUTES = {
     # controller that a *path* alone reaches -- no query, so the rule that bounds
     # `?confirm=` and `?report_type=` does not reach them, and the Runtime shim
     # rewrites the invitation link that leads here
-    # (rootfs/etc/nginx/nginx.conf.template:576), so it is a route this product
+    # (rootfs/etc/nginx/nginx.conf.template:591), so it is a route this product
     # navigates. mail/controllers/discuss/public_page.py:42 takes the channel's
     # uuid in the path and reaches :96 `_find_or_create_persona_for_channel`,
     # which creates a `mail.guest` and its `discuss.channel.member` for whoever

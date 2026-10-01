@@ -202,6 +202,37 @@ jobs:
           print(f"exception list: {len(exceptions)} entries")
           '
 
+      # The Static tier renders this template and runs `nginx -t` on the
+      # result, and budgets every quoted parameter against nginx's token
+      # buffer -- both with the nginx on the runner's PATH, which comes from
+      # the runner's base and not from the add-on image. So neither says the
+      # config the add-on ships loads under the nginx the add-on ships, nor
+      # that this nginx's buffer is the size the budget assumes. Either
+      # difference would have surfaced on a Deploy, as an add-on that does not
+      # start. The probe reads both numbers out of the files that state them --
+      # TOKEN_LIMIT from the budget test, CANONICAL_URL_MAX from the shipped
+      # cont-init -- and `tests/` is mounted read-only because the probe
+      # imports the renderer the Static tier uses. Its own logic, both ways it
+      # goes red included, is tested by tests/test_gateway_config_in_image.py.
+      - name: In-image contract (gateway config)
+        run: |
+          set -euo pipefail
+          status=0
+          out="$(timeout -k 30 300 docker run --rm \
+            -v "${PWD}/${ADDON_DIR}/tests:/tests:ro" \
+            --entrypoint python3 woow-ha-odoo-amd64:ci \
+            /tests/in_image/gateway_config_loads.py 2>&1)" || status=$?
+          echo "${out}"
+          if ! grep -qx 'gateway-config: ok' <<< "${out}"; then
+            echo "::error::the nginx config this add-on ships does not load under the nginx this" \
+              "add-on ships, or that nginx's token buffer is not the size" \
+              "${ADDON_DIR}/tests/test_nginx_parameter_budget.py assumes. The probe's own lines" \
+              "above say which; exit ${status} (124 is the 300 s timeout) with no probe line at" \
+              "all is a container failure and not a finding. This is the failure that would" \
+              "otherwise have arrived on a Deploy, as an add-on that does not start."
+            exit 1
+          fi
+
       # Odoo refuses to install a module whose external_dependencies it
       # cannot find, and it looks them up by PyPI distribution name first.
       # WOOWTECH's ECPay e-invoice module (ecpay_odoo18) declares
