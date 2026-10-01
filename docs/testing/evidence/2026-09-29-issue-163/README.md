@@ -137,8 +137,12 @@ the tracker).
 
 | `GAP` | Issue | State |
 |---|---|---|
-| To-do form: the onboarding description's two images load from the Home Assistant root under Ingress (404) | #210 | **fixed 2026-09-30**, Live rerun owed (see below) |
-| Website pages: the frontend "Edit this content" link doubles the Ingress prefix (`/@` + a second prefix) | #211 | **fixed 2026-09-30**, Live rerun owed (see below) |
+| To-do form: the onboarding description's two images load from the Home Assistant root under Ingress (404) | #210 | **fixed 2026-09-30; Live rerun done 2026-10-01 on Release 0.4.9 (#235) — `PARITY`** |
+| Website pages: the frontend "Edit this content" link doubles the Ingress prefix (`/@` + a second prefix) | #211 | **fixed 2026-09-30; Live rerun done 2026-10-01 on Release 0.4.9 (#235) — `PARITY`** |
+
+Both reruns are in `docs/testing/evidence/2026-10-01-issue-235/`. **The verdicts
+in this directory's `open-diff.jsonl` are the ones this run measured on 0.4.5
+and are not edited** — the rerun is a separate record, as #183 and #201 were.
 
 ### To-do form, `project.task` 5 — blocker
 
@@ -181,11 +185,15 @@ against that value; and it comes off the `src` the image tools send to
 `/html_editor/get_image_info`, which only recognises an attachment from a path
 beginning `/web/image`. So the two
 pictures load under the prefix and `project.task.description` stays
-root-relative. What is still owed is the Live half, which needs a Deploy: this
-run's three targets replayed on both surfaces with every signal zero, plus a
-save in the editor under Ingress followed by a read of the stored `src`. The
-static-tier contract is
+root-relative. The static-tier contract is
 `odoo18ce/tests/test_ingress_todo_description.py`.
+
+**The Live half was run on 2026-10-01, on Release 0.4.9 (#235), and passed.**
+The three targets replayed on both surfaces with every signal zero — this
+screen included, where Ingress had read `route_escape=2` — and the two pictures
+carry the prefix and load. A save in the editor under Ingress then left both
+stored `src` beginning `/project_todo/`, with no `hassio_ingress` anywhere in
+the stored HTML.
 
 ### Website checkout e-invoice step — important
 
@@ -219,12 +227,12 @@ check, which compared a prefixed pathname with a bare `/@/` and so never
 fired under Ingress. The expression is served once each in
 `web.assets_frontend_minimal`, `web.assets_frontend` and
 `website.assets_wysiwyg`, so one `sub_filter_once off` rule covers all three
-sites. What is still owed is the Live half, which needs a Deploy: the test
-host runs 0.4.6 and the newest Release is 0.4.8, so neither carries this fix
-and a rerun today would measure the old literal. Owed is this run's
-`/shop/payment` target replayed on both surfaces, on a Release that carries
-the fix, with the record's `url_literals` reading `<INGRESS_PREFIX>/@/shop/payment`
-and the verdict `PARITY`. The static-tier contract is
+sites. **The Live half was run on 2026-10-01, on Release 0.4.9 (#235), and
+passed**: `/shop/payment` is `PARITY` on both surfaces with the Ingress
+record's `url_literals` reading `<INGRESS_PREFIX>/@/shop/payment`, and
+following the link opens the page in the web client — the editor's preview
+frame is `/shop/payment` itself, with this module's `.ecpay-invoice-info-form`
+in it. The static-tier contract is
 `odoo18ce/tests/test_ingress_at_route_links.py`, which includes a real nginx
 serving both bundle excerpts through the template's own two rule lines.
 
@@ -243,4 +251,6 @@ prefix escape), so acceptance criterion 4 of the issue lands on `GAP`, not on
 - `res.partner` 3 (Administrator) keeps the address and phone above.
   *Cleaned 2026-09-30: `street`, `city`, `zip`, `country_id` and `phone` were
   cleared over JSON-RPC, back to the unset state the run found them in.*
+  *Set again 2026-10-01 by #235's rerun, which needed `/shop/payment` reachable
+  for the same reason; see `docs/testing/evidence/2026-10-01-issue-235/`.*
 - Nothing was installed, restarted or reconfigured.

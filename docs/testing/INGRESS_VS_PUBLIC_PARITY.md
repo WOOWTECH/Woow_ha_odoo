@@ -402,7 +402,8 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > `/web/action/load`，而待辦說明走 `/web/dataset/call_kw`，正是 ADR 0004 的 2026-09-28 附記拒絕改寫的
 > 紀錄內容。這一輪的證據在 `docs/testing/evidence/2026-09-29-issue-163/`。
 >
-> **待辦表單的 `GAP` 已於 2026-09-30 修正（#210），Live 重跑待 Deploy。** 依 ADR 0004 的 2026-09-30
+> **待辦表單的 `GAP` 已於 2026-09-30 修正（#210），並於 2026-10-01 在 Release 0.4.9 上完成 Live 重跑
+> （#235，改記 `PARITY`，詳見本附記末）。** 依 ADR 0004 的 2026-09-30
 > 附記，修法不是改寫 `call_kw` 回應，而是 HTML 編輯器內容的一組「進／出」Literal rewrite：Runtime shim
 > 另外發佈 `__WOOW_INGRESS_MARKUP_IN__`／`__WOOW_INGRESS_MARKUP_OUT__` 兩個唯讀的**字串** helper
 > （前綴一律走 shim 自己的 `path()`）。五個改寫點：`Editor.attachTo` 在值變成 DOM 之前先上前綴（圖片
@@ -414,8 +415,16 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > `/html_editor/get_image_info` 的 `src`，那個 route 只認 `/web/image` 開頭的路徑，不還原前綴
 > 裁圖會報「外部圖片」。所以資料庫存的仍是 root-relative，不會把 Supervisor token 寫進記錄。
 > 靜態層契約在 `odoo18ce/tests/test_ingress_todo_description.py`（含 2026-09-30 重新擷取的 bundle
-> 片段）。**這一列的 verdict 要等 Live 重跑才改**：兩面 `route_escape`／`http_4xx_5xx`／`console_error`
-> 皆為 0，且在 Ingress 下用編輯器存一次待辦後 `project.task.description` 的 `src` 仍是 root-relative。
+> 片段）。
+>
+> **Live 重跑已於 2026-10-01 在 Release 0.4.9 上完成（#235），這一列改記 `PARITY`。** 待辦表單在
+> 兩面的 `route_escape`／`http_4xx_5xx`／`console_error`／`pageerror`／`failed_requests` 皆為 0，
+> Ingress 側兩張圖的 `src` 帶前綴（`<INGRESS_PREFIX>/project_todo/static/img/…`）且**都載入成功**；
+> 在 Ingress 下用編輯器存一次待辦之後讀回 `project.task.description`，兩個 `src` 仍以
+> `/project_todo/` 開頭，整份 HTML 不含 `hassio_ingress` 字串、沒有任何絕對位址——存檔寫入是真的
+> （這一輪打的標記確實存進去了，之後才還原）。對照組在同一份證據裡：0.4.6 上同一畫面兩張圖
+> `img_loaded` 為 `[false, false]`、對 HA 根網址各 404 一次。單一 session；兩個 Ingress session 的
+> 協作快照是 #234，不在這一輪。證據見 `docs/testing/evidence/2026-10-01-issue-235/`。
 
 > **唯讀 html 欄位的兩個 render 點已於 2026-10-01 補上（#237，ADR 0004 的 2026-10-01 附記），Live
 > 重跑待 Deploy。** #210 修的是可編輯那條；唯讀 `HtmlViewer` 是 ADR 0004 附記裡「一次碰到兩處 markup」
@@ -514,8 +523,17 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 純函式部分由 `test_e2e_collab_peer_snapshot.py` 在靜態層跑過。讀回來存著 foreign 前綴才把 #234
 > 升為 `severity: blocker`（parity plan 1.3），在那之前維持 `severity: important`。
 
-> **網站頁「Edit this content」連結的前綴重複（`U-A2`）已於 2026-09-30 修正（#211），Live 重跑待
-> Deploy。** `/@/<website path>` 是 Odoo 18 從網站頁進後台的 route，也是唯一一條**尾段本身就是網站
+> **網站頁「Edit this content」連結的前綴重複（`U-A2`）已於 2026-09-30 修正（#211）；Live 重跑已於
+> 2026-10-01 在 Release 0.4.9 上完成（#235），改記 `PARITY`。** 連結在 Ingress 下讀到
+> `<INGRESS_PREFIX>/@/shop/payment`（前綴只加一次），**點下去真的在 web client 裡打開那一頁**：
+> 瀏覽器停在 route `/shop/payment`、有主導覽列，編輯器的第二個 preview frame 就是該頁本身
+> （route `/shop/payment`、標題 `Shop - Select Payment Method | My Website`，裡面有
+> `ecpay_invoice_website` 自己的 `.ecpay-invoice-info-form` 區塊），沒有 404、沒有 console error、
+> 沒有前綴逃逸。對照組：0.4.6 上同一個連結是 `<INGRESS_PREFIX>/@<INGRESS_PREFIX>/`，點下去
+> 404 在 `<INGRESS_BASE><INGRESS_PREFIX>`、編輯器停在 fallback frame。證據見
+> `docs/testing/evidence/2026-10-01-issue-235/`。
+>
+> 以下是修法本身。`/@/<website path>` 是 Odoo 18 從網站頁進後台的 route，也是唯一一條**尾段本身就是網站
 > 路徑**的 route。Odoo 把已經帶前綴的 `location.pathname` 接進那個尾段，shim 的 `path()` 只認第 0 位
 > 的前綴，於是又加一次，得到 `<INGRESS_PREFIX>/@<INGRESS_PREFIX>/shop/payment`。修法是 Ingress
 > asset location 上的兩條 Literal rewrite：連結改用 canonical path 組，前綴只在最前面加一次。前綴由
@@ -599,7 +617,7 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 | `sale_management` | 經 `sale` 選單，23 `PARITY`；自有畫面 3 `PARITY`（#163 以 `open` 直接開報價單表單的選購商品頁、報價範本清單與表單） | `U-E3`／`U-E2`／`U-C20`／`U-D5` → #145 |
 | `website_sale` | 15 `PARITY` | `U-D1`–`U-D6`、`U-B2` → #143；`U-D7`、`U-E6` 為 `STRUCTURAL`（RC-10） |
 | `point_of_sale` | 19 `PARITY` | `U-C27` 離線銷售、斷網重整各 1 `PARITY`（#161，見 10.1）；`U-F5` 收據列印、`U-C25` 商品掃描各 1 `PARITY`（#143，見 10.6）；`U-C24` 未測 |
-| ECPay 4 模組 | `ecpay_invoice_tw`、`payment_ecpay` 各 1 `PARITY`；另兩個無自有選單 | `U-E6`（#146，2026-09-27）：Public origin 上一筆 stage 信用卡付款（`S00022`），綠界的回呼經 Cloudflare tunnel 抵達 `/payment/ecpay/result_notify`，交易 `done`，電子發票 `LO22046163` 已開立；回呼網址、付款回呼 2 項 `STRUCTURAL`（Structural gap），後台 4 項（金流服務商、交易、訂單表單，與發票表單上的電子發票號碼）兩端 `PARITY`；`account`／`sale` 選單爬蟲 51 `PARITY`。見 `docs/testing/evidence/2026-09-27-issue-146/`。`ecpay_invoice_website` 於 2026-09-29 由 #163 以 `open` 補上自有判定：它掛在 `website_sale.payment`，電子發票區塊（電子發票／紙本／捐贈與載具）在 `/shop/payment` 兩面都算出來、五項訊號皆 0，但該頁的「Edit this content」連結在 Ingress 下前綴重複（`<INGRESS_PREFIX>/@<INGRESS_PREFIX>/shop/payment`，`U-A2`），故記 **`GAP`（important）**；該連結不限結帳頁，每個可編輯的網站頁都有。見 `docs/testing/evidence/2026-09-29-issue-163/`。**該 `GAP` 已於 2026-09-30 修正（#211），Live 重跑待 Deploy**（見 9 的附記）：連結改成 `<INGRESS_PREFIX>/@/shop/payment`，前綴只加一次；測試主機在 0.4.6、最新 Release 是 0.4.8，兩者都不含此修正，所以今天重跑量到的仍是舊字面，這一列的 verdict 要等帶修正的 Release 重跑後才改 |
+| ECPay 4 模組 | `ecpay_invoice_tw`、`payment_ecpay` 各 1 `PARITY`；另兩個無自有選單 | `U-E6`（#146，2026-09-27）：Public origin 上一筆 stage 信用卡付款（`S00022`），綠界的回呼經 Cloudflare tunnel 抵達 `/payment/ecpay/result_notify`，交易 `done`，電子發票 `LO22046163` 已開立；回呼網址、付款回呼 2 項 `STRUCTURAL`（Structural gap），後台 4 項（金流服務商、交易、訂單表單，與發票表單上的電子發票號碼）兩端 `PARITY`；`account`／`sale` 選單爬蟲 51 `PARITY`。見 `docs/testing/evidence/2026-09-27-issue-146/`。`ecpay_invoice_website` 於 2026-09-29 由 #163 以 `open` 補上自有判定：它掛在 `website_sale.payment`，電子發票區塊（電子發票／紙本／捐贈與載具）在 `/shop/payment` 兩面都算出來、五項訊號皆 0，但該頁的「Edit this content」連結在 Ingress 下前綴重複（`<INGRESS_PREFIX>/@<INGRESS_PREFIX>/shop/payment`，`U-A2`），故記 **`GAP`（important）**；該連結不限結帳頁，每個可編輯的網站頁都有。見 `docs/testing/evidence/2026-09-29-issue-163/`。**該 `GAP` 已於 2026-09-30 修正（#211），並於 2026-10-01 在 Release 0.4.9 上由 #235 完成 Live 重跑，這一列改記 `PARITY`**（見 9 的附記）：`/shop/payment` 在 `open-diff.jsonl` 為 `PARITY`，Ingress 側的 `url_literals` 讀到 `<INGRESS_PREFIX>/@/shop/payment`、Public 側讀到 `<PUBLIC_BASE>/@/shop/payment`，兩面五項訊號仍全為 0，電子發票區塊兩面照樣算出來。見 `docs/testing/evidence/2026-10-01-issue-235/` |
 | `survey` | 4 `PARITY`、**2 `GAP`**（同一動作） | 範例圖片逃逸 → **#158**；`U-E3`／`U-C4` → #145 |
 | `im_livechat` | 8 `PARITY` | 外嵌 script 為 `STRUCTURAL`（RC-10）；`U-C26` → #143 |
 | `event` | 7 `PARITY`、**1 `GAP`** | 報到台條碼音效逃逸 → **#159**；`U-E3`／`U-E4` → #145 |
@@ -608,8 +626,8 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 | `hr_attendance` / `hr_timesheet` | 5 / 7 `PARITY` | `U-C24`／`U-C25`／`U-F1` → #143 |
 | `hr_recruitment` | 14 `PARITY` | 對外職缺頁 `U-D7` 為 `STRUCTURAL`（RC-10） |
 
-第 9 節的 13 個 app 同一輪已比對的選單全為 `PARITY`（`project_todo` 只有一個跳過的 server action，其畫面於 2026-09-29 由 #163 的 `open` 另判：2 `PARITY` + 1 `GAP`），唯一例外是 `website` 的訪客清單：經 Ingress 瀏覽網站時，
-訪客紀錄把 HA 根網址存成頁面 URL（`U-C5`，#160）。
+第 9 節的 13 個 app 同一輪已比對的選單全為 `PARITY`（`project_todo` 只有一個跳過的 server action，其畫面於 2026-09-29 由 #163 的 `open` 另判：2 `PARITY` + 1 `GAP`，**該 `GAP` 已於 2026-10-01 由 #235 在 0.4.9 上重跑為 `PARITY`，三個畫面全數 `PARITY`**），唯一例外是 `website` 的訪客清單：經 Ingress 瀏覽網站時，
+訪客紀錄把 HA 根網址存成頁面 URL（`U-C5`，#160）——**此例外已於 2026-10-01 在 0.4.9 上消除（#235），動作 596 兩面 `PARITY`**。
 > #160 的修正（server-wide module `woow_visitor_url`，把訪客追蹤存下的網址改建在 **Canonical URL** 上，`website.get_base_url()`）
 > 在 Static 與 Build tier 通過，但 **2026-09-30 於 0.4.6 測試主機的 Live 重跑判定 `FAIL`**：經 Ingress 開一次首頁後，
 > 新存的 `website.track` 仍記錄完整的 HA 根網址（`http://192.168.50.192:8123/`，重啟後重測一致），動作 596 的爬蟲比對仍是 `GAP`。
@@ -624,8 +642,25 @@ Generated rewrite，也沒有通知）。ECPay 模組取自 WOOWTECH/ecpay_odoo1
 > —— wrapper 的轉發屬性沒有 deleter，所以不是刪快取而是寫回同一個網址。
 > Build tier 的 in-image probe 現在除了讀旗標，也在映像自己的 `odoo.http.HTTPRequest` 上真的換一次網址再讀回來，
 > 這正是 0.4.6 當時 Build 綠、主機無效的那一半。這仍是 Build-tier 與真實主機的環境差異，正是 Live tier（ADR 0012）存在的理由。
-> 證據：`docs/testing/evidence/2026-09-30-issue-160/`。既有紀錄不回填；
-> **Live 重跑仍欠**：要等帶著此修正的 Release 部署到測試主機，再經 Ingress 開一次網站頁面、重跑動作 596 的爬蟲比對才算收斂。
+> 證據：`docs/testing/evidence/2026-09-30-issue-160/`。既有紀錄不回填。
+>
+> **Live 重跑已於 2026-10-01 在 Release 0.4.9 上完成（#235），這一列改記 `PARITY`。** 判定前先讀了
+> 這個修正所依賴的基底——預設網站的 `domain`、`web.base.url` 系統參數、`website.get_base_url()`
+> 三者都是 **Canonical URL**（`web.base.url.freeze` 為 `True`），所以不存在「基底本身就是 HA 位址、
+> `tracked_url` 原封不動回傳、`stored == arrived` 提早返回而什麼都不記」的那種無聲失敗。
+> 經 Ingress 開一次首頁後新存的 `website.track`（列 258）記的是 **Canonical URL** 加路徑 `/`，
+> 不是 HA 位址、也不是只有路徑（只有路徑就代表基底是空的）。動作 596 的爬蟲比對為 `PARITY`、
+> severity `none`、兩面都沒有 `url_violations`：畫面上每一個訪客網址都讀作 `<PUBLIC_BASE>`，
+> 包含 0.4.6 當時讀作 `<HA_BASE>` 的那四個（`/`、`/contactus`、`/jobs/…job-3`、`/shop/…service-58`）。
+> add-on 自己的 log 也從裡面說了同一件事：0.4.9 啟動後每個 worker 都有
+> `website.visitor._handle_webpage_dispatch patched`，而 Deploy 之後
+> `the request's url could not be replaced` 一次都沒有（檔案裡的 12 次全在 Deploy 前的 0.4.6 對照組），
+> `could not be put back` 從頭到尾 0 次。
+>
+> 判定的前提是把舊列清掉：#160 決定**不回寫**舊列，而那些列就在動作 596 打開的畫面上，所以
+> 2026-10-01 這一輪先把 **88 筆**帶 HA 位址的 `website.track` 匯出再刪除（`9`–`253`，涵蓋 Issue 點名的
+> `226`／`227`／`239`–`243`，也涵蓋它沒點到的 `236`–`238` 與 #143／#144 留下的 78 筆）。沒有任何一列被
+> 回寫。證據與列號見 `docs/testing/evidence/2026-10-01-issue-235/`。
 
 ### 10.5 本輪未覆蓋的已知風險（明列，不假裝測過）
 
@@ -668,6 +703,15 @@ POS 兩項在 #161 之後於 2026-09-27 補跑，收據列印（`U-F5`）與相�
 `docs/testing/evidence/2026-09-29-issue-203/`。#203 的另一半——把媒體來源加進 `U-A6` 探測清單（`RC-12` 附記）——亦於同日完成：`U-A6` 新增一條 covered 途徑
 `media`，同時走 `new Audio`／`HTMLMediaElement.src`／`HTMLSourceElement.src`，在 0.4.5 上重跑該途徑有發出請求且未逃逸、`U-A6` 維持 `PARITY`（run
 `WOOW-PARITY-20260929T053445Z`，見 `ua6-media-checks.jsonl`）。
+2026-10-01 在 Release **0.4.9** 上又補跑了六項（#235）：#210 的待辦表單兩項、#211 的「Edit this content」兩項、
+#160 的訪客網址兩項，六項全過。**這一輪不動上面那 76 項的守恆數字**，因為這六項都不在共用層那一組裡——
+它們是第 9 節以 `open` 另判的畫面（`project_todo`、`ecpay_invoice_website`）與第 10 節 `website` 的動作 596，
+各自的列已在上面改記 `PARITY`。所以 76 項維持 **60 `PARITY` + 0 `GAP` + 2 `APPROVED-DIVERGENCE` +
+6 `STRUCTURAL` + 8 `NOT-RUN`**。這一輪另外跑了 `crawl --apps website` 兩面比對（30 判定 = 30 `PARITY`、
+1 跳過）與 #163 全部七個 target 兩面比對（7 判定 = 7 `PARITY`），後者是刻意跑整個 target 檔而不是只跑三行：
+0.4.9 是第一個部署 #238 那 182 行 Literal rewrite 的 Release，規則若在不該觸發的頁面觸發，會在無關 target 上
+顯示為字面值改變——沒有任何一個改變。證據見 `docs/testing/evidence/2026-10-01-issue-235/`。
+
 `NOT-RUN`：`U-A9`（無 60 秒以上的動作）、`U-C22`（只有一種語言）、`/event` 與活動報名
 （未裝 `website_event`）、CE 沒有該控制項的三個模組畫面（MRP 工作中心與工單、出勤 kiosk 全螢幕）。證據與方法見 `docs/testing/evidence/2026-09-25-issue-143/`。
 
@@ -675,7 +719,8 @@ POS 兩項在 #161 之後於 2026-09-27 補跑，收據列印（`U-F5`）與相�
   plain-http 不是安全環境（clipboard-write、camera、microphone）。`G-02` 的未知因此有答案：HA 沒有擋，
   複製鈕靠 #60 的 fallback，相機要 https 入口（實測可用）。
 - 390×844 行動版模擬爬蟲：299 個選單 = 281 `PARITY` + 4 `GAP` + 14 跳過，4 個 `GAP` 就是桌機已登記的
-  #158、#159、#160，行動版沒有新增。
+  #158、#159、#160，行動版沒有新增。三者今日皆已修正並在主機上重跑過（#158 於 0.4.5、#159 於 0.4.5、
+  #160 於 0.4.9），行動版本身沒有重跑——那是 `#147`，要真實裝置。
 - 2026-09-25 當時 P-5 未過：`website` 在 add-on 啟動後才安裝，`website.domain` 空白到下次重啟（#164），`U-D8` 因此是 `GAP`；2026-09-27 兩次補跑 P-5 都已 PASS。
 
 

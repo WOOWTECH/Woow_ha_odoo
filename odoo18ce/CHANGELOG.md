@@ -141,6 +141,22 @@
   prefix was. Its pure parts are tested at the Static tier
   (`tests/test_e2e_collab_peer_snapshot.py`), including that the prefix shape it
   looks for is the gateway's own.
+- The **Live tier** gained a driver for the Ingress checks that are an action
+  rather than a screen: `tests/e2e_ingress_hand_checks.py`, with `visit`,
+  `editbtn` and `todosave`. The menu/action adapter judges one screen against
+  the same screen on the other surface, and three things #235 had to see are
+  not that shape -- a page view whose result is a `website.track` row, a click
+  that has to land in the web client, and a save whose result is in
+  `project.task.description`. The driver borrows the adapter's own
+  `SurfaceDriver`, so the Ingress session, the database reading and the
+  `Masker` that hides credentials and origins are the ones every other record
+  is written with, and it judges a **Prefix escape** with the adapter's
+  `is_prefix_escape` rather than a second opinion -- a review of the first
+  version caught exactly that: asking whether a request reached the Home
+  Assistant origin *outside* the prefix answers "no" for the doubled prefix of
+  `U-A2`, which is the shape #211 is about. `tests/test_e2e_ingress_hand_checks.py`
+  pins that case and the rest of the pure parts. Live tier only: no change to
+  the image and no version bump.
 
 ### Fixed
 - The markup strip that keeps the Ingress prefix out of a saved html field now
