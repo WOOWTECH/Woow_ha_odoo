@@ -150,9 +150,13 @@
   `project.task.description`. The driver borrows the adapter's own
   `SurfaceDriver`, so the Ingress session, the database reading and the
   `Masker` that hides credentials and origins are the ones every other record
-  is written with; it holds no decision of its own, because what each reading
-  means is the evidence README's judgement. Live tier only: no change to the
-  image and no version bump.
+  is written with, and it judges a **Prefix escape** with the adapter's
+  `is_prefix_escape` rather than a second opinion -- a review of the first
+  version caught exactly that: asking whether a request reached the Home
+  Assistant origin *outside* the prefix answers "no" for the doubled prefix of
+  `U-A2`, which is the shape #211 is about. `tests/test_e2e_ingress_hand_checks.py`
+  pins that case and the rest of the pure parts. Live tier only: no change to
+  the image and no version bump.
 
 ### Fixed
 - The markup strip that keeps the Ingress prefix out of a saved html field now

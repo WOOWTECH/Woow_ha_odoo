@@ -25,7 +25,8 @@ Release.
 | `ingress-crawl.jsonl` | `crawl --apps website` through Ingress, `WOOW-PARITY-20261001T072116Z` |
 | `crawl-diff.jsonl` | the two joined and judged |
 | `hand-checks.jsonl` | the three actions with no adapter subcommand, on 0.4.9 |
-| `baseline-0.4.6-hand-checks.jsonl` | the same two hand-driven readings taken on **0.4.6**, before the Deploy |
+| `host-readings.jsonl` | the three readings those actions are **judged by**, taken on the host afterwards: the base URL, the newest `website.track` rows, and `project.task.description` after the save |
+| `baseline-0.4.6-hand-checks.jsonl` | the same two hand-driven readings taken on **0.4.6**, before the Deploy. **Measured by the first version of the driver**, whose `route_escape` field missed a doubled prefix (see "The instrument was corrected mid-run"); its `http_4xx_5xx` row carries the escape that field omitted |
 | `website-track-cleared.jsonl` | the 88 `website.track` rows Step 2 cleared, exported before they were deleted |
 
 Drivers:
@@ -39,8 +40,34 @@ save, and a third's result is in a database row rather than on a screen, so no
 `open` or `crawl` target reaches them. It borrows the adapter's own
 `SurfaceDriver`, so the Ingress session, the database reading and the `Masker`
 that hides credentials and origins are the same ones every other record here
-was written with. It has no decision of its own to test on the Static tier:
-every field it writes is read from the page, and the judgement is in this file.
+was written with, and it judges a **Prefix escape** with the adapter's own
+`is_prefix_escape` rather than a second opinion. Its pure parts are tested at
+the Static tier, `tests/test_e2e_ingress_hand_checks.py`.
+
+`conservation.json` and `reconciled.jsonl`, which `docs/agents/live-tier.md`
+names, are not here: this run drove `open`, `crawl` and the three actions, not
+`e2e_parity_shared_layers_live.py run`/`report`, so there is no planned set to
+reconcile against. §10.6 of the parity plan records why the 76-item
+conservation set does not move.
+
+### The instrument was corrected mid-run
+
+A review of this branch found the first version of the driver judging a
+**Prefix escape** by asking whether a request reached the Home Assistant origin
+*outside* the prefix. That answer is "no" for the one shape #211 is about: a
+doubled prefix is still under the prefix. The 0.4.6 baseline record shows the
+miss — `route_escape: []` beside `http_4xx_5xx: ["HTTP404 <INGRESS_BASE><INGRESS_PREFIX>"]`,
+which is a `U-A2` escape the field did not count.
+
+So the helper now calls `adapter.is_prefix_escape`, a Static-tier test pins the
+doubled-prefix case against it, and **the three 0.4.9 actions were run again on
+the corrected driver** — `hand-checks.jsonl` holds those runs
+(`WOOW-PARITY-20261001T0745…`), not the first ones. The zeros in them are
+therefore zeros the adapter would also report. The 0.4.6 baseline cannot be
+re-measured, because the host is no longer on 0.4.6; it is kept as it was
+recorded, with the caveat above, and nothing in it is load-bearing — what makes
+check 3 a pass is the 0.4.9 record, and the doubled literal on `/shop/payment`
+is #163's own record on 0.4.5.
 
 The Issue's command block says `--surface ingress`; the adapter's two choices
 are `public` and `ha_ingress`, and `ha_ingress` is what ran. `IGNORE_HTTPS_ERRORS`
@@ -68,7 +95,7 @@ it should not" below).
 | | |
 |---|---|
 | Deploy | `ssh ha 'ha apps update 1b7b4ce7_odoo18ce'`, exit 0 |
-| Store | the Supervisor reported `version_latest: 0.4.8` until `ha store reload`; after it, `0.4.9` |
+| Supervisor cache | it reported `version_latest: 0.4.8` until `ha store reload`; after it, `0.4.9`. The **Sync** had already landed, so what was stale was the Supervisor's own copy of the **App Store mirror** |
 | After | `version: 0.4.9`, `version_latest: 0.4.9`, `state: started`, `update_available: false` — **read before the first check** |
 | Slow link | not needed. The ~380 MiB of the 0.4.7 Odoo bump came down in one go; `docs/runbooks/slow-link-pull.sh` (#153/#157) was not used |
 
@@ -82,7 +109,11 @@ early return, and **nothing would be logged at all**. That failure is silent,
 and a `GAP` on action 596 would look like the fix not working.
 
 Read with `odoo shell` on the add-on's own container, against `odoo_parity`,
-**on 0.4.9 and again before the Deploy on 0.4.6**. Identical both times:
+**on 0.4.9 and again before the Deploy on 0.4.6**. Identical both times. The
+0.4.9 reading is the first record of `host-readings.jsonl`; the 0.4.6 one was
+taken and classified the same way before the Deploy, and its raw capture was
+not kept — nothing rests on it, since what the checks are judged against is the
+base as 0.4.9 serves it.
 
 | Reading | 0.4.6 (before the Deploy) | 0.4.9 |
 |---|---|---|
@@ -144,7 +175,7 @@ decisive rather than merely clean:
 
 | Reading | 0.4.6 | 0.4.9 |
 |---|---|---|
-| the "Edit this content" `href` | `<INGRESS_PREFIX>/@<INGRESS_PREFIX>/` | `<INGRESS_PREFIX>/@/shop/payment` |
+| the "Edit this content" `href` | `<INGRESS_PREFIX>/@<INGRESS_PREFIX>/` (read on the website home — the link is on every editable page, and #163 recorded the same shape on `/shop/payment` on 0.4.5) | `<INGRESS_PREFIX>/@/shop/payment` |
 | following it | HTTP 404 on `<INGRESS_BASE><INGRESS_PREFIX>`, the editor left on its fallback frame | the page opens, no 404 |
 | the To-do form's two pictures, `src` in the DOM | `/project_todo/static/img/…` — no prefix | `<INGRESS_PREFIX>/project_todo/static/img/…` |
 | did they load | `[false, false]`, two HTTP 404s on the Home Assistant root | `[true, true]`, no failed request |
@@ -154,10 +185,10 @@ decisive rather than merely clean:
 | # | From | Verdict |
 |---|---|---|
 | 1 | #210 | **PASS**. The To-do form (`project.task` 5, the third `project_todo` line of `targets.jsonl`) reads `route_escape=0`, `http_4xx_5xx=0`, `console_error=0`, `pageerror=0`, `failed_requests=0` on **both** surfaces, and the two pictures carry the prefix under Ingress (`<INGRESS_PREFIX>/project_todo/static/img/todo_access.png`, `…/convert_todo.png`) against the same two root-relative literals on the Public origin. `open-diff.jsonl`: `PARITY`. On 0.4.6 this screen was the blocker `GAP` with `route_escape=2` |
-| 2 | #210 | **PASS**. The description was edited in the HTML editor under Ingress and saved (`save_button` present, no unsaved state after). Reading `project.task.description` back: both `src` still begin `/project_todo/`, the marker this run typed is in the stored value (so the save really wrote), the string `hassio_ingress` appears nowhere in it, and no `src`/`href` is absolute. Single-session only; the two-session peer-snapshot path is #234 and was not touched |
+| 2 | #210 | **PASS**. The description was edited in the HTML editor under Ingress and saved (`hand-checks.jsonl`: `save_button` true, `unsaved_after_save` false, every signal empty). The stored value is the third record of `host-readings.jsonl`: `every_src_root_relative` **true** for both `/project_todo/static/img/…`, `marker_present` **true** and the marker names this run (`WOOW-PARITY-20261001T074630Z`, so the save really wrote), `holds_hassio_ingress` **false**, `absolute_src_or_href` **0**. Single-session only; the two-session peer-snapshot path is #234 |
 | 3 | #211 | **PASS**. Under Ingress the link reads `<INGRESS_PREFIX>/@/shop/payment`, and **following it opens the page in the web client**: the browser lands on route `/shop/payment` with the main navbar, and the editor's second preview frame is the real page — route `/shop/payment`, title "Shop - Select Payment Method \| My Website", with `ecpay_invoice_website`'s own `.ecpay-invoice-info-form` block in it. No 404, no console error, no prefix escape |
-| 4 | #211 | **PASS**. `/shop/payment` is `PARITY` in `open-diff.jsonl`, and the Ingress record's `url_literals` carries exactly `<INGRESS_PREFIX>/@/shop/payment` against `<PUBLIC_BASE>/@/shop/payment` on the Public origin. On 0.4.6 the Ingress literal was `<INGRESS_PREFIX>/@<INGRESS_PREFIX>/shop/payment` — the doubled prefix of `U-A2` |
-| 5 | #160 | **PASS**. One website page view through Ingress (`/`, `WOOW-PARITY-20261001T071337Z`, 07:13:37) wrote `website.track` row **258**, and that row carries the **Canonical URL** host with path `/`. Not the Home Assistant host, and not a bare path — so the base read in Step 1 was neither wrong nor empty |
+| 4 | #211 | **PASS**. `/shop/payment` is `PARITY` in `open-diff.jsonl`, and the Ingress record's `url_literals` carries exactly `<INGRESS_PREFIX>/@/shop/payment` against `<PUBLIC_BASE>/@/shop/payment` on the Public origin. The doubled literal this replaces — `<INGRESS_PREFIX>/@<INGRESS_PREFIX>/shop/payment` — is #163's own record on 0.4.5 (`docs/testing/evidence/2026-09-29-issue-163/open-diff.jsonl`); this run's 0.4.6 baseline read the same defect on the website home, as `<INGRESS_PREFIX>/@<INGRESS_PREFIX>/` |
+| 5 | #160 | **PASS**. One website page view through Ingress (`/`, `WOOW-PARITY-20261001T074553Z`, 07:45:53) wrote `website.track` row **275**, and the second record of `host-readings.jsonl` reads that row back: url `<PUBLIC_BASE>/`, `host_is_the_canonical_url` **true**. Not the Home Assistant host, and not a bare path — a bare path would mean the base read in Step 1 was empty. Of the 187 rows then on the host, 167 are on the Canonical URL and the other 20 hold no url at all |
 | 6 | #160 | **PASS**. `crawl`/`diff` over `website` reports `PARITY` for `menu:website.menu_visitor_view_menu\|ir.actions.act_window:596`, severity `none`, no `url_violations` on either surface. Every visitor URL on that screen now reads `<PUBLIC_BASE>` — including the four that used to read `<HA_BASE>`: `/`, `/contactus`, `/jobs/…job-3`, `/shop/…service-58` |
 
 Both diffs in full:

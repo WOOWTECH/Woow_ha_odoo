@@ -402,7 +402,8 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > `/web/action/load`，而待辦說明走 `/web/dataset/call_kw`，正是 ADR 0004 的 2026-09-28 附記拒絕改寫的
 > 紀錄內容。這一輪的證據在 `docs/testing/evidence/2026-09-29-issue-163/`。
 >
-> **待辦表單的 `GAP` 已於 2026-09-30 修正（#210），Live 重跑待 Deploy。** 依 ADR 0004 的 2026-09-30
+> **待辦表單的 `GAP` 已於 2026-09-30 修正（#210），並於 2026-10-01 在 Release 0.4.9 上完成 Live 重跑
+> （#235，改記 `PARITY`，詳見本附記末）。** 依 ADR 0004 的 2026-09-30
 > 附記，修法不是改寫 `call_kw` 回應，而是 HTML 編輯器內容的一組「進／出」Literal rewrite：Runtime shim
 > 另外發佈 `__WOOW_INGRESS_MARKUP_IN__`／`__WOOW_INGRESS_MARKUP_OUT__` 兩個唯讀的**字串** helper
 > （前綴一律走 shim 自己的 `path()`）。五個改寫點：`Editor.attachTo` 在值變成 DOM 之前先上前綴（圖片
