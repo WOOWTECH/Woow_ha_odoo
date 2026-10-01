@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.9 — 2026-10-01
 
 ### Added
 - `open`'s write bound now covers the **portal** controllers of every module the
