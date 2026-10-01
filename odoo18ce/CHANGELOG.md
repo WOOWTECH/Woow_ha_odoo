@@ -35,7 +35,13 @@
   `/my/payment_method` store an invoice token when the query names an
   `invoice_id`, `account_payment/controllers/payment.py:149`), and where the
   audit stopped, so the next one does not re-read the same routes and knows to
-  start on `mail`. Guard-only; no behaviour change and no version bump.
+  start on `mail`. That stop-line first put `mail`'s unread controllers at eight
+  and they are **16** -- `controllers/discuss/` is a directory of eight of its
+  own, and a listing of the top level alone misses it, which is the same
+  directory `/chat/` was found in. Corrected, and sized: those 16 carry 51
+  `@route` declarations of which 5 are GET-reachable, all 5 carrying a
+  `readonly=True` that is not a write bound. #247 holds that sweep. Guard-only;
+  no behaviour change and no version bump.
 - The static tier measures how much of nginx's 4096-byte configuration token
   buffer the Runtime shim's prefix script has left, and fails while there is
   still room to act. That script is one single-quoted parameter, and every
