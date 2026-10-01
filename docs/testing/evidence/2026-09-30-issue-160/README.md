@@ -130,12 +130,16 @@ type of httprequest:               odoo.http.HTTPRequest
 arrived:                           http://192.168.50.192:8123/contactus
 what upstream would have stored:   https://shop.example.test/contactus   <- the Canonical URL
 after the dispatch:                http://192.168.50.192:8123/contactus  <- put back
-wrapper dict keys:                 _HTTPRequest__environ, _HTTPRequest__wrapped, _session_id__
+wrapper dict keys:                 _HTTPRequest__environ, _HTTPRequest__wrapped,
+                                   _session_id__, environ                <- the four __init__ sets
+wrapped request's cached url:      http://192.168.50.192:8123/contactus
 dispatch raising:                  url after: http://192.168.50.192:8123/contactus
 ```
 
-No warning was logged, nothing was left in the wrapper's `__dict__`, and the
-address the browser used came back — including when the dispatch raised.
+No warning was logged; the wrapper's `__dict__` holds exactly what its
+`__init__` put there and no `url` of its own, which is the entry the old version
+wrote and nothing read; and the address the browser used came back — including
+when the dispatch raised.
 
 What this does **not** replace is the Live rerun: nothing above opens a page
 through Ingress on the deployed add-on or re-crawls action 596. That still

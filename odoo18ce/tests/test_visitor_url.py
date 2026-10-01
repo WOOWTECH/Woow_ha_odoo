@@ -969,25 +969,25 @@ def test_a_url_whose_setter_raises_anything_at_all_leaves_the_response_standing(
     assert any("ValueError" in message and "will not be rewritten" in message for message in reported)
 
 
+class OneWayRequest:
+    """A request that takes the first assignment and refuses every later one."""
+
+    url = property(lambda self: self.read, lambda self, value: self._write(value))
+
+    def __init__(self, url):
+        self.read = url
+        self.written = 0
+
+    def _write(self, value):
+        self.written += 1
+        if self.written > 1:
+            raise ValueError("no second assignment")
+        self.read = value
+
+
 def test_a_url_that_will_not_be_put_back_does_not_replace_what_the_dispatch_raised() -> None:
     """The restore runs in a finally. An exception of its own there would hide
     the dispatch's, which is the one worth reading."""
-
-    class OneWayRequest:
-        """Takes the first assignment and refuses every later one."""
-
-        def __init__(self, url):
-            self.read = url
-            self.written = 0
-
-        def _write(self, value):
-            self.written += 1
-            if self.written > 1:
-                raise ValueError("no second assignment")
-            self.read = value
-
-        url = property(lambda self: self.read, _write)
-
     request = OdooRequest(OneWayRequest(f"{HA_BASE}/contactus"), Website(PUBLIC_BASE))
     declared, _ = odoo_website_visitor(request)
     install_patch(declared, request)
@@ -998,6 +998,43 @@ def test_a_url_that_will_not_be_put_back_does_not_replace_what_the_dispatch_rais
     declared._get_visitor_from_request = boom
     with pytest.raises(RuntimeError, match="creating the visitor failed"):
         declared()._handle_webpage_dispatch(None)
+
+
+def test_a_url_left_on_the_request_after_the_page_view_is_reported(caplog) -> None:
+    """A request that takes the replacement and refuses to take its own address
+    back reads as the Canonical URL for the whole of the rest of the response.
+    The page view is right and everything after it is wrong, which is the one
+    outcome that must not be silent."""
+    request = OdooRequest(OneWayRequest(f"{HA_BASE}/contactus"), Website(PUBLIC_BASE))
+    declared, tracks = odoo_website_visitor(request)
+    install_patch(declared, request)
+    with caplog.at_level("WARNING"):
+        declared()._handle_webpage_dispatch(Page(7))
+    assert tracks == [{"url": f"{PUBLIC_BASE}/contactus", "page_id": 7}]
+    assert request.httprequest.url == f"{PUBLIC_BASE}/contactus"
+    reported = [record.message for record in caplog.records]
+    assert len(reported) == 1
+    assert "could not be put back" in reported[0]
+    assert f"{HA_BASE}/contactus" in reported[0] and "no second assignment" in reported[0]
+
+
+def test_a_replacement_that_never_landed_is_reported_once_and_not_twice(caplog) -> None:
+    """The refused forward path puts back whatever an assignment may have
+    landed. When it landed nothing, there is nothing to report about putting it
+    back, and a second warning per page view would be noise."""
+
+    class ReadOnlyRequest:
+        url = property(lambda self: f"{HA_BASE}/contactus")
+
+    request = OdooRequest(ReadOnlyRequest(), Website(PUBLIC_BASE))
+    declared, tracks = odoo_website_visitor(request)
+    install_patch(declared, request)
+    with caplog.at_level("WARNING"):
+        declared()._handle_webpage_dispatch(None)
+    assert tracks == [{"url": f"{HA_BASE}/contactus"}]
+    reported = [record.message for record in caplog.records]
+    assert len(reported) == 1
+    assert "could not be replaced" in reported[0]
 
 
 def test_the_reason_the_swap_was_refused_is_the_one_reported() -> None:

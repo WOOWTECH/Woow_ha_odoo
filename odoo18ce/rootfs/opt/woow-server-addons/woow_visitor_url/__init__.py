@@ -116,9 +116,11 @@ def restore_url(httprequest, arrived, was_cached) -> None:
     value is written back instead -- the same address, now cached.
 
     This runs in a ``finally``, where an exception of its own would replace
-    whatever the dispatch was already raising, so nothing escapes it: a request
-    that will not take its own address back is left as it is, which is the same
-    value read a different way.
+    whatever the dispatch was already raising, so nothing escapes it. A request
+    that will not take its own address back is left reading as the Canonical
+    URL for the whole of the rest of the response, which is wrong for every
+    handler after this one, so that is reported -- unless the replacement had
+    not landed on it either, in which case there was nothing to put back.
     """
     if not was_cached:
         try:
@@ -126,7 +128,20 @@ def restore_url(httprequest, arrived, was_cached) -> None:
             return
         except Exception:
             pass
-    swap_url(httprequest, arrived)
+    refused = swap_url(httprequest, arrived)
+    if refused is None:
+        return
+    try:
+        if getattr(httprequest, URL_ATTRIBUTE) == arrived:
+            return
+    except Exception:
+        pass
+    _logger.warning(
+        "the request's url was replaced for this page view and could not be put back, so the "
+        "rest of this response reads it as something other than %s: %s, on %s.%s",
+        arrived, refused,
+        type(httprequest).__module__, type(httprequest).__qualname__,
+    )
 
 
 def dispatch_on_the_canonical_url(original, self, website_page):
