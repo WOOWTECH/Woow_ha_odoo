@@ -66,10 +66,11 @@ PROBE_ENVIRON = {
 # module could never produce would red a build over a request that merely
 # normalises what it is handed, which is not something this patch needs.
 REPLACEMENT = "https://canonical.invalid/probe/page?woow=1&x=a%20b"
-# The two ways the replacement can fail, kept apart because the build step says
-# something different about each: the first is a request that changed shape and
-# tells nothing about the patch, the second is a page view that would record
-# the Home Assistant host.
+# The three ways the round trip can fail, kept apart because the build step says
+# something different about each: a request that changed shape and tells nothing
+# about the patch, a page view that would record the Home Assistant host, and a
+# page view recorded right on a request left reading the Canonical URL for the
+# rest of its response. ``url_swap`` below says which is which.
 UNPROVABLE = "url swap unprovable"
 NOT_REPLACEABLE = "url not replaceable"
 NOT_PUT_BACK = "url not put back"
