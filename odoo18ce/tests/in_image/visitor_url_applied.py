@@ -31,8 +31,8 @@ adds:
 
 Prints one of ``visitor-url: applied``, ``visitor-url: not applied``,
 ``visitor-url: signature mismatch (...)``, ``visitor-url: url not replaceable
-(...)`` or ``visitor-url: url swap unprovable (...)``. Exit status 0 only for
-the first.
+(...)``, ``visitor-url: url not put back (...)`` or ``visitor-url: url swap
+unprovable (...)``. Exit status 0 only for the first.
 """
 import inspect
 import sys
@@ -58,18 +58,21 @@ PROBE_ENVIRON = {
     "PATH_INFO": "/probe",
     "QUERY_STRING": "",
 }
-# What the probe asks the module to put on that request. It carries a path and
-# a query, because a real tracked URL does, and the query holds a raw space,
-# which is not its own normal form: a request whose getter re-encodes what its
-# setter stored reads back as something else here, and would store every page
-# view with a query string on the Home Assistant host.
-REPLACEMENT = "https://canonical.invalid/probe/page?woow=1&x=a b"
+# What the probe asks the module to put on that request, and what it asks to
+# have put back afterwards. The replacement carries a path and a query because
+# a real tracked URL does, and it is already percent-encoded because a real one
+# always is: ``tracked_url`` splices the base in front of the path and query
+# werkzeug reports, and werkzeug reports those encoded. Asking for a value the
+# module could never produce would red a build over a request that merely
+# normalises what it is handed, which is not something this patch needs.
+REPLACEMENT = "https://canonical.invalid/probe/page?woow=1&x=a%20b"
 # The two ways the replacement can fail, kept apart because the build step says
 # something different about each: the first is a request that changed shape and
 # tells nothing about the patch, the second is a page view that would record
 # the Home Assistant host.
 UNPROVABLE = "url swap unprovable"
 NOT_REPLACEABLE = "url not replaceable"
+NOT_PUT_BACK = "url not put back"
 # The module Odoo's server-wide loader has already imported, and the function in
 # it that replaces a request's url. Read out of ``sys.modules`` and never
 # imported: importing it would apply the patch and make the flag above pass by
@@ -77,6 +80,7 @@ NOT_REPLACEABLE = "url not replaceable"
 # copy of the mechanism instead of the mechanism -- a copy is what the flag was.
 PATCH_MODULE = "odoo.addons.woow_visitor_url"
 SWAP_FUNCTION = "swap_url"
+RESTORE_FUNCTION = "restore_url"
 
 
 def registry_visitor(website_visitor):
@@ -186,8 +190,8 @@ def probe_request(http):
         return None, f"odoo.http.Request could not be built over a bare environ: {exc!r}"
 
 
-def loaded_swap():
-    """``(function, None)`` for the module's own url replacement, or
+def loaded(function):
+    """``(function, None)`` for one of the module's own functions, or
     ``(None, sentence)`` when it is not there to drive.
 
     Odoo imported the module before this probe ran, or ``patched()`` above
@@ -196,11 +200,11 @@ def loaded_swap():
     """
     module = sys.modules.get(PATCH_MODULE)
     if module is None:
-        return None, f"{PATCH_MODULE} is not in sys.modules, so its {SWAP_FUNCTION} cannot be driven"
-    swap = getattr(module, SWAP_FUNCTION, None)
-    if not callable(swap):
-        return None, f"{PATCH_MODULE} has no callable {SWAP_FUNCTION} to drive"
-    return swap, None
+        return None, f"{PATCH_MODULE} is not in sys.modules, so its {function} cannot be driven"
+    attribute = getattr(module, function, None)
+    if not callable(attribute):
+        return None, f"{PATCH_MODULE} has no callable {function} to drive"
+    return attribute, None
 
 
 def url_swap(http):
@@ -218,6 +222,12 @@ def url_swap(http):
     * ``"url not replaceable"`` -- it was performed and the url did not change,
       so a page view would record the address the request arrived on. This is
       the 0.4.6 defect, and the half issue #160 was reopened over.
+    * ``"url not put back"`` -- the replacement took and the address the
+      request arrived on did not come back, so the page view is right and every
+      handler after it on that request reads the Canonical URL instead. The
+      module writes that address back rather than dropping a cache entry,
+      because a forwarded attribute has no deleter, which makes this the other
+      half that depends on the request's shape.
 
     ``http`` is Odoo's ``odoo.http``. What the dispatch reads is
     ``request.httprequest``, an ``odoo.http.HTTPRequest``: a wrapper that
@@ -225,17 +235,21 @@ def url_swap(http):
     whose getter and setter reach the werkzeug request it wraps
     (``make_request_wrap_methods``). The module replaces that attribute, so
     this builds the request over a bare environ, hands it to the module's own
-    replacement, and reads the url back itself -- a function that reported
-    success without changing anything would not get past the reading.
+    replacement and then to its restore, and reads the url back itself after
+    each -- a function that reported success without changing anything would
+    not get past the reading.
 
     What it does not read is Odoo's WSGI application putting that wrapper on
     the request in the first place. If a nightly interposes something else
     there, this stays green and the module's own read-back guard catches it at
     runtime -- a warning per page view, which is what the host logged on 0.4.6.
     """
-    swap, undrivable = loaded_swap()
+    swap, undrivable = loaded(SWAP_FUNCTION)
     if undrivable is not None:
         return UNPROVABLE, undrivable
+    restore, unrestorable = loaded(RESTORE_FUNCTION)
+    if unrestorable is not None:
+        return UNPROVABLE, unrestorable
     request, unbuildable = probe_request(http)
     if unbuildable is not None:
         return UNPROVABLE, unbuildable
@@ -271,6 +285,24 @@ def url_swap(http):
             f"{PATCH_MODULE}.{SWAP_FUNCTION} was asked for {REPLACEMENT!r} on {name} and "
             f"reported {refused!r}; it arrived as {arrived!r} and reads back {replaced!r}. "
             "A page view would record the address the request arrived on"
+        )
+    # The way back is the other half that depends on the request's shape: the
+    # module writes the arrived address again, because a forwarded attribute
+    # has no deleter. `was_cached` is False, which is what the dispatch reads
+    # for Odoo's wrapper -- it keeps no url in its own __dict__.
+    try:
+        restore(httprequest, arrived, False)
+    except Exception as exc:
+        return UNPROVABLE, f"{PATCH_MODULE}.{RESTORE_FUNCTION} raised on {name}: {exc!r}"
+    try:
+        put_back = getattr(httprequest, URL_ATTRIBUTE)
+    except Exception as exc:
+        return UNPROVABLE, f"{name}.{URL_ATTRIBUTE} could not be read after the restore: {exc!r}"
+    if put_back != arrived:
+        return NOT_PUT_BACK, (
+            f"{PATCH_MODULE}.{RESTORE_FUNCTION} left {name}.{URL_ATTRIBUTE} reading "
+            f"{put_back!r} instead of the {arrived!r} it arrived as. The page view would be "
+            "right and the rest of the response would read the Canonical URL"
         )
     return None, None
 

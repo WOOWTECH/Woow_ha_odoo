@@ -259,6 +259,26 @@ def loader_has(module):
         del sys.modules[name]
 
 
+def patch_module(swap_url=None, restore_url=None):
+    """A stand-in for the loaded module, carrying the two functions the probe
+    drives. Each defaults to what the shipped one does on a request that takes
+    an assignment, so a test replaces only the half it is about.
+    """
+    module = types.ModuleType(load_probe().PATCH_MODULE)
+    module.swap_url = swap_url or _assigning_swap
+    module.restore_url = restore_url or _assigning_restore
+    return module
+
+
+def _assigning_swap(httprequest, value):
+    setattr(httprequest, "url", value)
+    return None
+
+
+def _assigning_restore(httprequest, arrived, was_cached):
+    setattr(httprequest, "url", arrived)
+
+
 def visitor_namespace(declared):
     """Odoo's website_visitor module as the patch and the probe read it."""
     namespace = types.ModuleType("odoo.addons.website.models.website_visitor")
@@ -1084,14 +1104,22 @@ def test_the_probe_environ_names_an_address_that_is_not_the_replacement() -> Non
 
 
 def test_the_replacement_the_probe_asks_for_is_shaped_like_a_tracked_url() -> None:
-    """A path and a query, with the query not in its own normal form: a request
-    that re-encodes what it was handed reads back as something else, and would
-    store every page view carrying a query string on the Home Assistant host."""
+    """A path and a query, because a real tracked URL has both -- and already
+    percent-encoded, because a real one always is: ``tracked_url`` splices the
+    base in front of the path and query werkzeug reports, and werkzeug reports
+    those encoded. A gate asking for a value the module could never produce
+    would red a build over a request that merely normalises what it is handed,
+    which takes nothing away from this patch."""
     replacement = load_probe().REPLACEMENT
     parts = urllib.parse.urlsplit(replacement)
     assert parts.scheme and parts.netloc
     assert parts.path not in ("", "/") and parts.query
-    assert replacement != urllib.parse.quote(replacement, safe=":/?&=")
+    # `%` is safe so an already-encoded value is left alone; a raw space in it
+    # would not be.
+    assert replacement == urllib.parse.quote(replacement, safe=":/?&=%")
+    assert decision.tracked_url(f"{HA_BASE}{parts.path}?{parts.query}", "https://canonical.invalid") == (
+        replacement
+    )
 
 
 def test_the_probe_performs_the_swap_on_the_request_odoo_builds() -> None:
@@ -1215,10 +1243,10 @@ def test_the_probe_reports_a_swap_it_could_not_perform_with_a_non_zero_status() 
     assert report.startswith(f"visitor-url: {load_probe().UNPROVABLE} (")
 
 
-def test_the_probe_drives_the_modules_own_replacement_and_names_it_as_the_module_does() -> None:
-    """The probe reads the function out of ``sys.modules`` by name; the names
-    have to be the ones Odoo's loader and the shipped module use, or the probe
-    reports a module that is there as missing."""
+def test_the_probe_drives_the_modules_own_functions_and_names_them_as_it_does() -> None:
+    """The probe reads them out of ``sys.modules`` by name; the names have to be
+    the ones Odoo's loader and the shipped module use, or the probe reports a
+    module that is there as missing."""
     probe = load_probe()
     assert probe.PATCH_MODULE == f"odoo.addons.{MODULE_NAME}"
     source = (MODULE / "__init__.py").read_text(encoding="utf-8")
@@ -1226,6 +1254,7 @@ def test_the_probe_drives_the_modules_own_replacement_and_names_it_as_the_module
         node.name for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
     ]
     assert probe.SWAP_FUNCTION in defined
+    assert probe.RESTORE_FUNCTION in defined
 
 
 def test_the_probe_reports_a_module_it_cannot_drive_rather_than_importing_one() -> None:
@@ -1241,23 +1270,24 @@ def test_the_probe_reports_a_module_it_cannot_drive_rather_than_importing_one() 
     assert probe.PATCH_MODULE not in sys.modules
 
 
-def test_the_probe_reports_a_module_whose_replacement_is_not_where_it_reads_it() -> None:
+def test_the_probe_reports_a_module_whose_functions_are_not_where_it_reads_them() -> None:
     probe = load_probe()
-    with loader_has(types.ModuleType(probe.PATCH_MODULE)):
-        verdict, sentence = probe.url_swap(odoo_http_module())
-    assert verdict == probe.UNPROVABLE
-    assert f"no callable {probe.SWAP_FUNCTION}" in sentence
+    for function in (probe.SWAP_FUNCTION, probe.RESTORE_FUNCTION):
+        module = patch_module()
+        delattr(module, function)
+        with loader_has(module):
+            verdict, sentence = probe.url_swap(odoo_http_module())
+        assert verdict == probe.UNPROVABLE
+        assert f"no callable {function}" in sentence
 
 
 def test_the_probe_reports_a_replacement_that_raises_rather_than_dying_with_it() -> None:
     probe = load_probe()
-    module = types.ModuleType(probe.PATCH_MODULE)
 
     def swap_url(httprequest, value):
         raise RuntimeError("the replacement itself is broken")
 
-    module.swap_url = swap_url
-    with loader_has(module):
+    with loader_has(patch_module(swap_url=swap_url)):
         verdict, sentence = probe.url_swap(odoo_http_module())
     assert verdict == probe.UNPROVABLE
     assert "RuntimeError" in sentence and "broken" in sentence
@@ -1268,27 +1298,25 @@ def test_the_probe_does_not_ignore_the_modules_word_either() -> None:
     module records the arrived address whenever it refuses, so the page view
     goes on the Home Assistant host and the probe has to say so."""
     probe = load_probe()
-    module = types.ModuleType(probe.PATCH_MODULE)
 
     def swap_url(httprequest, value):
         setattr(httprequest, "url", value)
         return "it reads back as something else"
 
-    module.swap_url = swap_url
-    with loader_has(module):
+    with loader_has(patch_module(swap_url=swap_url)):
         verdict, sentence = probe.url_swap(odoo_http_module())
     assert verdict == probe.NOT_REPLACEABLE
     assert "it reads back as something else" in sentence
 
 
-def test_the_probe_fails_when_the_url_comes_back_re_encoded() -> None:
-    """The shape the probe's replacement is chosen for: a request that stores
-    what it is handed and reads it back normalised. The page view would carry a
-    query string, so the stored URL would not be the one asked for."""
+def test_the_probe_fails_when_the_url_comes_back_changed_at_all() -> None:
+    """A request that stores what it is handed and reads back something else --
+    here the query dropped. The page view would not carry the address asked
+    for, whatever the module reported about the assignment."""
 
     class HTTPRequest:
         url = property(
-            lambda self: urllib.parse.quote(self.read, safe=":/?&="),
+            lambda self: self.read.split("?")[0],
             lambda self, value: setattr(self, "read", value),
         )
 
@@ -1296,27 +1324,75 @@ def test_the_probe_fails_when_the_url_comes_back_re_encoded() -> None:
             self.read = werkzeug_url(environ)
 
     probe = load_probe()
-    module = types.ModuleType(probe.PATCH_MODULE)
-    # Assigns and reports nothing wrong, which is what a swap_url blind to the
-    # read-back would do; the probe reads it back itself.
-    module.swap_url = lambda httprequest, value: setattr(httprequest, "url", value)
-    with loader_has(module):
+    with loader_has(patch_module()):
         verdict, sentence = probe.url_swap(odoo_http_module(HTTPRequest))
     assert verdict == probe.NOT_REPLACEABLE
-    assert "a%20b" in sentence
+    assert "?woow=1" not in sentence.split("reads back")[1]
 
 
 def test_the_probe_does_not_take_the_modules_word_for_the_replacement() -> None:
     """A replacement that reports success and changes nothing is exactly the
     0.4.6 defect, so the probe reads the url back itself."""
     probe = load_probe()
-    module = types.ModuleType(probe.PATCH_MODULE)
-    module.swap_url = lambda httprequest, value: None  # "it took", and it did not
-    with loader_has(module):
+    nothing = lambda httprequest, value: None  # "it took", and it did not
+    with loader_has(patch_module(swap_url=nothing)):
         verdict, sentence = probe.url_swap(odoo_http_module())
     assert verdict == probe.NOT_REPLACEABLE
     assert werkzeug_url(probe.PROBE_ENVIRON) in sentence
     assert "None" in sentence
+
+
+def test_the_probe_fails_when_the_arrived_url_does_not_come_back() -> None:
+    """The other half that depends on the request's shape. A page view stored
+    on the Canonical URL and a request left reading it for the rest of the
+    response is a different defect from the 0.4.6 one, and gets its own
+    verdict."""
+    probe = load_probe()
+    with loader_has(patch_module(restore_url=lambda *args: None)):
+        verdict, sentence = probe.url_swap(odoo_http_module())
+    assert verdict == probe.NOT_PUT_BACK
+    assert probe.REPLACEMENT in sentence
+    assert werkzeug_url(probe.PROBE_ENVIRON) in sentence
+
+
+def test_the_probe_reports_a_restore_that_raises_rather_than_dying_with_it() -> None:
+    probe = load_probe()
+
+    def restore_url(httprequest, arrived, was_cached):
+        raise RuntimeError("the way back is broken")
+
+    with loader_has(patch_module(restore_url=restore_url)):
+        verdict, sentence = probe.url_swap(odoo_http_module())
+    assert verdict == probe.UNPROVABLE
+    assert "RuntimeError" in sentence and "way back" in sentence
+
+
+def test_the_probe_drives_the_restore_the_way_the_dispatch_does() -> None:
+    """Odoo's wrapper keeps no url in its own ``__dict__``, so the dispatch
+    always reads ``was_cached`` False for it; the probe has to hand the restore
+    the same thing, or it exercises a path the real request never takes."""
+    seen = []
+    probe = load_probe()
+
+    def restore_url(httprequest, arrived, was_cached):
+        seen.append(was_cached)
+        setattr(httprequest, "url", arrived)
+
+    with loader_has(patch_module(restore_url=restore_url)):
+        assert probe.url_swap(odoo_http_module()) == (None, None)
+    assert seen == [False]
+
+
+def test_the_probe_reports_a_url_that_was_not_put_back_with_a_non_zero_status() -> None:
+    request = ingress_request()
+    declared, _ = odoo_website_visitor(request)
+    probe = load_probe()
+    install_patch(declared, request)
+    with loader_has(patch_module(restore_url=lambda *args: None)):
+        status, report = probe_report(visitor_namespace(declared))
+    assert status != 0
+    assert len(report.splitlines()) == 1
+    assert report.startswith(f"visitor-url: {probe.NOT_PUT_BACK} (")
 
 
 def test_the_probe_reports_a_request_that_no_longer_carries_an_httprequest() -> None:
@@ -1330,9 +1406,7 @@ def test_the_probe_reports_a_request_that_no_longer_carries_an_httprequest() -> 
             self.wrapped = httprequest  # not where the patch looks
 
     probe = load_probe()
-    module = types.ModuleType(probe.PATCH_MODULE)
-    module.swap_url = lambda httprequest, value: None
-    with loader_has(module):
+    with loader_has(patch_module()):
         verdict, sentence = probe.url_swap(odoo_http_module(request_class=Request))
     assert verdict == probe.UNPROVABLE
     assert f"{probe.HTTPREQUEST_ATTRIBUTE} could not be read" in sentence
@@ -1365,5 +1439,6 @@ def test_the_build_step_tells_a_broken_swap_from_one_it_could_not_perform() -> N
     known about the patch. One message for both is the container-versus-patch
     conflation `probe_reported` exists to avoid."""
     probe, (_, run) = load_probe(), visitor_url_step()
-    assert probe.NOT_REPLACEABLE in run and probe.UNPROVABLE in run
-    assert run.count("::error::") == run.count("exit 1") >= 5
+    for verdict in (probe.NOT_REPLACEABLE, probe.NOT_PUT_BACK, probe.UNPROVABLE):
+        assert f"^visitor-url: {verdict}" in run, verdict
+    assert run.count("::error::") == run.count("exit 1") >= 6

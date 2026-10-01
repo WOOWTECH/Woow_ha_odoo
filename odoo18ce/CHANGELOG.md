@@ -21,8 +21,9 @@
   reporting the old address, is recorded as it arrived and said so in the log,
   as before. Every pull request's in-image check now also builds the request
   Odoo itself builds in that image, has this module replace that request's URL
-  and reads the URL back, instead of only reading the flag the patch sets:
-  reading the flag is what called this green while the host was unfixed. Nothing else changes -- the stored URL is still
+  and put the arrived address back, and reads the URL itself after each,
+  instead of only reading the flag the patch sets: reading the flag is what
+  called this green while the host was unfixed. Nothing else changes -- the stored URL is still
   built on `website.get_base_url()`, a visit that already arrives on the
   Canonical URL still stores exactly what it stored before, and **page views
   stored before this version keep the Home Assistant host**: they are not
