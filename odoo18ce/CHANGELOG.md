@@ -49,11 +49,26 @@
   substitutions applied, holds a 64-byte reserve on the shim, says in the
   failure that the way back is to move a part of the script into a `map` of
   its own (nginx concatenates variables after parsing, so a reference costs
-  only its own length), pins the limit against a real nginx so the constant
-  cannot drift from the nginx the image ships, and refuses any comment that
-  states the headroom in prose -- which is the shape the stale claims took.
-  The two comments that carried a figure now point at the measurement. No
-  behaviour change and no version bump.
+  only its own length), pins the limit against a real nginx, and refuses any
+  comment that states the headroom in prose -- which is the shape the stale
+  claims took. The two comments that carried a figure now point at the
+  measurement.
+- A review round found two overstatements in that measurement, both now
+  corrected. The nginx it drives is the one on the **Static tier**'s PATH,
+  installed from the runner's base and not from the image's, so it pins the
+  constant against a real nginx without proving it is the nginx the image
+  ships; a differing buffer in the image surfaces on a **Deploy**, as an
+  add-on that does not start. And the budget's worst case for
+  `%%CANONICAL_URL%%` was an assumption, not a bound: `public_url` is an
+  add-on option, and cont-init's check reads the value's shape and never its
+  length, so an origin of a legal shape but 4000 bytes long would have been
+  rendered into a parameter nginx refuses -- the exact failure the budget
+  exists to catch early, reported as headroom. `10-odoo-config.sh` now caps
+  the **Canonical URL** at the budgeted 2048 bytes and drops an over-long
+  value the way it already drops a misshapen one (a warning, and a **Runtime
+  shim** that publishes nothing), and a test reads the cap out of the script
+  so the two numbers cannot drift apart. That cap is the one behaviour change
+  here; it needs no version bump of its own.
 
 ### Changed
 - The weekly bump bot proposes the Debian **base-image** bump in a pull

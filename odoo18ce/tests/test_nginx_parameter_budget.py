@@ -29,8 +29,13 @@ those maps has thousands of bytes free.
 
 The limit is not asserted from the source of nginx: the last test drives a
 real nginx with a token at the limit and a token one byte over it, so the
-constant here is a measurement and cannot drift away from the nginx the
-image ships.
+constant here is a measurement. What it measures is the nginx the Static
+tier runs -- the one on the runner's PATH, installed from the runner's own
+base and not from the image's -- so it pins the constant against a real
+nginx without proving it is the one the image ships. A build of nginx with
+a different buffer would be caught here only if the Static tier ran that
+build; in the image it surfaces on a Deploy, as an add-on that does not
+start.
 """
 import re
 import subprocess
@@ -40,6 +45,7 @@ from conftest import require_tool
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "rootfs/etc/nginx/nginx.conf.template"
+CONT_INIT = ROOT / "rootfs/etc/cont-init.d/10-odoo-config.sh"
 
 # The longest token nginx will read, quotes included. Measured against a real
 # nginx by `test_the_token_limit_is_the_one_nginx_enforces` below.
@@ -61,6 +67,14 @@ RESERVE = 64
 # `%%INGRESS_CACHE_VERSION%%` is the add-on version, or the literal `unknown`
 # when `bashio::addon.version` cannot answer; both are shorter than the
 # placeholder, so substituting it only ever buys headroom back.
+#
+# Every entry but one is bounded by what the value can be: a port is five
+# digits, a protocol is `https`. The Canonical URL is bounded by nothing of its
+# own -- `public_url` is an add-on option, and cont-init's check reads the
+# value's shape and not its length -- so cont-init caps it, and
+# `test_the_canonical_url_worst_case_is_a_cap_cont_init_keeps` holds the two
+# numbers together. A worst case here that nothing enforces there would be this
+# file reporting headroom it does not have.
 PLACEHOLDER_WORST_CASE = {
     "%%INGRESS_CACHE_VERSION%%": len("unknown"),
     "%%CANONICAL_URL%%": 2048,
@@ -72,6 +86,9 @@ PLACEHOLDER_WORST_CASE = {
 # The parameter this file exists for, named so its failure says which one it
 # is before anyone has counted bytes.
 SHIM_MAP = "map $upstream_http_content_type $ingress_runtime_shim {"
+
+# The cap cont-init puts on the one value no other rule bounds.
+CANONICAL_URL_CAP = re.compile(r"^CANONICAL_URL_MAX=(\d+)$", re.MULTILINE)
 
 
 def quoted_parameters(text):
@@ -200,11 +217,48 @@ def test_the_shim_is_the_parameter_worth_watching():
     )
 
 
+def test_the_canonical_url_worst_case_is_a_cap_cont_init_keeps():
+    """The Canonical URL's worst case is enforced where it is substituted.
+
+    `%%CANONICAL_URL%%` is the only placeholder whose value nothing else
+    bounds. `public_url` is an add-on option typed `url?`, and cont-init's
+    check at the point of substitution reads the value's shape, not its
+    length -- so a long enough origin would pass that check and take the
+    rendered parameter over nginx's token buffer, which is the failure this
+    whole file exists to catch early. cont-init therefore drops a value over
+    the cap the way it drops a misshapen one, and this reads the cap out of
+    the script: a number in `PLACEHOLDER_WORST_CASE` that cont-init does not
+    enforce is an assumption dressed as a measurement.
+    """
+    cont_init = CONT_INIT.read_text(encoding="utf-8")
+    found = CANONICAL_URL_CAP.search(cont_init)
+    assert found, (
+        "cont-init must cap the Canonical URL's length in a `CANONICAL_URL_MAX=<n>` "
+        "assignment of its own, because PLACEHOLDER_WORST_CASE budgets the nginx "
+        "parameter against that number and nothing else bounds the value"
+    )
+    assert int(found.group(1)) == PLACEHOLDER_WORST_CASE["%%CANONICAL_URL%%"], (
+        f"cont-init caps the Canonical URL at {found.group(1)} bytes while this file "
+        f"budgets {PLACEHOLDER_WORST_CASE['%%CANONICAL_URL%%']}; the budget is measuring a "
+        "cliff that is not where the cap puts it. Change both or neither."
+    )
+    # The cap has to be applied, not only declared, and applied the way the
+    # shape check is: drop the value, warn, let the shim publish nothing.
+    assert '[ "${#CANONICAL_URL}" -gt "${CANONICAL_URL_MAX}" ]' in cont_init, (
+        "CANONICAL_URL_MAX must be compared against the value's length"
+    )
+    applied = cont_init.index('[ "${#CANONICAL_URL}" -gt "${CANONICAL_URL_MAX}" ]')
+    rendered = cont_init.index("s#%%CANONICAL_URL%%#${CANONICAL_URL}#g")
+    assert applied < rendered, "the cap must be applied before the value is rendered"
+
+
 def test_the_token_limit_is_the_one_nginx_enforces(tmp_path: Path):
     """A token at `TOKEN_LIMIT` parses and one byte more does not.
 
-    The constant is a measurement, not a reading of nginx's source: the image
-    is free to ship a different nginx, and this is where that would be found.
+    The constant is a measurement, not a reading of nginx's source. It is a
+    measurement of the nginx on this runner's PATH, which is the Static
+    tier's and not the image's -- see the limit of that in this file's
+    docstring.
     """
     nginx = require_tool("nginx")
 
