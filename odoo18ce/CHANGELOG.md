@@ -178,8 +178,44 @@
   its measurement. The `GET_WRITING_ROUTES` comment now points at that postscript
   instead of carrying the only copy, and is nine lines shorter for it. Making a
   run *name* those ambient writes in its own evidence — a count delta per run —
-  is #256. Documentation and one static test: no behaviour change, no image
-  change, no version bump.
+  is the entry below (#256). Documentation and one static test: no behaviour
+  change, no image change, no version bump.
+- A run now **names the ambient rows it left**, in counts. The postscript above
+  records two writes no targets file can bound — serving a tracked page upserts a
+  `website.visitor` and inserts a `website.track` row, and a page's own markup and
+  JavaScript write too — and how many rows a run left was a figure reconstructed
+  on the host afterwards, which is how #235 got its 19. `crawl` and `open` now
+  count both models after the login and again after the last navigation and write
+  the delta beside their evidence, under the records' own name with
+  `.ambient.json` for its extension (`ingress-open.jsonl` →
+  `ingress-open.ambient.json`), with the run id, the surface, the subcommand and
+  how many navigations the delta is over — the driver's own count of them, since
+  one target can be several page views and each of those is what writes. The reading
+  is a count and nothing else: no URL, no visitor identity, nothing to mask. A
+  `crawl`'s figure is the interesting zero — it navigates `/odoo/action-<id>`,
+  which renders no tracked page, so the postscript's claim that a crawl leaves
+  nothing is measured per run instead of asserted.
+- The counts are read over the session's own `search_count`, the read-only RPC the
+  shared layers' Live harness already uses — the adapter acquires no database
+  connection and takes nothing over `ssh`. It passes through the same policy every
+  other thing this driver does passes through (`Operation.COUNT_ROWS`, still a
+  member of `NON_MUTATING_OPERATIONS`), and a `call_kw` POST renders no template,
+  so the reading cannot add to the rows it is counting. A model this database does
+  not hold, or one this user may not count, leaves its reason in the record
+  instead of a zero — per model, so a reading that got one count keeps it — and
+  the summary is written on the way out, so a run that failed still accounts for
+  what it left.
+- The figure is **accounting and not a verdict**, and three things hold it there:
+  its own schema (`odoo-parity-ambient/v1`) in its own file, a `diff` that never
+  reads that file and a `read_records` that refuses the schema, and the parity
+  plan's §12 declaring it outside `conservation` the way `woow.peer-snapshot.v1`
+  already is. Both surfaces visit the same pages, so an unequal delta is an
+  ordering artefact — the visitor row the first run upserted is already there for
+  the second — and judging it would raise a Blocker on the order two runs happened
+  to run in. The record carries that sentence itself, beside the one saying the
+  delta is net: another session writing during the run is inside it, and the
+  `website.visitor` GC cron can take rows out of it, so a delta below zero is a
+  vacuum and not a deletion the run made. No image change and no version bump.
 
 ### Fixed
 - The markup strip that keeps the Ingress prefix out of a saved html field now

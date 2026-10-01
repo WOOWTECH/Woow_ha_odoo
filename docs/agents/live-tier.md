@@ -166,7 +166,8 @@ maintenance bootstrap writes `web.base.url`, `web.base.url.freeze` and
 
 - **Evidence**, under `docs/testing/evidence/<date>-issue-<n>/`: `README.md`
   (what ran, against what, and the P-Check table), `checks.jsonl`,
-  `conservation.json`, `reconciled.jsonl`. Follow
+  `conservation.json`, `reconciled.jsonl`, and the `*.ambient.json` each `crawl`
+  or `open` writes beside its own records (the bullet below). Follow
   `2026-09-27-issue-172/` — it is the smallest complete example.
 - **The parity plan updated to what the run recorded**, not the other way
   round: the item's row, the `G-`/`AD-` list, and the §10.6 tally.
@@ -182,7 +183,16 @@ maintenance bootstrap writes `web.base.url`, `web.base.url.freeze` and
   [ADR 0012, postscript 2026-10-01 (#227)](../adr/0012-sweeps-verify-on-the-test-host.md#postscript-2026-10-01-227).
   Quote the guarantee that way in an evidence README; do not promise zero rows,
   and do not delete the rows to make it true — #235's run exported the ones it
-  cleared and said why.
+  cleared and said why. **How many** a run left is the run's own figure since
+  #256, not something to count on the host afterwards: `crawl` and `open` count
+  both models after the login and again after the last navigation and write the
+  delta beside their evidence, under the records' own name with `.ambient.json`
+  for its extension (`ingress-open.jsonl` → `ingress-open.ambient.json`) — a
+  `website.track` and a `website.visitor` delta, counts only, over the
+  navigations the run actually made. Keep that file with the evidence and
+  quote its numbers in the README. It is accounting and not a verdict: `diff`
+  never reads it, and the §10.6 and §12 conservation tallies do not move for
+  it.
 
 ## When it cannot run
 
