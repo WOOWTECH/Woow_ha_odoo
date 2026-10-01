@@ -301,7 +301,12 @@ jobs:
       # module (the one the registry runs) carries the flag and whether the
       # wrapper still fits upstream's parameters. The second run leaves the
       # module out of --load and has to come back unpatched, which shows the
-      # check can go red. No database, Supervisor or credential is used.
+      # check can go red. It also builds the request Odoo builds in this image,
+      # has the module's own swap_url replace that request's url and its own
+      # restore_url put the arrived address back, reading the url itself after
+      # each: on 0.4.6 the flag was on and the replacement was a no-op, which
+      # only the Live tier saw (issue #160, reopened). No database, Supervisor
+      # or credential is used.
       - name: In-image contract (visitor tracking URL)
         run: |
           set -euo pipefail
@@ -345,6 +350,28 @@ jobs:
               "website.visitor._handle_webpage_dispatch does not take that way; the patch installs," \
               "and a tracked page view would raise TypeError. The difference is named in the probe" \
               "line above."
+            exit 1
+          fi
+          if grep -q '^visitor-url: url not replaceable' <<< "${out}"; then
+            echo "::error::woow_visitor_url is applied, but replacing the url of the request Odoo" \
+              "builds in this image does not take, so a page view opened through Ingress would" \
+              "still record the Home Assistant host while the patch looks applied. That is how" \
+              "0.4.6 shipped (issue #160, reopened). The reading is in the probe line above."
+            exit 1
+          fi
+          if grep -q '^visitor-url: url not put back' <<< "${out}"; then
+            echo "::error::woow_visitor_url replaces the url of the request Odoo builds in this" \
+              "image and cannot put the arrived address back, so a page view would be recorded" \
+              "correctly and every handler after it on that request would read the Canonical URL." \
+              "The probe line above has both addresses."
+            exit 1
+          fi
+          if grep -q '^visitor-url: url swap unprovable' <<< "${out}"; then
+            echo "::error::the probe could not perform woow_visitor_url's url replacement on the" \
+              "request Odoo builds, so whether it works in this image is unknown; something the" \
+              "probe reads changed shape -- Odoo's odoo.http, or the module's own swap_url or" \
+              "restore_url -- which is not the same as the patch being broken. The probe line" \
+              "above names what it could not read."
             exit 1
           fi
           if ! grep -qx 'visitor-url: applied' <<< "${out}"; then
