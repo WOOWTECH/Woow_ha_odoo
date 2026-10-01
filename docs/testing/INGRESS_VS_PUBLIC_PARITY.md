@@ -514,6 +514,67 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 純函式部分由 `test_e2e_collab_peer_snapshot.py` 在靜態層跑過。讀回來存著 foreign 前綴才把 #234
 > 升為 `severity: blocker`（parity plan 1.3），在那之前維持 `severity: important`。
 
+> **媒體對話框「重新開啟時不會highlight原本那個附件」已於 2026-10-01 處理（#239，ADR 0004 的第四個
+> 2026-10-01 附記），Live 重跑由 #243 統一執行。** 這是 ADR 0004 開放清單裡最後兩項，而且是這一族
+> 唯一「反向」的三項：不是插入 markup，而是**比較**——一邊期待 root-relative、另一邊拿到帶前綴的值。
+> 本輪的結論是**三項裡兩項真的壞掉、第三項本來就是對的，而對第三項照 issue 說的做會把它弄壞**：
+>
+> | | 比較 | 量到的狀況 | 出貨 |
+> | --- | --- | --- | --- |
+> | 1 | `ImageSelector.isInitialMedia` 的 `getAttribute("src")` | 元素被 **shim** 加了前綴、`attachment.image_src` 不帶 | **改寫**，元素那側走 `__WOOW_INGRESS_MARKUP_OUT__` |
+> | 2 | 同一個方法的 `dataset.originalSrc` 分支 | 元素被 **HTML location** 加了前綴、`attachment.image_src` 不帶 | **改寫**，同一個 strip |
+> | 3 | `DocumentSelector.fetchAttachments` 的 `getAttribute("href")` | **兩側都帶前綴** | 不改 |
+>
+> 三項各存在**兩份**：Odoo 18 出貨兩個媒體對話框，`html_editor` 的（後台表單開的那個）與舊
+> `web_editor` 的（`wysiwyg.js` 與網站編輯器的 snippet options 開的那個；整包有九個檔案從該元件自己
+> 的目錄之外 import 它，測試不算——其中兩個還在 `web_editor` 自己裡面）。兩個 `image_selector.js`
+> 是同一段程式、只差引號，所以第 1 列是**兩條** `sub_filter`；第 2 列只要**一條**，因為那是兩個對話框
+> 唯一寫法完全相同的一行。只修 issue 點名的那一個對話框，會把郵件設計器與網站編輯器的那一個留在原狀。
+>
+> 第 1 列是 issue 描述的那個 bug：元素的 `src` 在 Ingress 下帶前綴（shim 的 `setAttribute` 包裝、或
+> `__WOOW_INGRESS_MARKUP_IN__`），而 `attachment.image_src` 是 `ir.attachment._compute_image_src`
+> 算出來的 `/web/image/<id>-<checksum>/<quote(name)>`，走 `call_kw` 送來、不帶前綴，所以永遠比不中，
+> 格子一片沒選取。修法與 #210 對 `get_image_info` 參數做的完全一樣——元素那側過同一個 strip，沒有新
+> 的 global，對不帶前綴的值是 no-op，而且順便繼承 #234：strip 去掉的是**符合形狀**的每一個前綴，所以
+> 協作 peer 送來的圖也比得中。
+>
+> **第 2 列是本輪差點做錯、被 review 抓回來的一項。** 原本的理由只有一半成立：
+> `data-original-src` 不是 `data-src`（markup helper 的屬性比對是精確名稱，`setAttribute` 包裝的清單
+> 是 `href`/`src`/`action`/`xlink:href`），所以 **shim** 不會碰它，`loadImageInfo` 寫進去的也是伺服器
+> 自己的 `image_src`。但加前綴的是**一般 HTML location**：那條規則寫的是 `src="/`，而 nginx 的
+> `sub_filter` 是純子字串搜尋，於是它命中了更長的屬性名裡面的 `data-original-src="/...`——旁邊沒有
+> 任何規則先占住那個位置，`data-src="/` 只占自己的。而 Odoo 的出貨 arch 本來就帶這個屬性
+> （`mass_mailing_themes/views/mass_mailing_themes_templates.xml` 的每一張主題圖都有），所以**以 HTML
+> 回應送達的 markup** 到瀏覽器時 `data-original-src` 是帶前綴的，而同一個屬性在欄位值上（走 `call_kw`，
+> 不改寫）是 root-relative。更要緊的是這個分支在 `src` 那行**之前就 return**，所以只修第 1 列的話，
+> 網站編輯器的對話框會依然壞著、而三條規則全部出貨、所有測試全綠。
+>
+> **第 3 列是本輪最值得讀的一段。** 它的左運算元是 template literal
+> `` `/web/content/${attachment.id}` ``，開頭就是 `` `/web/ ``——那是 Ingress asset location 從 #166
+> 起就一直出貨的通用字面規則之一。所以**bundle 送到瀏覽器時那個 literal 已經帶了前綴**，右邊的 `href`
+> 也帶前綴，這個比較從 Ingress 存在以來一直是「帶前綴 vs 帶前綴」。照開放清單說的在 `href` 那側加
+> `OUT`，就會變成一邊剝一邊不剝，對話框會**停止**highlight原本那份文件——拿一個好畫面換一個「修好」。
+> 這不是推論而是量的：四份擷取的 bundle 片段用**真正的 nginx**、帶上該 location 的**每一條**規則送出
+> 一次，兩份 document 片段回來時前綴已經在 literal 裡，兩份 image 片段則與擷取時位元組相同（因為
+> `image_src` 是 ORM 值、元素的 `src` 是 DOM 讀取，沒有任何字面規則碰得到）。
+>
+> 靜態層契約在 `odoo18ce/tests/test_ingress_media_dialog_preselect.py`（40 個測試）：用**真正的
+> nginx**把四份片段按該 location 自己的字面規則送出一次，要求結果與測試自己用 `str.replace` 算出來的
+> 位元組**完全相同**——這同時證明了兩件事：document 兩份的 literal 真的帶著前綴到瀏覽器，image 兩份
+> 除了本族自己的三條規則之外沒有被任何通用規則動過；另外也把一份 page-HTML 樣本按一般 HTML location
+> 的規則送出一次，那就是第 2 列理由的執行版。其餘：從樣板**解出** `` `/web/ `` 那條規則（不是把它抄在
+> 測試裡）、套到片段上、在 node 裡跑 `fetchAttachments` 並讀回「哪一個附件被選取」；斷言那條是**唯一**
+> 碰到該片段的通用規則；把「只剝一側」的改寫真的跑一次並顯示它選不到東西；以及**拒絕**任何提到那個
+> `href` 讀取的 `sub_filter`，免得後面的人照開放清單再加回來。把那條 `` `/web/ `` 規則移掉，該檔案有
+> 四個測試會紅並指名它；把一般 HTML location 的 `src="/` 規則移掉，第 2 列的那個測試會紅。
+> `U-A6` 的探測清單**不**擴充，沒有新的 global，Public origin 不動。
+>
+> **Live（由 #243 執行，本輪已以 comment 細化該列）**：這一列是**純畫面狀態**，兩面都不存任何東西，
+> 所以它是 #243 register 裡唯一不會因為 Live 結果升級嚴重度的一列。本輪把它的期待值改了一半：image
+> 那半是「原本壞的現在好了」，document 那半是「**本來就是好的，確認它還是好的**」——在 Ingress 下重新
+> 開啟某張圖片／某個文件連結的媒體對話框，對應附件被 highlight，兩面行為一致。image 那半值得**在網站
+> 編輯器的對話框上也跑一次**而不只是待辦表單：第 2 列的前綴只出現在 HTML 回應那條路上。
+
 > **網站頁「Edit this content」連結的前綴重複（`U-A2`）已於 2026-09-30 修正（#211），Live 重跑待
 > Deploy。** `/@/<website path>` 是 Odoo 18 從網站頁進後台的 route，也是唯一一條**尾段本身就是網站
 > 路徑**的 route。Odoo 把已經帶前綴的 `location.pathname` 接進那個尾段，shim 的 `path()` 只認第 0 位

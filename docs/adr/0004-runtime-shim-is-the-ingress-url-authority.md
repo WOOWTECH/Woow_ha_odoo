@@ -637,7 +637,13 @@ from. The first was already true before this change for anything the dialog
 itself inserted under Ingress, because the shim's `setAttribute` wrapper
 prefixes `src` and `href`; both are display state, and closing them means
 teaching those comparisons about the prefix the way the `get_image_info`
-argument was taught. The readonly `HtmlViewer` was on this list -- none of the
+argument was taught. Those two are closed by the fourth postscript below
+(#239), where the measurement found that only the **image** one was ever
+broken -- both of its branches, for two different reasons -- while the document
+one's left operand is a `` `/web/ `` template literal this location already
+prefixes, so it has been comparing prefix against prefix all along, and
+teaching it about the prefix -- what this paragraph said to do -- would have
+broken it. The readonly `HtmlViewer` was on this list -- none of the
 five sites and reaching markup twice over -- and is closed by the postscript
 below (#237). The legacy `web_editor` editor behind `html_legacy` and
 `mass_mailing_html` was on it too, "which carries none of these expressions",
@@ -1067,3 +1073,129 @@ was, the verdict and the report) are tested at the Static tier by
 `test_e2e_collab_peer_snapshot.py`. Until that run reads a stored prefix, #234
 stays `severity: important`: nothing has measured an escape here, which is what
 its own criteria say the escalation to blocker waits for.
+
+## Postscript (2026-10-01, the media dialog's preselection)
+
+The 2026-09-30 postscript's open list ended with two comparisons rather than two
+insertions: `ImageSelector.isInitialMedia` on `src` and
+`DocumentSelector.fetchAttachments` on `href`, which decide whether reopening
+the media dialog on an existing image or document link highlights the attachment
+it came from. This closes both (#239), and the finding is that **only one of
+them was ever broken, and doing to the other what this ADR said to do would have
+broken it.**
+
+| | Comparison | Measured | Shipped |
+| --- | --- | --- | --- |
+| 1 | `ImageSelector.isInitialMedia` on `getAttribute("src")` | element prefixed by the shim, `attachment.image_src` not | rewritten, `OUT` on the element side |
+| 2 | the same on `dataset.originalSrc` | element prefixed by the **HTML location**, `attachment.image_src` not | rewritten, `OUT` on the element side |
+| 3 | `DocumentSelector.fetchAttachments` on `getAttribute("href")` | both sides prefixed | left alone |
+
+Each of the three exists twice, because Odoo 18 ships the media dialog twice --
+`html_editor`'s, which a backend form opens, and the legacy `web_editor`'s,
+which `wysiwyg.js` and the website editor's snippet options open. Nine files
+import `@web_editor/components/media_dialog/media_dialog` from outside that
+component's own directory, tests aside: two of them elsewhere in `web_editor`
+itself (`.../js/wysiwyg/wysiwyg.js` and `.../js/editor/snippets.options.js`) and
+seven in other addons (`website/static/src/snippets/s_image/options.js`,
+`.../s_image_gallery/options.js`, `.../s_rating/options.js`,
+`website/static/src/components/dialog/seo.js`,
+`website_sale/static/src/js/website_sale.editor.js`,
+`mass_mailing/static/src/snippets/s_rating/options.js` and
+`web_unsplash/static/src/media_dialog_legacy/image_selector.js`). The two
+`image_selector.js` files are the same code with different quote characters, so
+row 1 is **two** `sub_filter` rules; row 2 is **one**, because it is the single
+line the two dialogs spell identically. Fixing only the dialog the issue named
+would have left the mail designer's and the website editor's as it was.
+
+**Row 1 is the bug and the fix is the `get_image_info` move.** The element's
+`src` carries the prefix under Ingress -- the shim's `setAttribute` wrapper puts
+it there on an image the dialog just inserted, and `__WOOW_INGRESS_MARKUP_IN__`
+puts it there on one that came out of the record -- while `attachment.image_src`
+is `ir.attachment._compute_image_src`'s own
+`/web/image/<id>-<checksum>/<quote(name)>`, delivered over `call_kw` and
+root-relative. So the comparison never matched, every tile stayed unselected,
+and the user had to find the file again. The element side goes through
+`__WOOW_INGRESS_MARKUP_OUT__`, which is the same thing #210 did to
+`get_image_info`'s argument: one URL authority, no new global, and a no-op on a
+value that has no prefix. It also inherits #234 for free -- the strip removes
+every prefix *of the shape* and not only this page's, so an image a collaborative
+peer sent is matched too. The ORM side is left untouched, because it is never
+prefixed, and that asymmetry is pinned from its own side: a test asserts that no
+generic literal rule reaches either operand of this comparison.
+
+**Row 2 is the one this Iteration nearly got wrong, and a review round caught
+it.** The sentence this ADR already wrote is true and is not the whole answer:
+`data-original-src` is not a `data-src`, the markup helper's attribute test is
+an exact name, and the `setAttribute` wrapper's list is
+`href`/`src`/`action`/`xlink:href` -- so nothing in **the shim** prefixes that
+attribute, and `loadImageInfo` assigns the server's own `image_src` into it.
+What prefixes it is the **generic HTML location**, whose rule is written for
+`src="/` and, `sub_filter` being a plain substring search, matches inside the
+longer attribute name `data-original-src="/...`; no neighbouring rule claims
+that position first, and `data-src="/` claims only its own. Odoo ships that
+attribute inside stored arch -- every themed image in
+`mass_mailing_themes/views/mass_mailing_themes_templates.xml` carries one -- so
+markup delivered as an HTML response reaches the browser with a prefixed
+`data-original-src` while the same attribute on a field value, which arrives
+over `call_kw` and is not rewritten, is root-relative.
+
+That branch `return`s *before* row 1 for any image the image tools have
+touched, so row 1 alone would never have reached the website editor's dialog:
+the screen would have stayed broken with three rules shipped and every test
+green. It is rewritten too, and the contract now holds the claim in two
+executed pieces rather than one narrated one -- the shim driven over both the
+markup helper and the `setAttribute` wrapper to show what it does *not* prefix,
+and a page-HTML sample served through the generic location's own rules by a real
+nginx to show what does. "Nothing prefixes this attribute" was exactly the kind
+of claim that rots, and it was already false when written.
+
+**Row 3 was already correct, and this is the part worth reading.** Its left
+operand is the template literal `` `/web/content/${attachment.id}` ``, which
+begins `` `/web/ `` -- one of the generic literal rules the Ingress asset
+location has carried since #166. So the *bundle* arrives at the browser with the
+prefix spliced into that literal, the `href` beside it is prefixed by the shim,
+and the comparison has been prefix-against-prefix since Ingress existed. The
+`OUT` this ADR's open list asked for would have stripped one side and left the
+other, so the dialog would have stopped highlighting the document it came from
+-- a regression on a working screen, delivered as a fix.
+
+That was measured rather than reasoned, and the measurement is in the test
+rather than in this paragraph. `odoo18ce/tests/test_ingress_media_dialog_preselect.py`
+serves all four captured excerpts through a **real nginx** carrying that
+location's own literal rule set and requires the answer to equal, byte for byte,
+what the drivers' `str.replace` produced -- so the two document excerpts are
+shown arriving with the prefix inside the literal, and the two image ones
+changed by nothing but this family's own three rules. On top of that it derives
+the `` `/web/ `` rule from the template rather than quoting it; asserts it is the
+*only* generic rule reaching the excerpt; runs the comparison in node and reads
+back which attachment was selected; executes the one-sided strip and shows it
+selecting nothing; and refuses any `sub_filter` that names the `href` read at
+all, so the rule the open list asked for cannot arrive later by a reader
+following the list. The coupling runs through two independent mechanisms that
+have to agree, which is exactly the kind of thing this repository holds with a
+test rather than a comment -- remove the `` `/web/ `` rule and four tests in that
+file go red naming it.
+
+**A general rule this one earned, twice over.** A comparison is not a URL site
+with a known direction. Before teaching one about the prefix, measure *both*
+operands as the browser receives them: a literal in a bundle is subject to every
+generic rule in the asset location, a DOM read to every generic rule in the
+**HTML** location as well as to the shim's wrappers, and an ORM value to none of
+them. Both of this postscript's surprises are the same mistake in opposite
+directions -- row 3 assumed a prefix on one side only and would have been broken
+by the fix; row 2 assumed no prefix at all, and "nothing in the shim touches it"
+was read as "nothing touches it". The shim is not the only thing in this product
+that adds a prefix, and a bare-substring `sub_filter` reaches further than the
+attribute it was written for.
+
+Display state only: nothing here is stored either way, which is why #239 is the
+one row in #243's register that cannot escalate in severity from what the host
+shows. No new global, no new helper, Group B still uncovered, the Public origin
+untouched, `U-A6`'s probe list not extended, and the Rewrite scan unaffected --
+an attachment's `image_src` is not in a bundle, so no Generated rewrite could
+derive it. **The Live rerun belongs to #243**, which carries this family's
+reruns, and this Iteration refined that row by comment rather than leaving it to
+guess: the document half now has a different expectation -- a check that a
+working screen still works, not that a broken one was fixed -- and the image
+half is worth running on the website editor's dialog as well as the To-do form,
+because row 2's prefix only appears on the HTML-response path.

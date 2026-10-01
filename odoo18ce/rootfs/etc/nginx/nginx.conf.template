@@ -835,7 +835,12 @@ http {
             # and the legacy `web_editor` editor behind `html_legacy` and
             # `mass_mailing_html`, which carries none of these expressions.
             # The readonly `HtmlViewer` was on that list and is the pair of
-            # rules below.
+            # rules below. The media dialog's two were on it as well and are
+            # the block further down (#239) -- where the measurement found
+            # that only the image one was ever broken: the document one's
+            # left operand is a `` `/web/ `` literal this location already
+            # prefixes, so it has been comparing prefix against prefix all
+            # along.
             # Each escapes rather than corrupts, and each is its own issue.
             sub_filter 'editable.innerHTML=fixInvalidHTML(this.config.content)' 'editable.innerHTML=(window.__WOOW_INGRESS_MARKUP_IN__||function(h){return h})(fixInvalidHTML(this.config.content))';
             sub_filter 'async updateValue(value,{changeId}={changeId:this.lastChangeId}){this.lastValue=normalizeHTML(value,this.clearElementToCompare.bind(this));' 'async updateValue(value,{changeId}={changeId:this.lastChangeId}){value=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(value);this.lastValue=normalizeHTML(value,this.clearElementToCompare.bind(this));';
@@ -1065,6 +1070,91 @@ http {
             sub_filter 'const inlineHtml=editableClone.innerHTML;' 'const inlineHtml=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(editableClone.innerHTML);';
             sub_filter 'this.wysiwyg.odooEditor.toolbarHide();const value=this.wysiwyg.getValue();' 'this.wysiwyg.odooEditor.toolbarHide();const value=(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(this.wysiwyg.getValue());';
             sub_filter 'codeview.val();this.props.record.update({[this.props.name]:value});' 'codeview.val();this.props.record.update({[this.props.name]:(window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(value)});';
+            # The media dialog's preselection comparison (issue #239; ADR
+            # 0004's fourth 2026-10-01 postscript has the measurement, this
+            # comment has what an editor of the three lines below needs).
+            # Every rule above this one puts a prefix on or takes one off.
+            # These are the mirror case: a comparison that expects an
+            # *unprefixed* URL and is handed a prefixed one.
+            #
+            # `ImageSelector.isInitialMedia` is what highlights the attachment
+            # an image came from when the dialog is reopened on it. Both of its
+            # branches read the element and compare the result with
+            # `attachment.image_src`, which is an ORM value and carries no
+            # prefix; both element reads can carry one. So it never matched,
+            # the grid opened with nothing selected, and the user had to find
+            # the file again. Stripping the element side is the same move #210
+            # made for `get_image_info`'s argument: one URL authority, and a
+            # no-op on a value that has no prefix.
+            #
+            # Odoo 18 ships the media dialog twice -- `html_editor`'s, which
+            # the backend forms open, and the legacy `web_editor`'s, which the
+            # mail designer and the website editor's snippet options open.
+            # Nine files import
+            # `@web_editor/components/media_dialog/media_dialog` from outside
+            # that component's own directory, tests aside, two of them
+            # elsewhere in `web_editor` itself
+            # (`web_editor/static/src/js/wysiwyg/wysiwyg.js` and
+            # `.../js/editor/snippets.options.js`) and seven in other addons
+            # (`website/static/src/snippets/s_image/options.js` among them).
+            # The two files are the same code with different quotes, so the
+            # `src` comparison is rewritten once per quote style and the bug
+            # is fixed on both dialogs rather than on the one the issue named.
+            #
+            # **Three comparisons are here and two of them are rewritten.**
+            # All three were measured first, and the measurement is what
+            # decided which:
+            #
+            # 1. `isInitialMedia`'s *other* branch, which uses
+            #    `dataset.originalSrc` when the image has one, is rewritten
+            #    too -- and the reason is **not** the shim. Neither the
+            #    `setAttribute` wrapper nor `IN` touches
+            #    `data-original-src`: the markup map above says in as many
+            #    words that its attribute test is an exact name, so
+            #    `data-original-src` is not a `data-src`. What prefixes it is
+            #    the generic HTML location further down, whose
+            #    `sub_filter 'src="/'` is a bare substring and matches inside
+            #    `data-original-src="/...` -- no rule beside it claims that
+            #    position first. So markup that reached the page as an **HTML
+            #    response** carries a prefixed `data-original-src`, and Odoo
+            #    ships that attribute inside stored arch (every themed image
+            #    in `mass_mailing_themes/views/mass_mailing_themes_templates.xml`
+            #    has one). On a field value, which arrives over `call_kw` and
+            #    is not rewritten, the same attribute is root-relative. The
+            #    branch therefore has to be prefix-agnostic rather than
+            #    assumed clean, and it `return`s *before* the `src` line
+            #    below, so rule 3 alone would not have reached the website
+            #    editor's dialog. One pattern covers both dialogs here: this
+            #    is the one line the two spell identically.
+            # 2. `DocumentSelector.fetchAttachments`, which compares the
+            #    element's `href` with `` `/web/content/${attachment.id}` ``,
+            #    is already correct under Ingress -- and a strip on the `href`
+            #    alone, which is what the issue asked for, would have *broken*
+            #    it. That template literal begins `` `/web/ ``, which is one of
+            #    the generic literal rules at the top of this location, so the
+            #    left operand arrives at the browser already prefixed and the
+            #    comparison is prefixed-against-prefixed. The coupling is not
+            #    obvious from either side, so it is held by a test rather than
+            #    by this comment: `test_ingress_media_dialog_preselect.py`
+            #    serves the captured bundle bytes through a real nginx
+            #    carrying this location's own literal rules, runs the
+            #    comparison on what comes back, and refuses a `sub_filter`
+            #    that names the `href` comparison at all. The same test
+            #    serves a page-HTML sample through the generic location's
+            #    rules, which is where rule 1's reason is executed.
+            # 3. The `src` branch, the one the issue described, below.
+            #
+            # The three patterns below were derived on 2026-10-01 from the
+            # pinned `.deb` through Odoo's own serve path. The first occurs
+            # once in each dialog and so twice in a bundle that carries both,
+            # which `sub_filter_once off` at the top of this location handles;
+            # the other two occur once each in the whole package. Two more
+            # were measured and left alone -- the document comparison in each
+            # dialog; `tests/fixtures/bundles/README.md` carries all five with
+            # their per-bundle counts.
+            sub_filter 'if(this.props.media.dataset.originalSrc){return this.props.media.dataset.originalSrc===attachment.image_src;}' 'if(this.props.media.dataset.originalSrc){return (window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(this.props.media.dataset.originalSrc)===attachment.image_src;}';
+            sub_filter 'return this.props.media.getAttribute("src")===attachment.image_src;' 'return (window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(this.props.media.getAttribute("src"))===attachment.image_src;';
+            sub_filter "return this.props.media.getAttribute('src')===attachment.image_src;" "return (window.__WOOW_INGRESS_MARKUP_OUT__||function(v){return v})(this.props.media.getAttribute('src'))===attachment.image_src;";
             # The `/@` links into the web client (issue #211, U-A2). `/@/<website
             # path>` is Odoo 18's route from a website page into the backend, and
             # it is the one route whose *tail* is itself a website path rather
