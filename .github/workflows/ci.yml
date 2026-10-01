@@ -369,9 +369,9 @@ jobs:
           if grep -q '^visitor-url: url swap unprovable' <<< "${out}"; then
             echo "::error::the probe could not perform woow_visitor_url's url replacement on the" \
               "request Odoo builds, so whether it works in this image is unknown; something the" \
-              "probe reads changed shape -- Odoo's odoo.http, or the module's own swap_url -- which" \
-              "is not the same as the patch being broken. The probe line above names what it could" \
-              "not read."
+              "probe reads changed shape -- Odoo's odoo.http, or the module's own swap_url or" \
+              "restore_url -- which is not the same as the patch being broken. The probe line" \
+              "above names what it could not read."
             exit 1
           fi
           if ! grep -qx 'visitor-url: applied' <<< "${out}"; then

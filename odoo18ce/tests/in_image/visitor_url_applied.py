@@ -219,7 +219,7 @@ def url_swap(http):
     """``(None, None)`` when the url replacement the patch performs takes here,
     and ``(verdict, sentence)`` when it does not.
 
-    The verdict tells apart the two ways this can fail, because they mean
+    The verdict tells apart the three ways this can fail, because they mean
     different things to whoever reads the build:
 
     * ``"url swap unprovable"`` -- the replacement could not be performed. This
