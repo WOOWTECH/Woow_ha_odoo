@@ -546,9 +546,9 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > **tagged template** 的引數。該運算式在 `web.assets_frontend_minimal`、`web.assets_frontend`、
 > `website.assets_wysiwyg` 三個 bundle 各出現一次，一條 `sub_filter_once off` 規則全數涵蓋。靜態層
 > 契約在 `odoo18ce/tests/test_ingress_at_route_links.py`（含以真正的 nginx 依樣板本身的規則行送出
-> 兩段 bundle 再比對位元組）。**這一列的 verdict 要等 Live 重跑才改**：`/shop/payment` 在帶此修正的
-> Release 上兩面重跑，Ingress 記錄的 `url_literals` 要讀到 `<INGRESS_PREFIX>/@/shop/payment` 且判定
-> `PARITY`。
+> 兩段 bundle 再比對位元組）。**Live 重跑已完成**，結果記在本附記開頭：2026-10-01 在 Release 0.4.9
+> 上兩面重跑 `/shop/payment`，Ingress 記錄的 `url_literals` 讀到 `<INGRESS_PREFIX>/@/shop/payment`，
+> 判定 `PARITY`（#235，見 `docs/testing/evidence/2026-10-01-issue-235/`）。
 
 ---
 
