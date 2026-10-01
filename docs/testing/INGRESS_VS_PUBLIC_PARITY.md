@@ -584,6 +584,51 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 開啟某張圖片／某個文件連結的媒體對話框，對應附件被 highlight，兩面行為一致。image 那半值得**在網站
 > 編輯器的對話框上也跑一次**而不只是待辦表單：第 2 列的前綴只出現在 HTML 回應那條路上。
 
+> **HTML 編輯器「把 code view 切回去」會重新插入不帶 Ingress 前綴的 markup，已於 2026-10-01 處理
+> （#240，ADR 0004 的第五個 2026-10-01 附記），Live 重跑由 #243 統一執行。** 這是 ADR 0004 開放清單
+> 上的**第一項**，也是最後一項關掉的——`html_editor` 自己這個欄位的**第六個** markup 插入點：
+> `toggleCodeView` 在切回編輯模式時直接把記錄的值塞進 editable
+> （`this.editor.editable.innerHTML=this.value;`），而 #210 的五條規則沒有一條落在那一行，所以 Ingress
+> 下記錄裡每個 root-relative URL 又被拿去向 Home Assistant 根要一次、回 404——跟 #210 那兩張待辦圖是
+> 同一種逃脫、同一個欄位，只是從另一條路走到。修法是這個 location 上的**一條** `sub_filter`。
+>
+> **這一輪真正值得記下來的是三件事。**
+>
+> 1. **helper 必須是 `__WOOW_INGRESS_MARKUP_IN_VALUE__`（#237 那個），寫成 #210 的 `IN` 會是個「出貨
+>    了、pattern 也命中了、但什麼都沒修好」的 no-op。** `get value()` 在記錄值是 `Markup` 時回傳
+>    `markup(newVal)`，而每個 html 欄位的值都是 `Markup`；`IN` 對非字串原樣奉還。這不是推論：測試把
+>    Odoo 自己的 `get value()` 當成**擷取下來的 fixture** 接進被驅動的 class，另外有一個測試真的把
+>    「用 `IN` 寫的那條規則」跑一遍，顯示圖片還是從 Home Assistant 根要。
+> 2. **這個點不存任何東西，而且這件事是**執行**出來的。** 存的是下一次 blur 的 `_commitChanges`，它讀
+>    editable 再交給 `updateValue`——#210 的第 2 條規則——而 strip 只會**拿掉**前綴，所以對沒被加過前綴
+>    的記錄是 no-op、對被這條規則加過的就剛好拿回來。測試把這條線整條跑過：這條規則的輸出餵進 #210
+>    **出貨的** `updateValue` 位元組，讀回記錄拿到什麼（root-relative，而 `lastValue` 由實際存進去的值
+>    算出）；再把同一條線餵進 Odoo **未改寫的** `updateValue`，顯示 #210 到底替這條規則擋住了什麼。所以
+>    #240 兩個方向都只是 render escape，不是 token write。
+> 3. **界線是「debug mode」，不是「沒有任何出貨的 view 設這個 option」——#240 與 #238 的附記都寫錯了。**
+>    `codeview: Boolean(odoo.debug && options.codeview)` 兩個條件都要，而 pinned 包裡有**五個**出貨 view
+>    設了這個 option、落在**四個**欄位上：`res.users.signature` 在 `base` 的兩個使用者表單裡各一次
+>    （`view_users_form` 與偏好設定的 `view_users_form_simple_modif`）、
+>    `ir.actions.act_window` 的 `help`（也就是 #158 那個欄位）、`mail.template` 的 `body_html`、以及
+>    `hr_recruitment` 寄信精靈的 body——後兩個走 `html_mail`，是同一個欄位的子類。活下來的界線是 debug
+>    mode，所以標籤維持 `severity: minor`。
+>
+> **還有一個會「假通過」的形狀，已在靜態層跑過，Live 要避開它。** 值 parse 後 `<head>` 非空會讓
+> `sandboxedPreview` 成立（`computeContainsComplexHTML`），欄位改走唯讀 `HtmlViewer`（那是 #237 的兩條
+> 規則、不是這一條），沒有 `Wysiwyg`、`this.editor` 是 undefined，於是 toggle 照按、畫面照對，而這個點
+> **根本沒被走到**。`mail.template` 的 `body_html` 正是最容易是整份 HTML 的那個值。
+>
+> code view 自己的 textarea（`t-att-value="this.value"`）**故意不改**：source view 本來就該顯示記錄裡
+> 的位元組，這跟 #238 對舊編輯器 textarea 的決定一致，而且這裡更乾淨——這個欄位的 textarea 永遠只是
+> 記錄的值，`_commitChanges` 是從它讀出來存，不會回填它。有一個測試會拒絕任何提到它的 `sub_filter`。
+>
+> **Live（由 #243 執行，本輪已以 comment 細化該列）**：螢幕是**開著 debug mode 的偏好設定裡那個使用者
+> 簽名**（最便宜：不用建任何記錄，欄位直接吃 root-relative 的 `<img>`，而且值是片段、不會踩到上面那個
+> 假通過），不要拿 `mail.template` 的 body 去跑。檢查兩半：切 code view **回去**之後圖片在 Ingress
+> 前綴下載入（`route_escape=0`/`http_4xx_5xx=0`/`console_error=0`，兩面一致），以及存檔之後
+> `res.users.signature` 仍然是 root-relative。`U-A6` 的探測清單**不**擴充，沒有新的 global，Public
+> origin 不動，Rewrite scan 不受影響（記錄內容不在 bundle 裡）。
+
 > **網站頁「Edit this content」連結的前綴重複（`U-A2`）已於 2026-09-30 修正（#211）；Live 重跑已於
 > 2026-10-01 在 Release 0.4.9 上完成（#235），改記 `PARITY`。** 連結在 Ingress 下讀到
 > `<INGRESS_PREFIX>/@/shop/payment`（前綴只加一次），**點下去真的在 web client 裡打開那一頁**：

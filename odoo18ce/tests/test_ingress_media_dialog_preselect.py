@@ -315,26 +315,32 @@ def shipped_rules(text: str) -> list:
     ]
 
 
-def generic_rules_reaching(name: str) -> dict:
-    """Which of this location's *generic* patterns occur in a fixture.
+def rules_reaching(text: str, own: set) -> dict:
+    """Which patterns of the Ingress asset location occur in some bytes.
 
-    "Generic" means every `sub_filter` of the Ingress asset location except the
-    ones this issue owns, which of course reach these excerpts -- they were
-    measured against them. What this is for is to establish that at most one
-    other rule reaches each excerpt, which is what makes applying that one rule
-    by hand the same thing as what the browser receives.
+    `own` is the set an issue's own rewrites are written for, which of course
+    reach the excerpt they were measured in; what is left is every *other*
+    rule of that location. Establishing that at most one of those reaches an
+    excerpt is what makes applying it by hand the same thing as what the
+    browser receives, which is why the markup family's contract tests each ask
+    this question -- `test_ingress_code_view_toggle.py` imports it.
 
-    It is a containment scan and not an emulation of nginx's filter.
-    `test_a_real_nginx_agrees_about_what_each_excerpt_becomes` is the executed
-    version, over the same four files and the whole rule set.
+    It is a containment scan and not an emulation of nginx's filter. The
+    `test_a_real_nginx_agrees_about_what_*` tests are the executed version,
+    over the same files and the whole rule set.
     """
-    text = fixture(name)
-    own = {rewrite["source"] for rewrite in REWRITES.values()}
     return {
         pattern: text.count(pattern)
         for pattern, _ in shipped_rules(template())
         if pattern in text and pattern not in own
     }
+
+
+def generic_rules_reaching(name: str) -> dict:
+    """`rules_reaching` over one of this issue's four captured excerpts."""
+    return rules_reaching(
+        fixture(name), {rewrite["source"] for rewrite in REWRITES.values()}
+    )
 
 
 def literal_rule_replacement() -> str:

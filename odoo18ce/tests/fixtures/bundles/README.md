@@ -420,6 +420,61 @@ tests that read this template line by line do not expect. Each pattern is
 therefore one served line: the first branch (one pattern, both dialogs) and the
 second (one per quote style).
 
+Derived 2026-10-01 from the pinned `.deb` (`ODOO_DEB_VERSION` 18.0.20260930)
+through Odoo's own serve path, for the code view round trip of issue #240 — the
+last item on ADR 0004's open list, and the sixth markup insertion of
+`html_editor`'s own html field:
+
+| File | Bundle | What it holds |
+|---|---|---|
+| `html_field_toggle_code_view.js` | `web.assets_backend` | `HtmlField.toggleCodeView`, the whole method — which re-inserts the record's value into the editable when the code view goes back off |
+| `html_field_value_getter.js` | `web.assets_backend` | `HtmlField`'s `get value()`, the whole getter — captured because it is what decides which helper the rewrite calls: it returns `markup(newVal)` whenever the record's value is a `Markup`, and #210's `IN` returns a non-string as it came |
+
+| Pattern | Bundles that carry it, once each | Bundles that carry it zero times |
+|---|---|---|
+| `this.editor.editable.innerHTML=this.value;` | `web.assets_backend`, `web.assets_web`, `web.assets_web_print`, `project.webclient` | the fifteen others of #239's table, listed below |
+
+Those fifteen, so the claim is a list and not a count: `web.assets_frontend`,
+`web.assets_frontend_lazy`, `web.assets_frontend_minimal`,
+`web.assets_backend_lazy`, `web.report_assets_common`,
+`web_editor.assets_wysiwyg`, `web_editor.backend_assets_wysiwyg`,
+`web_editor.wysiwyg_iframe_editor_assets`, `web_editor.assets_media_dialog`,
+`html_editor.assets_media_dialog`, `website.assets_wysiwyg`,
+`website.assets_editor`, `mass_mailing.assets_wysiwyg`,
+`im_livechat.assets_embed_external` and `html_builder.assets`. The four that do
+are the same four as #237's two patterns and for the same reason: both files are
+`html_editor/static/src/fields/*`, which exactly two manifests name —
+`html_editor`'s own, in `web.assets_backend` (so `web.assets_web` and
+`web.assets_web_print` carry it by inclusion), and `project`'s, in
+`project.webclient`, the project-sharing client. The media-dialog bundles do
+*not* carry it, which is the difference from #239: `html_editor`'s manifest
+includes only its media dialog into the frontend.
+
+**The getter is a fixture rather than a stub because the issue's own claim
+depends on it.** The whole question at this site is whether the value is a
+string or an OWL `Markup`: on a string the plain `IN` works and on a `Markup`
+it is a silent no-op, which is the trap #237 found and this rule inherits. So
+`test_ingress_code_view_toggle.py` splices Odoo's own getter into the class it
+drives and runs the toggle through it, and a separate test drives the rule
+written with `IN` instead and shows the picture still fetched from the Home
+Assistant root.
+
+**How each was counted.** The same derivation as #239's: reproducing
+`addons/base/models/assetsbundle.py` over every `*/static/src/**/*.js` file in
+the pinned package — `rjsmin(transpile_javascript(url, source))` — with bundle
+membership from `ast.literal_eval` on each addon's `__manifest__.py`, walking
+`d["assets"]` with `**/` matching zero or more directories, honouring `remove`,
+`replace` and `('include', ...)`, and skipping a file the bundle already holds
+the way `AssetPaths.append` does. Checked by reproducing #237's and #239's
+counts, which it does row for row.
+
+**A newline inside the getter, and why the pattern is still one line.** `rjsmin`
+keeps the line break Odoo's source has before the getter's second `return`, so
+`html_field_value_getter.js` is two served lines. The rewritten expression is on
+neither of them — `toggleCodeView` is one line as served — so no `sub_filter`
+parameter here would have to carry a newline. The test pins both line counts, so
+a re-capture that changed either says so.
+
 ## Re-capturing
 
 The bundles are public, so no login is needed; the asset route redirects a

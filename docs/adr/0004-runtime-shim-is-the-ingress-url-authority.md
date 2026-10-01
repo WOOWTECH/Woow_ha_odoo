@@ -611,7 +611,11 @@ themselves touch no DOM at all.
 
 **What is not closed, said rather than left implicit.** The code view's
 `editable.innerHTML = this.value` on toggling back (the `codeview` option,
-which the To-do field does not set); a snapshot a collaborative *peer* sends
+which the To-do field does not set) -- closed by the last postscript below
+(#240), which also found that the option is set by five shipped views and that
+the bound is debug mode alone, and that the obvious rule written with `IN`
+rather than #237's `IN_VALUE` would have been a silent no-op here; a snapshot a
+collaborative *peer* sends
 over WebRTC, which is worth naming precisely because it is the one open item
 that is a **token write** and not only a render escape, and because this change
 *widens* it -- the snapshot serialises that peer's editable, so it carries
@@ -866,11 +870,15 @@ not go through `getEditingValue`:
   as `body_html` (the `inline-field` option) with its own `record.update`. Miss
   that one and a mailing is *sent* with the Supervisor token in every image URL
   -- the only place in this family where a token leaves the installation.
-- `toggleCodeView` writes twice, once on each toggle. It is bounded exactly as
-  #240's twin is -- `codeview: Boolean(odoo.debug && options.codeview)`, and no
-  shipped view sets that option -- so it is a developer in debug mode and nobody
-  else. Covered here rather than filed, because it is a token *write* and two
-  lines, where #240's is a render escape.
+- `toggleCodeView` writes twice, once on each toggle. It is bounded by the same
+  expression as #240's twin -- `codeview: Boolean(odoo.debug && options.codeview)`
+  -- so it is a developer in debug mode and nobody else. Covered here rather
+  than filed, because it is a token *write* and two lines, where #240's is a
+  render escape. The second half of this bound as first written ("and no shipped
+  view sets that option") was false and is corrected by the last postscript
+  below: five shipped views set it, none of them on *this* editor's three
+  widgets, so what bounds this pair is debug mode and the fact that no shipped
+  view reaches the legacy field with the option at all.
 
 **What the mail designer's nested iframes turned out to be.** The issue asked
 for the globals to be shown reachable from where each rewritten expression runs,
@@ -1199,3 +1207,108 @@ guess: the document half now has a different expectation -- a check that a
 working screen still works, not that a broken one was fixed -- and the image
 half is worth running on the website editor's dialog as well as the To-do form,
 because row 2's prefix only appears on the HTML-response path.
+
+## Postscript (2026-10-01, the code view round trip)
+
+The first item on the 2026-09-30 postscript's open list was "the code view's
+`editable.innerHTML = this.value` on toggling back". It is the last of that list
+to close (#240), and the sixth markup insertion of `html_editor`'s own html
+field. `toggleCodeView` commits, flips `state.showCodeView`, and -- going back
+*off* -- assigns the record's value straight into the editable:
+
+    async toggleCodeView() {
+        await this.commitChanges();
+        this.state.showCodeView = !this.state.showCodeView;
+        if (!this.state.showCodeView && this.editor) {
+            this.editor.editable.innerHTML = this.value;
+            this.editor.shared.history.addStep();
+        }
+    }
+
+None of #210's five rules is on that line, so under Ingress every root-relative
+URL in the record was fetched from the Home Assistant root and answered 404 --
+the same escape as the two onboarding pictures, on the same field, reached a
+different way. One `sub_filter` on the Ingress asset location closes it, and the
+interesting parts are the helper it calls, the half it does **not** need, and the
+bound, which this Iteration found to be wider than both #240 and the second
+postscript above said.
+
+**The helper is `__WOOW_INGRESS_MARKUP_IN_VALUE__`, and writing the obvious rule
+with `IN` would have shipped a silent no-op.** `get value()` returns
+`markup(newVal)` whenever the record's value is a `Markup`, and every html
+field's value is one -- the relational model wraps an `html` field that way. The
+plain `IN` tests `typeof h === "string"` and returns anything else as it came, so
+a rule written with it would have matched its pattern, changed the bytes, passed
+a count test, and left the picture exactly where it was. That is #237's finding
+applied at a site #237 did not touch, and
+`odoo18ce/tests/test_ingress_code_view_toggle.py` executes it rather than
+restating it: Odoo's own getter is a captured fixture spliced into the class the
+test drives, and one test drives the `IN` rule and shows the picture still
+fetched from the Home Assistant root.
+
+**There is no `OUT` half, because the field already has one and this change must
+leave it exactly as it was.** Nothing is stored by this site; what stores is
+`_commitChanges` on the next blur, which reads the editable and hands the value
+to `updateValue` -- #210's rule 2 -- and compares a clone through rule 5. The
+strip only *removes* a prefix, so it is a no-op over a record that was never
+prefixed and takes this rule's prefix off again over one that was. That is a
+claim about two rules standing in a line, so the test drives the line: this
+rule's own output into #210's shipped `updateValue` bytes, reading back what the
+record got (root-relative, `lastValue` computed from the value that was stored),
+and the same round trip through Odoo's *unrewritten* `updateValue` to show what
+#210 is standing between this rule and the database for. So #240 stays a render
+escape in both directions, and the `codeview` branch of `_commitChanges` --
+which stores the textarea's own bytes -- was already covered by rule 2 when
+#210 shipped.
+
+**The bound is debug mode, and "no shipped view sets the option" was false.**
+`codeview: Boolean(odoo.debug && options.codeview)` needs debug mode *and* a
+view that sets the option, and the issue said no shipped view does; the second
+postscript above repeated it for this field while bounding the legacy editor's
+twin. Five shipped views in the pinned package set it, on four fields:
+`res.users.signature` in both of `base`'s user forms (`view_users_form` and
+Preferences' `view_users_form_simple_modif`), `ir.actions.act_window`'s
+`help` -- which is #158's field -- `mail.template`'s `body_html`, and
+`hr_recruitment`'s send-mail wizard body. The last two are `html_mail`, a
+subclass of this field, so they inherit the site. What survives of the bound is
+debug mode, which is why the label stays `severity: minor`: on the parity
+database this is reachable by a developer in debug mode and by nobody else.
+
+**And one shape of that screen produces a false pass, which is worth carrying
+forward to every Live check in this family.** A value whose parse yields a
+non-empty `<head>` turns `sandboxedPreview` on (`computeContainsComplexHTML`),
+the field renders through the readonly `HtmlViewer` -- #237's two rules, not
+this one -- and there is no `Wysiwyg`, so `this.editor` is undefined and
+`toggleCodeView` never reaches this site. The toggle still works, the field
+still looks right, and nothing under test runs. A mail template's `body_html` is
+exactly the value most likely to be full HTML, so the screen to run is the user
+signature, and the no-editor branch is driven in the Static tier on purpose.
+
+The code view's own textarea is deliberately left alone:
+`<textarea t-ref="codeView" class="o_codeview" t-att-value="this.value"/>` is a
+source view and should show the bytes the record holds, which is the same
+decision the second postscript above records for the legacy editor's textarea --
+and here it is the stronger version of it, because this field's textarea is
+*only* ever the record's value: `_commitChanges` stores from it rather than
+refilling it. A test refuses a `sub_filter` that names it.
+
+The pattern was derived from the pinned `.deb` through Odoo's own serve path and
+occurs once each in `web.assets_backend`, `web.assets_web`,
+`web.assets_web_print` and `project.webclient` -- the same four as #237's two,
+and for the same reason: both files are `html_editor/static/src/fields/*`, which
+exactly two manifests name. It is zero in the other fifteen bundles the control
+group serves on that route, the media-dialog ones included, which is the
+difference from #239. `odoo18ce/tests/fixtures/bundles/README.md` carries the
+counts; a real nginx carrying this location's whole literal rule set is asked
+what it does to both excerpts, so "no other rule reaches them" is measured and
+not assumed.
+
+No new global, no new helper, Group B still uncovered, the Public origin
+untouched, `U-A6`'s probe list not extended, and the Rewrite scan unaffected --
+record content is not in a bundle. **The Live rerun belongs to #243**, which
+carries this family's reruns and which this Iteration refined by comment rather
+than leaving it to guess: the screen is a user's signature in Preferences with
+debug mode on, the check is that toggling the code view off leaves the picture
+loading under the Ingress prefix, and the second half is that `res.users.signature`
+is still root-relative afterwards. With this closed, every item on the
+2026-09-30 open list has an answer.
