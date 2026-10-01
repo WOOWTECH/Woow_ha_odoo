@@ -482,13 +482,23 @@ def session_database(reported: str | None) -> str:
 #
 # Where this audit stopped, for the next one. Of `mail` it read only the two
 # controllers the entries above cite -- controllers/mail.py and
-# controllers/discuss/public_page.py -- and not the other eight, so `mail` is the
-# module to start the next sweep on. Untouched: the non-portal controllers of
-# every other module (website's `main.py` and `form.py`, and the controllers of
-# web, web_editor, html_editor, survey, event, im_livechat, point_of_sale,
-# mass_mailing, product, stock, delivery, crm, calendar, bus, auth_signup and the
-# hr_* modules), and the four add-on modules that are not in the pinned `.deb` at
-# all -- `ecpay_invoice_tw`, `ecpay_invoice_website`, `payment_ecpay` and
+# controllers/discuss/public_page.py -- and not the other 16. Sixteen and not
+# eight, which this comment said first: `controllers/discuss/` is a directory of
+# eight files of its own, and a listing of the top level alone misses it -- the
+# same directory `/chat/` turned out to live in. Walk the tree.
+#
+# Those 16 carry 51 `@route` declarations, of which 5 are the shape this list
+# cares about -- `type='http'` and not `methods=['POST']`, so a plain GET reaches
+# them: discuss/binary.py:12, :35 and :65, discuss/rtc.py:111 and
+# discuss/voice.py:10. All five carry `readonly=True`, which is not a write
+# bound, so all five still need their bodies read. #247 holds that sweep.
+#
+# Untouched: the non-portal controllers of every other module (website's
+# `main.py` and `form.py`, and the controllers of web, web_editor, html_editor,
+# survey, event, im_livechat, point_of_sale, mass_mailing, product, stock,
+# delivery, crm, calendar, bus, auth_signup and the hr_* modules), and the four
+# add-on modules that are not in the pinned `.deb` at all -- `ecpay_invoice_tw`,
+# `ecpay_invoice_website`, `payment_ecpay` and
 # `payment_ecpay_ecpg`. `/chat/` and `/meet/` below are a warning about what that
 # leaves: they were found only because a review round went looking outside the
 # portal, and they are the first writes on this list that no query rule bounds.
