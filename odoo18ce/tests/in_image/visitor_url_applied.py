@@ -41,8 +41,10 @@ import sys
 PATCHED_FLAG = "_woow_visitor_url_patched"
 MODEL = "website.visitor"
 METHOD = "_handle_webpage_dispatch"
-# The attribute the patch replaces for the length of one dispatch.
+# The attribute the patch replaces for the length of one dispatch, and the one
+# it reads off Odoo's request to get at it.
 URL_ATTRIBUTE = "url"
+HTTPREQUEST_ATTRIBUTE = "httprequest"
 # A complete, minimal WSGI environ: enough for werkzeug to compute a url and
 # for Odoo's wrapper to be built over it, with no server, no database and no
 # request behind it. The port is not the scheme's default, so the url werkzeug
@@ -232,8 +234,17 @@ def url_swap(http):
     request, unbuildable = probe_request(http)
     if unbuildable is not None:
         return UNPROVABLE, unbuildable
-    httprequest = request.httprequest
-    name = f"request.httprequest ({type(httprequest).__module__}.{type(httprequest).__qualname__})"
+    try:
+        httprequest = getattr(request, HTTPREQUEST_ATTRIBUTE)
+    except Exception as exc:
+        return UNPROVABLE, (
+            f"{type(request).__module__}.{type(request).__qualname__}."
+            f"{HTTPREQUEST_ATTRIBUTE} could not be read: {exc!r}"
+        )
+    name = (
+        f"request.{HTTPREQUEST_ATTRIBUTE} "
+        f"({type(httprequest).__module__}.{type(httprequest).__qualname__})"
+    )
     try:
         arrived = getattr(httprequest, URL_ATTRIBUTE)
     except Exception as exc:

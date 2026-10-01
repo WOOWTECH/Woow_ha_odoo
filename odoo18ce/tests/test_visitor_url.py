@@ -1227,6 +1227,25 @@ def test_the_probe_does_not_take_the_modules_word_for_the_replacement() -> None:
     assert "None" in sentence
 
 
+def test_the_probe_reports_a_request_that_no_longer_carries_an_httprequest() -> None:
+    """A nightly that renames what the patch reads off the request. Raising
+    here would print no visitor-url: line at all, and the build step would
+    blame the container for exactly the shape change the unprovable verdict
+    exists to name."""
+
+    class Request:
+        def __init__(self, httprequest):
+            self.wrapped = httprequest  # not where the patch looks
+
+    probe = load_probe()
+    module = types.ModuleType(probe.PATCH_MODULE)
+    module.swap_url = lambda httprequest, value: None
+    with loader_has(module):
+        verdict, sentence = probe.url_swap(odoo_http_module(request_class=Request))
+    assert verdict == probe.UNPROVABLE
+    assert f"{probe.HTTPREQUEST_ATTRIBUTE} could not be read" in sentence
+
+
 def test_the_probe_reads_odoos_own_request_class_and_builds_none_of_its_own() -> None:
     """The class under test has to come from the Odoo being probed, or the
     check proves something about this file instead."""
