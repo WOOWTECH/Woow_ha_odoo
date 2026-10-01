@@ -281,6 +281,36 @@
   while the same attribute on a field value does not. One more `sub_filter`,
   which serves both dialogs because it is the single line they spell identically.
   Found by a review round, not by the issue.
+- Toggling the HTML editor's **code view back off** no longer re-inserts the
+  record's markup with no Ingress prefix. `HtmlField.toggleCodeView` assigns
+  `this.value` straight into the editable, which is a sixth markup insertion with
+  none of #210's five rules on it, so every root-relative URL in the record was
+  fetched from the Home Assistant root and answered 404 — the same escape as the
+  To-do form's two onboarding pictures, on the same field, reached a different
+  way. One `sub_filter` on the Ingress asset location, through
+  `__WOOW_INGRESS_MARKUP_IN_VALUE__`: #237's helper and not #210's plain `IN`,
+  because `get value()` returns `markup(newVal)` whenever the record's value is a
+  `Markup` — which it is for every html field — and `IN` returns a non-string as
+  it came, so the obvious rule would have matched its pattern, changed the bytes
+  and fixed nothing. A test drives that rule and shows the picture still fetched
+  from the Home Assistant root. Nothing is stored by the site: what stores is
+  `_commitChanges` on the next blur, where #210's rule 2 strips the prefix again,
+  and the round trip is executed on those shipped bytes rather than asserted —
+  including the same round trip through Odoo's *unrewritten* `updateValue`, which
+  is what #210 stands between this rule and the database for. Issue #240, ADR
+  0004 (fifth 2026-10-01 postscript), parent #148.
+- The bound on that site is **debug mode**, not "no shipped view sets the
+  option": `codeview: Boolean(odoo.debug && options.codeview)` needs both, and
+  five shipped views set the option, on four fields — `res.users.signature` in
+  both of `base`'s user forms, `ir.actions.act_window`'s `help` (#158's field),
+  `mail.template`'s `body_html` and `hr_recruitment`'s send-mail wizard body, the
+  last two through `html_mail`, a subclass of the same field. #240 and #238's postscript both said otherwise.
+  The label stays `severity: minor` on what survives: a developer in debug mode
+  and nobody else. One shape of that screen would also produce a false pass and is
+  driven in the Static tier for it — a value whose parse yields a non-empty
+  `<head>` turns `sandboxedPreview` on, the field renders through the readonly
+  `HtmlViewer` (#237) and `this.editor` is undefined, so the toggle runs and this
+  site is never reached.
 
 ### Changed
 - ADR 0004's open list named **two** media dialog comparisons; the method behind
