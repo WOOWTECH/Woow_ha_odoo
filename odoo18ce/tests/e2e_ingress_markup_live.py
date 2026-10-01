@@ -819,11 +819,17 @@ def do_codeview(side, run_id: str, *, cleanup=False, **_) -> dict[str, Any]:
     editable.wait_for(timeout=TIMEOUT)
     # The toolbar is a selection toolbar; it is not in the DOM until there is one.
     editable.click()
+    # A *text* selection, and deliberately not the whole editable. The floating
+    # toolbar hides a group whose `namespace` does not match the selection's
+    # (`toolbar_plugin.js:393`), the `codeview` group declares none, and selecting
+    # the editable's whole contents includes the `<img>` -- which can put the
+    # toolbar in the `image` namespace and hide the very button this needs.
     side.root.evaluate(
         """(selector) => {
             const editable = document.querySelector(selector);
+            const target = editable.querySelector("p") || editable;
             const range = document.createRange();
-            range.selectNodeContents(editable);
+            range.selectNodeContents(target);
             const selection = window.getSelection();
             selection.removeAllRanges();
             selection.addRange(range);
@@ -866,8 +872,19 @@ def do_codeview(side, run_id: str, *, cleanup=False, **_) -> dict[str, Any]:
 
 # --- #237: the plain path, through the history dialog --------------------------
 
-# `project_task_form_controller.js:28-38` adds the opener as a *static action
-# menu item* -- the cog, `description: _t("Version History")`, icon `fa-history`.
+# **The register names "the To-do form" and that form does not have this item.**
+# `ProjectTaskFormController` is the only controller that adds it
+# (`project_task_form_controller.js:28-38`), and `project_todo`'s own
+# `TodoFormController.actionMenuItems` *whitelists* its cog items -- archive,
+# unarchive, duplicate, delete and "Convert to Task"
+# (`project_todo/static/src/views/todo_form/todo_form_controller.js:20-33`) -- so
+# Version History is filtered out there. The screen is therefore the **project
+# task** form: `/odoo/project.task/<id>` resolves to `project.view_task_form2`,
+# which carries `js_class="project_task_form"` (`project_task_views.xml:322`).
+# A to-do is still a `project.task`, so the same record opens on it.
+#
+# The opener is a *static action menu item* -- the cog,
+# `description: _t("Version History")`, icon `fa-history`.
 # The cog is `web.ActionMenus`' Actions dropdown (`action_menus.xml:23-28`,
 # `data-hotkey="u"`), and its items are `DropdownItem`s classed `o_menu_item`.
 COG_BUTTON = '.o_cp_action_menus button[data-hotkey="u"]'
@@ -902,12 +919,29 @@ def do_readonly_plain(side, run_id: str, *, task_id=None, **_) -> dict[str, Any]
         task_id = onboarding_todo_id(side)
     if task_id is None:
         return {"pictures": None, "notes": "no to-do (project.task with no project) on this database"}
+    # Read the controller's own precondition before driving anything. It refuses
+    # on a falsy `html_field_history_metadata.description`, and the field is
+    # `None` until the versioned field has been written at least once
+    # (`html_field_history_mixin.py:29-41`), so this says *why* in advance rather
+    # than leaving a notification to be inferred from an absent dialog.
+    metadata = read_field(side, "project.task", task_id, "html_field_history_metadata")
+    extra: dict[str, Any] = {
+        "task_id": task_id,
+        "has_description_history": bool((metadata or {}).get("description")
+                                        if isinstance(metadata, Mapping) else metadata),
+        "form": "project.view_task_form2 (js_class project_task_form)",
+    }
+    if not extra["has_description_history"]:
+        return {"screen": "/odoo/project.task/%d" % task_id, "pictures": None, "extra": extra,
+                "notes": "html_field_history_metadata has no 'description' entry, so "
+                         "openHistoryDialog refuses: this record's description has never been "
+                         "written and the plain path is unreachable on it. Saving it to make a "
+                         "revision is #210's screen and #235's check, not this one."}
     side.goto("/odoo/project.task/%d" % task_id)
     side.wait_webclient()
     side.close_chat_windows()
     side.settle(1500)
 
-    extra: dict[str, Any] = {"task_id": task_id}
     side.root.locator(COG_BUTTON).first.click()
     side.settle(600)
     item = side.root.locator(COG_ITEM).filter(has_text=VERSION_HISTORY_LABEL).first
@@ -961,6 +995,14 @@ MEDIA_DISCARD = ".o_dialog footer button.btn-secondary"
 # (`web_editor/static/src/xml/editor.xml:278`).
 REPLACE_CURRENT = '.o-we-toolbar button[name="replace_image"]'
 REPLACE_LEGACY = "#media-replace"
+
+# The **website editor**'s Replace is neither of those: it is a snippet option,
+# `web_editor/views/snippets.xml:415-419`
+# (`<div data-js="ReplaceMedia" ...><we-button data-replace-media="true">Replace`),
+# and the `snippet-option-<data-js>` class is how the panel names it
+# (`snippets.editor.js:3279-3283`). `#media-replace` is the legacy *toolbar*'s
+# button and is kept only as a fallback.
+REPLACE_WEBSITE = '.snippet-option-ReplaceMedia we-button[data-replace-media="true"]'
 
 # A document in either editor carries `o_image`
 # (`document_selector.js:10`, `mediaSpecificClasses`).
@@ -1084,11 +1126,26 @@ def do_media_document_todo(side, run_id: str, *, task_id=None, **_) -> dict[str,
     extra["element"] = {"href": side.env.mask(document.get_attribute("href"))}
     document.click()
     side.settle(1000)
+    # The current editor's Replace is in the toolbar's `image` **namespace**
+    # (`media_plugin.js:50`, `namespace: "image"`), and a document is an
+    # `<a class="o_image">` rather than an `<img>` -- so selecting one does not
+    # raise that group. Try it anyway, then fall back to a double-click, and
+    # record which control opened the dialog so the evidence says how it was
+    # reached rather than implying the toolbar did it.
     replace = side.root.locator(REPLACE_CURRENT).first
-    if not replace.count():
+    if replace.count():
+        extra["replace_control"] = REPLACE_CURRENT
+        replace.click()
+    else:
+        extra["replace_control"] = "dblclick"
+        document.dblclick()
+    side.settle(1500)
+    if not side.root.locator(MEDIA_DIALOG).count():
         return {"screen": "/odoo/project.task/%d" % task_id, "pictures": None, "extra": extra,
-                "notes": "the document selection showed no Replace item"}
-    replace.click()
+                "notes": "no control reopened the media dialog on the document link: the current "
+                         "editor's Replace item is namespaced to `image` and a document is an "
+                         "a.o_image, so this row may only be reachable through the legacy "
+                         "editor's dialog (the website editor or the mail designer)"}
     reading = media_dialog_reading(side, tab="Documents")
     extra["dialog"] = reading
     pictures, notes = _media_verdict(reading, side)
@@ -1133,11 +1190,17 @@ def do_media_image_website(side, run_id: str, **_) -> dict[str, Any]:
     }
     image.click()
     side.settle(1500)
-    replace = root.locator(REPLACE_LEGACY).first
+    replace = root.locator(REPLACE_WEBSITE).first
+    if not replace.count():
+        replace = root.locator(REPLACE_LEGACY).first
+        extra["replace_control"] = REPLACE_LEGACY
+    else:
+        extra["replace_control"] = REPLACE_WEBSITE
     if not replace.count():
         _discard_website_editor(side)
         return {"pictures": None, "extra": extra,
-                "notes": "the snippet options showed no #media-replace control for the selected image"}
+                "notes": "neither the ReplaceMedia snippet option nor #media-replace was present "
+                         "for the selected image"}
     replace.click()
     reading = media_dialog_reading(side)
     extra["dialog"] = reading
