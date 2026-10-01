@@ -674,10 +674,7 @@ class OpenTargetTests(unittest.TestCase):
                       # must not reach `/my/tasks`, which writes nothing.
                       "/my/task", "/my/project",
                       "/terms", "/payment/pay", "/payment/confirmation", "/payment/status",
-                      "/my/payment_method", "/donation/pay", "/rate/tok_1/5",
-                      # The Discuss page that renders without the persona step,
-                      # which is why `/discuss/` is not a key.
-                      "/discuss/channel/7"):
+                      "/my/payment_method", "/donation/pay", "/rate/tok_1/5"):
             with self.subTest(clean):
                 self.assertIsNone(get_writing_route(clean))
 
@@ -699,6 +696,62 @@ class OpenTargetTests(unittest.TestCase):
                       "/my/project/7/task/9", "/my/task/9",
                       "/mail/unfollow", "/digest/3/unsubscribe",
                       "/chat/7/tok_1", "/meet/tok_1"):
+            with self.subTest(route):
+                targets = parse_targets([
+                    json.dumps({"module": "m", "target": route, "expect_selector": "#x"}),
+                ])
+                with self.assertRaises(RuntimeError) as caught:
+                    require_write_database(targets, "odoo_test")
+                self.assertIn(route, str(caught.exception))
+                self.assertIn(get_writing_route(route), str(caught.exception))
+                # And permitted on the one database ADR 0012 allows it on.
+                require_write_database(targets, WRITE_DATABASE)
+
+    def test_the_mail_routes_the_sweep_read_a_write_on_are_bounded(self) -> None:
+        # #247's sweep of `mail`'s 16 unread controllers, and it ends in one
+        # write rather than five verdicts: `@add_guest_to_context`
+        # (mail/models/discuss/mail_guest.py:30-33) updates the guest's timezone
+        # on any route it decorates, so the thing to read is the decorator and
+        # not the body. It is on both `discuss/binary.py` routes, on the bare
+        # `@route()` that re-exposes `/web/image` (:65), on the Discuss page the
+        # portal audit recorded clean, and on `/mail/message/<id>`.
+        for route, prefix in (
+            ("/discuss/channel/7/attachment/9", "/discuss/channel/"),
+            ("/discuss/channel/7/image/9", "/discuss/channel/"),
+            ("/discuss/channel/7/image/9/64x64", "/discuss/channel/"),
+            # Recorded clean by #226 and not clean: it carries the decorator too.
+            ("/discuss/channel/7", "/discuss/channel/"),
+            # `/web/image` is a route itself, so its key carries no trailing
+            # slash and has to match the bare path as well as all 17 spellings
+            # of it in web/controllers/binary.py:164-182.
+            ("/web/image", "/web/image"),
+            ("/web/image/123", "/web/image"),
+            ("/web/image/123-1699/64x64/logo.png", "/web/image"),
+            ("/web/image/res.partner/3/image_128/64x64/avatar.png", "/web/image"),
+            # The two routes in the file #226 read but recorded nothing about.
+            ("/mail/view", "/mail/view"),
+            ("/mail/message/7", "/mail/message/"),
+        ):
+            with self.subTest(route):
+                self.assertEqual(get_writing_route(route), prefix)
+        # Read and found clean: the two worklet routes, which answer from a file
+        # on disk and reach no model at all. And the near misses of the new keys
+        # -- neither `/discuss/channel` nor `/mail/message` is a route, and
+        # `/web/images` only shares characters with `/web/image`.
+        for clean in ("/mail/rtc/audio_worklet_processor", "/discuss/voice/worklet_processor",
+                      "/discuss/channel", "/mail/message", "/web/images", "/web/imagery"):
+            with self.subTest(clean):
+                self.assertIsNone(get_writing_route(clean))
+
+    def test_a_mail_sweep_target_is_refused_off_the_write_database(self) -> None:
+        # Each prefix #247 added, at the seam that uses it. `/web/image` is the
+        # one whose spelling is new to the list: a route `web` owns, on the list
+        # only because `mail` re-exposes it, whose own bare path is a route with
+        # 17 spellings under it -- so it is exercised both bare and nested.
+        for route in ("/discuss/channel/7", "/discuss/channel/7/attachment/9",
+                      "/discuss/channel/7/image/9/64x64",
+                      "/web/image", "/web/image/res.partner/3/image_128",
+                      "/mail/view", "/mail/message/7"):
             with self.subTest(route):
                 targets = parse_targets([
                     json.dumps({"module": "m", "target": route, "expect_selector": "#x"}),
