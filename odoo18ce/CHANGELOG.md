@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Added
+- The static tier measures how much of nginx's 4096-byte configuration token
+  buffer the Runtime shim's prefix script has left, and fails while there is
+  still room to act. That script is one single-quoted parameter, and every
+  Issue that adds a wrapper to it makes it longer: #174 recorded "~200 bytes
+  short of" the buffer in a comment, later softened to "a few hundred bytes",
+  and by #210 the real figure was **148**. Nothing measured it -- the next
+  addition over the line would have been found by `nginx -t` failing with
+  `too long parameter`, which names no budget, and an addition under the line
+  would have been found by nothing at all. `tests/test_nginx_parameter_budget.py`
+  now measures every quoted parameter in the template with cont-init's
+  substitutions applied, holds a 64-byte reserve on the shim, says in the
+  failure that the way back is to move a part of the script into a `map` of
+  its own (nginx concatenates variables after parsing, so a reference costs
+  only its own length), pins the limit against a real nginx so the constant
+  cannot drift from the nginx the image ships, and refuses any comment that
+  states the headroom in prose -- which is the shape the stale claims took.
+  The two comments that carried a figure now point at the measurement. No
+  behaviour change and no version bump.
+
 ### Fixed
 - Under Ingress, a website page view again records the page's **Canonical
   URL**. The fix that first shipped in 0.4.6 was applied on the test host and
