@@ -81,6 +81,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from typing import Any, Mapping, Sequence
 
@@ -757,3 +758,499 @@ def do_mailing_readonly(side, run_id: str, *, mailing_id=None, **_) -> dict[str,
     }
     return {"screen": "/odoo/mailing.mailing/%d" % mailing_id, "pictures": pictures,
             "stored": stored, "extra": extra}
+
+
+# --- #240: the code view round trip -------------------------------------------
+
+# `base.action_res_users_my` is `target="new"`, so Preferences is a dialog over
+# whatever is on screen (`base/views/res_users_views.xml:506-512`), and its
+# footer carries its own save -- `.o_form_button_save` is not on it.
+PREFERENCES_ACTION = "/odoo/action-base.action_res_users_my"
+SIGNATURE_FIELD = '.o_field_html[name="signature"]'
+SIGNATURE_EDITABLE = SIGNATURE_FIELD + " .odoo-editor-editable"
+PREFERENCES_SAVE = 'button[name="preference_save"]'
+PREFERENCES_CANCEL = 'button[name="preference_cancel"]'
+
+# Turning the code view **on** for a fragment value is a toolbar item, not the
+# button beside the field: `html_field.xml:26` renders `#codeview-btn-group` only
+# when `state.showCodeView` is already true or the value is a sandboxed preview,
+# and `html_field.js:292-310` registers the toggle as a toolbar command with
+# `icon: "fa-code"` whose button carries `name="codeview"`
+# (`main/toolbar/toolbar.xml`). So: select text to raise the floating toolbar,
+# click it to go on, and click the field's own button to come back off.
+CODEVIEW_TOOLBAR_BUTTON = '.o-we-toolbar button[name="codeview"]'
+CODEVIEW_OFF_BUTTON = "#codeview-btn-group .o_codeview_btn"
+CODEVIEW_TEXTAREA = "textarea.o_codeview"
+
+
+def do_codeview(side, run_id: str, *, cleanup=False, **_) -> dict[str, Any]:
+    """#240: the code view toggled off re-inserts the record's markup.
+
+    The screen is the user signature in **Preferences** with debug mode on, and
+    the field is a *fragment* on purpose: `computeContainsComplexHTML()` turns
+    `sandboxedPreview` on for a value whose parse yields a non-empty `<head>`,
+    the field then renders the readonly `HtmlViewer` instead of a `Wysiwyg`, and
+    `this.editor` is `undefined` -- so `toggleCodeView` never reaches the
+    assignment at `html_field.js:236` that the rules patch. A full-HTML value
+    here would pass while testing nothing.
+
+    Two halves, both recorded: the picture loads under the prefix after the
+    toggle, and `res.users.signature` is still root-relative after the save.
+    """
+    uid = current_user_id(side)
+    before = read_field(side, "res.users", uid, "signature")
+    extra: dict[str, Any] = {"uid": uid, "signature_before": redact(before or "", {})}
+    # Seeded over RPC rather than typed, so the value under test is exactly the
+    # one the Static tier measured and the check does not also depend on the
+    # code view's own typing working.
+    write_field(side, "res.users", uid, "signature", SIGNATURE_VALUE)
+
+    # Debug mode first: `codeview` is `Boolean(odoo.debug && options.codeview)`
+    # (`html_field.js:375`), so without it the toolbar item is never registered
+    # and there is nothing to toggle.
+    side.goto("/odoo?debug=1")
+    side.wait_webclient()
+    extra["debug"] = side.root.evaluate("() => (window.odoo && odoo.debug) || ''")
+    side.goto(PREFERENCES_ACTION)
+    side.root.locator(DIALOG).first.wait_for(timeout=TIMEOUT)
+    side.settle(1500)
+
+    editable = side.root.locator(SIGNATURE_EDITABLE).first
+    editable.wait_for(timeout=TIMEOUT)
+    # The toolbar is a selection toolbar; it is not in the DOM until there is one.
+    editable.click()
+    side.root.evaluate(
+        """(selector) => {
+            const editable = document.querySelector(selector);
+            const range = document.createRange();
+            range.selectNodeContents(editable);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }""",
+        SIGNATURE_EDITABLE,
+    )
+    side.settle(800)
+    toolbar = side.root.locator(CODEVIEW_TOOLBAR_BUTTON).first
+    toolbar.wait_for(timeout=TIMEOUT)
+    toolbar.click()
+    # The textarea is deliberately not rewritten: it shows the record's own
+    # bytes, which is why #240's own prerequisite note says typing a picture
+    # there is the easy way to get one in.
+    side.root.locator(CODEVIEW_TEXTAREA).first.wait_for(timeout=TIMEOUT)
+    extra["code_view_shown"] = True
+    extra["code_view_bytes"] = redact(
+        side.root.locator(CODEVIEW_TEXTAREA).first.input_value(), {})
+
+    off = side.root.locator(CODEVIEW_OFF_BUTTON).first
+    off.wait_for(timeout=TIMEOUT)
+    off.click()
+    side.settle(1500)
+    # This is the reading #240 is about: the markup `toggleCodeView` just
+    # re-inserted at `html_field.js:236`, rendered.
+    pictures = read_pictures(side.root, SIGNATURE_EDITABLE + " img", side)
+
+    save = side.root.locator(PREFERENCES_SAVE).first
+    save.wait_for(timeout=TIMEOUT)
+    save.click()
+    side.settle(3000)
+    after = read_field(side, "res.users", uid, "signature")
+    stored = {"res.users.signature": after}
+
+    if cleanup:
+        write_field(side, "res.users", uid, "signature", before or False)
+        extra["signature_restored"] = True
+    return {"screen": PREFERENCES_ACTION + " (signature, debug)", "pictures": pictures,
+            "stored": stored, "extra": extra}
+
+
+# --- #237: the plain path, through the history dialog --------------------------
+
+# `project_task_form_controller.js:28-38` adds the opener as a *static action
+# menu item* -- the cog, `description: _t("Version History")`, icon `fa-history`.
+# The cog is `web.ActionMenus`' Actions dropdown (`action_menus.xml:23-28`,
+# `data-hotkey="u"`), and its items are `DropdownItem`s classed `o_menu_item`.
+COG_BUTTON = '.o_cp_action_menus button[data-hotkey="u"]'
+COG_ITEM = ".o_menu_item"
+VERSION_HISTORY_LABEL = "Version History"
+
+# `html_editor.HistoryDialog` (`history_dialog.xml`). Its `getConfig()` sets
+# neither `hasFullHtml` nor `cssAssetId`, so the `HtmlViewer` it mounts is on the
+# plain `t-out="state.value"` path *by construction* -- which is why this is the
+# screen for #237 check 1 rather than a field that happens to be readonly.
+HISTORY_DIALOG = ".html-history-dialog"
+HISTORY_CONTENT = HISTORY_DIALOG + " .history-container"
+HISTORY_NO_CONTENT = "No history"
+HISTORY_REVISIONS = HISTORY_DIALOG + " .revision-list a"
+# Never "Restore history": that writes. The run closes the dialog.
+HISTORY_DISCARD = ".o_dialog footer button.btn-secondary"
+
+
+def do_readonly_plain(side, run_id: str, *, task_id=None, **_) -> dict[str, Any]:
+    """#237 check 1: a readonly html field on the plain path.
+
+    `openHistoryDialog` refuses to open when the record has no
+    `html_field_history_metadata.description` -- it posts a notification and
+    returns -- so this needs a to-do with one past revision. #235's check 2
+    created one when it saved the onboarding to-do under Ingress. A host without
+    one records this as unreachable rather than saving the record to make one,
+    because that is #210's screen and #235's check.
+
+    Reads only: the dialog is closed with Discard, never Restore history.
+    """
+    if task_id is None:
+        task_id = onboarding_todo_id(side)
+    if task_id is None:
+        return {"pictures": None, "notes": "no to-do (project.task with no project) on this database"}
+    side.goto("/odoo/project.task/%d" % task_id)
+    side.wait_webclient()
+    side.close_chat_windows()
+    side.settle(1500)
+
+    extra: dict[str, Any] = {"task_id": task_id}
+    side.root.locator(COG_BUTTON).first.click()
+    side.settle(600)
+    item = side.root.locator(COG_ITEM).filter(has_text=VERSION_HISTORY_LABEL).first
+    if not item.count():
+        return {"screen": "/odoo/project.task/%d" % task_id, "pictures": None, "extra": extra,
+                "notes": "the cog has no %r item on this form" % VERSION_HISTORY_LABEL}
+    item.click()
+    side.settle(2500)
+
+    dialog = side.root.locator(HISTORY_DIALOG).first
+    if not dialog.count():
+        # The controller's own refusal path: a notification instead of a dialog.
+        return {"screen": "/odoo/project.task/%d" % task_id, "pictures": None, "extra": extra,
+                "notes": "the history dialog did not open: the to-do has no past revision of "
+                         "its description, so the plain path is unreachable on this record"}
+    body = dialog.inner_text()
+    extra["revisions"] = side.root.locator(HISTORY_REVISIONS).count()
+    if HISTORY_NO_CONTENT in body and not extra["revisions"]:
+        pictures, notes = None, "the history dialog opened with no revisions"
+    else:
+        # `.o_readonly` is the plain path's own div; scoping to it rather than to
+        # the dialog keeps the revision list's own markup out of the reading.
+        pictures = read_pictures(side.root, HISTORY_CONTENT + " " + READONLY_CONTENT + " img", side)
+        notes = ""
+    discard = side.root.locator(HISTORY_DISCARD).first
+    if discard.count():
+        discard.click()
+        side.settle(800)
+    stored = {"project.task.description": read_field(side, "project.task", task_id, "description")}
+    return {"screen": "/odoo/project.task/%d (Version History)" % task_id, "pictures": pictures,
+            "stored": stored, "extra": extra, "notes": notes}
+
+
+# --- #239: the media dialog's preselection -------------------------------------
+
+# Both editors' dialogs, current and legacy, use the same content class and the
+# same tile markers -- `html_editor/.../media_dialog.js:48` and
+# `web_editor/.../media_dialog.js:50` both set `o_select_media_dialog`, and both
+# `image_selector.xml` and `document_selector.xml` put `o_we_attachment_selected`
+# on `.o_existing_attachment_cell` when the tile is the selected one. That class
+# **is** #239: the preselection the three rules restored.
+MEDIA_DIALOG = ".o_select_media_dialog"
+MEDIA_TILE = MEDIA_DIALOG + " .o_existing_attachment_cell"
+MEDIA_TILE_SELECTED = MEDIA_TILE + ".o_we_attachment_selected"
+MEDIA_DISCARD = ".o_dialog footer button.btn-secondary"
+
+# Reopening the dialog on an existing image. Two editors, two controls:
+# `html_editor`'s is a toolbar item in the `image` namespace
+# (`media_plugin.js:44-56`, `text: "Replace"`, so `name="replace_image"`), and the
+# legacy editor's is the Replace button of its own toolbar
+# (`web_editor/static/src/xml/editor.xml:278`).
+REPLACE_CURRENT = '.o-we-toolbar button[name="replace_image"]'
+REPLACE_LEGACY = "#media-replace"
+
+# A document in either editor carries `o_image`
+# (`document_selector.js:10`, `mediaSpecificClasses`).
+DOCUMENT_LINK = "a.o_image"
+
+
+def media_dialog_reading(side, *, tab: str | None = None) -> dict[str, Any]:
+    """What the open media dialog says about preselection.
+
+    `tiles_selected` is the whole of #239: a tile carrying
+    `o_we_attachment_selected` is the attachment the element came from, matched
+    by a comparison whose two operands the three rules put on the same footing.
+    """
+    dialog = side.root.locator(MEDIA_DIALOG).first
+    dialog.wait_for(timeout=TIMEOUT)
+    if tab:
+        candidate = side.root.locator(MEDIA_DIALOG + " .nav-link").filter(has_text=tab).first
+        if candidate.count():
+            candidate.click()
+            side.settle(1500)
+    side.settle(1200)
+    return {
+        "tiles": side.root.locator(MEDIA_TILE).count(),
+        "tiles_selected": side.root.locator(MEDIA_TILE_SELECTED).count(),
+        "tab": tab or "Images",
+    }
+
+
+def close_media_dialog(side) -> None:
+    discard = side.root.locator(MEDIA_DISCARD).first
+    if discard.count():
+        discard.click()
+        side.settle(800)
+
+
+def _media_verdict(reading: Mapping[str, Any], side) -> tuple[list[dict[str, Any]], str]:
+    """#239 is display state, so its pass is the tile and not a picture.
+
+    The record still carries a picture list, because the evidence table is one
+    shape for the whole run: a preselected tile is reported as the surface's own
+    expected verdict, and no tile is `ABSENT` -- nothing was measured about the
+    attachment the element came from.
+    """
+    if reading["tiles_selected"]:
+        return [{"tile": "selected", "verdict": expected_verdict(side.surface)}], ""
+    if not reading["tiles"]:
+        return [], "the dialog listed no attachment tiles at all, so the preselection was not measured"
+    return [{"tile": "none selected", "verdict": ESCAPED}], (
+        "the dialog listed %d tile(s) and preselected none" % reading["tiles"])
+
+
+def do_media_image_todo(side, run_id: str, *, task_id=None, **_) -> dict[str, Any]:
+    """#239 line 1: the dialog reopened on an image in the To-do description.
+
+    Nothing is stored either way -- this is the row that cannot escalate in
+    severity from what the host shows -- so the dialog is discarded and the form
+    is never saved.
+    """
+    if task_id is None:
+        task_id = onboarding_todo_id(side)
+    if task_id is None:
+        return {"pictures": None, "notes": "no to-do on this database"}
+    side.goto("/odoo/project.task/%d" % task_id)
+    side.wait_webclient()
+    side.close_chat_windows()
+    side.settle(2000)
+    extra: dict[str, Any] = {"task_id": task_id}
+
+    image = side.root.locator(EDITABLE + " img").first
+    if not image.count():
+        return {"screen": "/odoo/project.task/%d" % task_id, "pictures": None, "extra": extra,
+                "notes": "the description holds no image, so there is nothing to reopen the dialog on"}
+    # The element the dialog is asked about, recorded first: #239's comparison is
+    # between this `src` and the attachment's `image_src`, and rule 2's branch is
+    # about `data-original-src` on the same element.
+    extra["element"] = {
+        "src": side.env.mask(image.get_attribute("src")),
+        "data_original_src": side.env.mask(image.get_attribute("data-original-src")),
+    }
+    image.click()
+    side.settle(1000)
+    replace = side.root.locator(REPLACE_CURRENT).first
+    if not replace.count():
+        return {"screen": "/odoo/project.task/%d" % task_id, "pictures": None, "extra": extra,
+                "notes": "the image toolbar showed no Replace item"}
+    replace.click()
+    reading = media_dialog_reading(side)
+    extra["dialog"] = reading
+    pictures, notes = _media_verdict(reading, side)
+    close_media_dialog(side)
+    return {"screen": "/odoo/project.task/%d (media dialog, image)" % task_id,
+            "pictures": pictures, "stored": {}, "extra": extra, "notes": notes}
+
+
+def do_media_document_todo(side, run_id: str, *, task_id=None, **_) -> dict[str, Any]:
+    """#239 line 3: the document tile, a **no-change** check.
+
+    This one was never broken: its comparison's left operand is
+    `` `/web/content/${attachment.id}` ``, one of the generic literal rules the
+    asset location has shipped since #166, so it arrives prefixed and is compared
+    against a prefixed `href`. No `OUT` was shipped for it and a Static-tier test
+    refuses one. So a tile **not** highlighted here is new information -- it says
+    the `` `/web/ `` coupling does not hold on the host -- and is reported
+    against #239 rather than recorded as a partial fix.
+    """
+    if task_id is None:
+        task_id = onboarding_todo_id(side)
+    if task_id is None:
+        return {"pictures": None, "notes": "no to-do on this database"}
+    side.goto("/odoo/project.task/%d" % task_id)
+    side.wait_webclient()
+    side.close_chat_windows()
+    side.settle(2000)
+    extra: dict[str, Any] = {"task_id": task_id}
+
+    document = side.root.locator(EDITABLE + " " + DOCUMENT_LINK).first
+    if not document.count():
+        return {"screen": "/odoo/project.task/%d" % task_id, "pictures": None, "extra": extra,
+                "notes": "the description holds no document link (a.o_image), so this row is "
+                         "unreachable on this record; inserting one would be a different check"}
+    extra["element"] = {"href": side.env.mask(document.get_attribute("href"))}
+    document.click()
+    side.settle(1000)
+    replace = side.root.locator(REPLACE_CURRENT).first
+    if not replace.count():
+        return {"screen": "/odoo/project.task/%d" % task_id, "pictures": None, "extra": extra,
+                "notes": "the document selection showed no Replace item"}
+    replace.click()
+    reading = media_dialog_reading(side, tab="Documents")
+    extra["dialog"] = reading
+    pictures, notes = _media_verdict(reading, side)
+    close_media_dialog(side)
+    return {"screen": "/odoo/project.task/%d (media dialog, document)" % task_id,
+            "pictures": pictures, "stored": {}, "extra": extra, "notes": notes}
+
+
+def do_media_image_website(side, run_id: str, **_) -> dict[str, Any]:
+    """#239 line 2, the more informative image check: the website editor.
+
+    Rule 2's prefix only appears on this path. `data-original-src` is not
+    prefixed by the shim, but the generic HTML location's rule is written for
+    `src="/` and `sub_filter` is a plain substring search, so it matches inside
+    the longer attribute name -- which means markup delivered as an **HTML
+    response** carries a prefixed `data-original-src` while the same attribute on
+    a field value does not. That branch `return`s before rule 1, so rule 1 alone
+    would not have reached it. This dialog is also the legacy `web_editor` one.
+
+    Nothing is saved: the editor is discarded.
+    """
+    side.goto("/odoo/action-website.website_preview")
+    side.wait_webclient()
+    root = side.root
+    root.locator(".o_edit_website_container button, .o_edit_website_container a").first.click()
+    root.locator(".o-snippets-menu, #oe_snippets, .o_we_website_top_actions").first.wait_for(timeout=TIMEOUT)
+    side.settle(2000)
+    extra: dict[str, Any] = {"editor": "open"}
+
+    # The page is an iframe inside the editor; its images are the editable ones.
+    frames = [handle.content_frame() for handle in root.locator(".o_website_preview iframe").element_handles()]
+    frame = next((candidate for candidate in frames if candidate is not None
+                  and candidate.locator("img").count()), None)
+    if frame is None:
+        _discard_website_editor(side)
+        return {"pictures": None, "extra": extra,
+                "notes": "the editor's preview held no readable frame with an image"}
+    image = frame.locator("img").first
+    extra["element"] = {
+        "src": side.env.mask(image.get_attribute("src")),
+        "data_original_src": side.env.mask(image.get_attribute("data-original-src")),
+    }
+    image.click()
+    side.settle(1500)
+    replace = root.locator(REPLACE_LEGACY).first
+    if not replace.count():
+        _discard_website_editor(side)
+        return {"pictures": None, "extra": extra,
+                "notes": "the snippet options showed no #media-replace control for the selected image"}
+    replace.click()
+    reading = media_dialog_reading(side)
+    extra["dialog"] = reading
+    pictures, notes = _media_verdict(reading, side)
+    close_media_dialog(side)
+    _discard_website_editor(side)
+    return {"screen": "/odoo/action-website.website_preview (Edit, Replace media)",
+            "pictures": pictures, "stored": {}, "extra": extra, "notes": notes}
+
+
+def _discard_website_editor(side) -> None:
+    """Leave the editor without saving, the way `U-D2` does."""
+    try:
+        side.root.locator(
+            "button[data-action='cancel'], .o_we_website_top_actions button"
+        ).filter(has_text=re.compile("Discard")).first.click()
+        side.settle(1000)
+        dialog = side.root.locator(".o_dialog footer button.btn-primary")
+        if dialog.count():
+            dialog.first.click()
+            side.settle(800)
+    except Exception:  # noqa: BLE001 -- nothing to discard
+        pass
+
+
+# --- #238: the mail designer, and the two fields a save writes -----------------
+
+# The designer's own iframe, read from `mass_mailing_html_field.js`: its
+# `contentDocument` holds `#iframe_target` (:224) and the editable `.note-editable`
+# (:176), and the theme chooser is `.o_mail_theme_selector_new` (:259) whose theme
+# links carry the theme name as their element id (`xml/mass_mailing.xml:25-27`).
+# Editing is blocked until a theme is picked, and `basic` is the plain one
+# (:455, :729).
+MAILING_IFRAME = MAILING_BODY + " iframe"
+MAILING_EDITABLE = ".note-editable"
+MAILING_THEME_SELECTOR = ".o_mail_theme_selector_new"
+MAILING_THEME_BASIC = "a#basic, #basic"
+
+# A root-relative picture, so there is something for the rules to get wrong.
+MAILING_BODY_VALUE = (
+    '<div class="o_layout"><p>WOOW parity</p>'
+    '<img src="/web/image/res.company/1/logo" alt="logo"></div>'
+)
+
+
+def do_mailing_editable(side, run_id: str, *, mailing_id=None, cleanup=False, **_) -> dict[str, Any]:
+    """#238 lines 1 and 2: the designer loads, and the save stores **two** fields.
+
+    `body_arch` goes through `getEditingValue` (rule 7). `body_html` does not:
+    `commitChanges` builds it separately by cloning the editable into a `srcdoc`
+    iframe and running `toInline` over it (rule 8), and it is the field that
+    **leaves the installation** with the mail. A run that reads back only
+    `body_arch` has measured half the fix.
+
+    If the designer renders blank under Ingress, the first place to look is *not*
+    these rules: the editor iframe is built with `document.write`, so no Runtime
+    shim runs inside it, and its `<script src>` tags come from the generic HTML
+    location's `"src": "/` rewrite of `/web/bundle` JSON.
+    """
+    if mailing_id is None:
+        mailing_id = editable_mailing_id(side)
+    if mailing_id is None:
+        return {"pictures": None, "notes":
+                "no mailing.mailing in state draft or in_queue on this database"}
+    before = side.rpc("mailing.mailing", "read", [[mailing_id], ["body_arch", "body_html"]])[0]
+    extra: dict[str, Any] = {
+        "mailing_id": mailing_id,
+        "body_arch_before": redact(before.get("body_arch") or "", {}),
+    }
+    # Seeded over RPC so the value under test is exactly the measured one, and so
+    # the check does not also depend on the designer's own typing working.
+    write_field(side, "mailing.mailing", mailing_id, "body_arch", MAILING_BODY_VALUE)
+
+    side.goto("/odoo/mailing.mailing/%d" % mailing_id)
+    side.wait_webclient()
+    side.close_chat_windows()
+    side.settle(3000)
+
+    handles = side.root.locator(MAILING_IFRAME).element_handles()
+    frame = next((handle.content_frame() for handle in handles if handle.content_frame()), None)
+    extra["rendered_iframe"] = frame is not None
+    if frame is None:
+        return {"screen": "/odoo/mailing.mailing/%d" % mailing_id, "pictures": None, "extra": extra,
+                "notes": "the mail designer rendered no iframe; look at the generic HTML "
+                         "location's \"src\": \"/ rewrite of /web/bundle JSON before these rules"}
+    if frame.locator(MAILING_THEME_SELECTOR).count():
+        basic = frame.locator(MAILING_THEME_BASIC).first
+        if basic.count():
+            basic.click()
+            side.settle(3000)
+            extra["theme"] = "basic"
+    editable = frame.locator(MAILING_EDITABLE).first
+    if not editable.count():
+        return {"screen": "/odoo/mailing.mailing/%d" % mailing_id, "pictures": None, "extra": extra,
+                "notes": "the designer's iframe held no %s editable" % MAILING_EDITABLE}
+    pictures = read_pictures(frame, MAILING_EDITABLE + " img", side)
+
+    save = side.root.locator(SAVE_BUTTON).first
+    if save.count():
+        save.click()
+        side.settle(6000)
+        extra["saved"] = True
+        extra["unsaved_after_save"] = side.root.locator(UNSAVED).count() > 0
+    after = side.rpc("mailing.mailing", "read", [[mailing_id], ["body_arch", "body_html"]])[0]
+    stored = {
+        "mailing.mailing.body_arch": after.get("body_arch"),
+        "mailing.mailing.body_html": after.get("body_html"),
+    }
+    if cleanup:
+        side.rpc("mailing.mailing", "write", [[mailing_id], {
+            "body_arch": before.get("body_arch") or False,
+            "body_html": before.get("body_html") or False,
+        }])
+        extra["body_restored"] = True
+    return {"screen": "/odoo/mailing.mailing/%d (mail designer)" % mailing_id,
+            "pictures": pictures, "stored": stored, "extra": extra}
