@@ -134,6 +134,15 @@ PREFIX_STORED = "PREFIX-STORED"
 
 NOT_RUN = "NOT-RUN"
 
+# The names `evidence_record` owns. A flow's own readings are merged flat beside
+# them, so a collision would let one quietly replace a verdict with a reading;
+# `evidence_record` refuses instead of letting the record lie.
+RESERVED_RECORD_KEYS = frozenset({
+    "schema", "run_id", "check", "issue", "database", "target", "surface", "screen",
+    "expected", "verdict", "stored_verdict", "pictures", "stored", "stored_values",
+    "signals", "notes",
+})
+
 
 def is_pass(verdict: str) -> bool:
     return verdict in PASSING
@@ -340,6 +349,10 @@ def evidence_record(
         "notes": notes,
     }
     if extra:
+        collisions = sorted(set(extra) & RESERVED_RECORD_KEYS)
+        if collisions:
+            raise ValueError("a check's extra readings may not use the record's own "
+                             "names: %s" % ", ".join(collisions))
         record.update(redact(dict(extra), {}))
     return record
 

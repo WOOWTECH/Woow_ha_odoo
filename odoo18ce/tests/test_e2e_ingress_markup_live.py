@@ -384,3 +384,38 @@ def test_the_report_says_which_checks_never_ran():
     ])
     assert "readonly-iframe" in summary["not_run"]
     assert "readonly-plain" not in summary["not_run"]
+
+
+def test_a_check_s_extra_readings_cannot_overwrite_the_verdict():
+    """`extra` is merged flat into the record, so a key collision would let a
+    flow silently replace the verdict or the schema with one of its own
+    readings. The eight flows use no such key today; the guard is for the ninth.
+    """
+    with pytest.raises(ValueError, match="verdict"):
+        markup.evidence_record(
+            check="codeview", issue=240, run_id="R", database="odoo_parity",
+            target="local", surface=INGRESS, screen="/x",
+            pictures=[{"verdict": markup.ESCAPED}], stored={},
+            extra={"verdict": markup.UNDER_PREFIX},
+        )
+
+
+def test_an_extra_reading_with_its_own_name_is_kept():
+    record = markup.evidence_record(
+        check="codeview", issue=240, run_id="R", database="odoo_parity",
+        target="local", surface=INGRESS, screen="/x",
+        pictures=[{"verdict": markup.UNDER_PREFIX}], stored={},
+        extra={"uid": 2, "debug": "1"},
+    )
+    assert record["uid"] == 2 and record["debug"] == "1"
+    assert record["verdict"] == markup.UNDER_PREFIX
+
+
+def test_every_flow_s_extra_keys_stay_clear_of_the_record_s_own():
+    """A standing check on the names the eight flows actually use."""
+    used = {"task_id", "created_task", "deleted_task", "rendered_iframe", "sandbox",
+            "mailing_id", "uid", "signature_before", "signature_restored", "debug",
+            "code_view_shown", "code_view_bytes", "element", "dialog", "editor",
+            "replace_control", "theme", "saved", "unsaved_after_save", "body_arch_before",
+            "body_restored", "revisions", "has_description_history", "form"}
+    assert not (used & markup.RESERVED_RECORD_KEYS)
