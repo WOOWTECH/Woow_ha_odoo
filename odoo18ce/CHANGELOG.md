@@ -246,6 +246,78 @@
   `sale.order:0` would claim a record nobody created, and "none" on both
   surfaces is what the visit actually left. Future runs only: the #163 evidence
   is not rewritten. Issue #224, parent #148.
+- Reopening the **media dialog** on an existing image highlights the attachment
+  it came from again, under Ingress as on the Public origin.
+  `ImageSelector.isInitialMedia` compares the element's `src` — which carries the
+  Ingress prefix, put there by the shim's `setAttribute` wrapper on an image the
+  dialog just inserted and by `__WOOW_INGRESS_MARKUP_IN__` on one that came out
+  of the record — with `attachment.image_src`, which is
+  `ir.attachment._compute_image_src`'s root-relative
+  `/web/image/<id>-<checksum>/<name>` delivered over `call_kw`. So it never
+  matched: the grid opened with nothing selected and the file had to be found
+  again. The element side now goes through `__WOOW_INGRESS_MARKUP_OUT__`, the
+  same move #210 made for `/html_editor/get_image_info`'s argument — one URL
+  authority, no new global, a no-op on a value with no prefix, and #234's shape
+  strip for free, so an image a collaborative peer sent matches too. Two
+  `sub_filter` rules for that line, because Odoo 18 ships the media dialog
+  **twice** (`html_editor`'s, which a backend form opens, and the legacy
+  `web_editor`'s, which `wysiwyg.js` and the website editor's snippet options
+  open) and the two files are the same code with different quote characters.
+  Display state only: nothing is stored either way. Issue #239, ADR 0004 (fourth
+  2026-10-01 postscript), parent #148.
+- The same method's **other** branch, which is the one reached for any image the
+  image tools have touched, had the same defect from a different direction — and
+  the `src` fix alone would not have reached it, because that branch `return`s
+  first. `isInitialMedia` compares `dataset.originalSrc` with
+  `attachment.image_src`, and nothing in the Runtime shim prefixes
+  `data-original-src` (the markup helper's attribute test is an exact name, so it
+  is not a `data-src`). What prefixes it is the **generic HTML location**: its
+  rule is written for `src="/`, and `sub_filter` being a plain substring search it
+  matches inside the longer attribute name `data-original-src="/…` — no
+  neighbouring rule claims that position first. Odoo ships that attribute inside
+  stored arch (every themed image in
+  `mass_mailing_themes/views/mass_mailing_themes_templates.xml` has one), so
+  markup delivered as an HTML response carries a prefixed `data-original-src`
+  while the same attribute on a field value does not. One more `sub_filter`,
+  which serves both dialogs because it is the single line they spell identically.
+  Found by a review round, not by the issue.
+
+### Changed
+- ADR 0004's open list named **two** media dialog comparisons; the method behind
+  the first makes three, and doing to the third what the list said would have
+  broken it. `DocumentSelector.fetchAttachments` compares the element's `href` with
+  `` `/web/content/${attachment.id}` ``, and that template literal begins
+  `` `/web/ `` — one of the generic literal rules the Ingress asset location has
+  shipped since #166. So the bundle reaches the browser with the prefix already
+  spliced into the literal, the comparison is prefixed-against-prefixed, and it
+  has been highlighting the right document all along; an `OUT` on the `href`
+  alone would have stripped one side and left the other. Measured by serving all
+  four captured excerpts through a real nginx carrying every rule of that
+  location: the two document ones come back with the prefix inside the literal,
+  the two image ones changed by nothing but this family's own three rules,
+  because `attachment.image_src` is an ORM value and the element's reads are DOM
+  reads, so no generic rule can reach either operand.
+  `tests/test_ingress_media_dialog_preselect.py` (40 tests) runs that nginx
+  measurement and requires its answer to equal, byte for byte, what the drivers'
+  own `str.replace` produced; derives the `` `/web/ `` rule from the template
+  rather than quoting it; asserts it is the **only** generic rule reaching the
+  excerpt; runs the comparison in node and reads back which attachment was
+  selected; executes the one-sided strip and shows it selecting nothing; and
+  refuses any `sub_filter` that names the `href` read, so the rule the open list
+  asked for cannot arrive later by a reader following the list. Five patterns
+  measured, three rewritten; `tests/fixtures/bundles/README.md` carries the
+  per-bundle counts, including `html_editor.assets_media_dialog`, the nineteenth
+  bundle this family added. No version bump: the Release and the Live rerun
+  belong to #243.
+- The general rule this one earned, recorded in ADR 0004: a comparison is not a
+  URL site with a known direction, so measure **both** operands as the browser
+  receives them before teaching one about the prefix. A literal in a bundle is
+  subject to every generic rule in the asset location; a DOM read to every
+  generic rule in the HTML location *as well as* to the shim's wrappers; an ORM
+  value to none. Both of this Iteration's surprises were that mistake in
+  opposite directions — one operand assumed clean that was not, one assumed
+  dirty that was not — and "nothing in the shim touches it" is not "nothing
+  touches it".
 
 ## 0.4.9 — 2026-10-01
 
