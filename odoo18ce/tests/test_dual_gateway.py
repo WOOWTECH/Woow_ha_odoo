@@ -232,6 +232,10 @@ def test_nginx_template_contract() -> None:
     assert 'Object.defineProperty(window,"__WOOW_INGRESS_URL__"' in n
     assert 'mP("__WOOW_INGRESS_MARKUP_IN__",mIn)' in n
     assert 'mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)' in n
+    # And `IN` for a value the readonly HtmlViewer holds as an OWL `Markup`
+    # object rather than a string, which `IN` alone would return as it came
+    # (#237).
+    assert 'mP("__WOOW_INGRESS_MARKUP_IN_VALUE__",mIV)' in n
     assert "return 302 $safe_ingress_path/odoo" not in n
     assert n.count("proxy_set_header X-Forwarded-Proto $ingress_proto;") >= 3
     assert "proxy_set_header Origin $ingress_proto://$http_host;" in n

@@ -633,12 +633,10 @@ from. The first was already true before this change for anything the dialog
 itself inserted under Ingress, because the shim's `setAttribute` wrapper
 prefixes `src` and `href`; both are display state, and closing them means
 teaching those comparisons about the prefix the way the `get_image_info`
-argument was taught. Also open: the readonly `HtmlViewer`, which is none of
-the five sites and reaches markup twice over -- `t-out` on the plain path and
-`iframeTarget.innerHTML = content` on the `hasFullHtml`/`cssAssetId` path, so
-whoever picks that item up has two insertions to cover and not one; and the
-legacy `web_editor` editor behind `html_legacy` and `mass_mailing_html`, which
-carries none of these expressions. None has been
+argument was taught. The readonly `HtmlViewer` was on this list -- none of the
+five sites and reaching markup twice over -- and is closed by the postscript
+below (#237). Also open: the legacy `web_editor` editor behind `html_legacy`
+and `mass_mailing_html`, which carries none of these expressions. None has been
 measured escaping -- except the peer snapshot, which is unmeasured rather than
 clean -- and each is its own issue.
 
@@ -662,3 +660,109 @@ and absent) plus the Live rerun, which is the maintainer's after Deploy: the
 To-do form at `route_escape=0`/`http_4xx_5xx=0`/`console_error=0` on both
 surfaces, and the stored `project.task.description` still root-relative after
 saving the to-do in the editor under Ingress.
+
+## Postscript (2026-10-01, the readonly html field)
+
+The postscript above left the readonly `HtmlViewer` on its open list, as the
+one item that "reaches markup twice over". This closes it (#237), and the
+interesting part is not that there are two rewrites but what the second one is:
+the first rewrite of an **OWL template** that has to survive OWL's own
+expression compiler, and the first value in this family that is not a string.
+
+`HtmlViewer` chooses its render path at `get showIframe()`
+(`hasFullHtml || cssAssetId`, `html_editor/static/src/fields/html_viewer.js:111`
+on the pinned deb) and reaches markup once down each:
+
+| | Expression | Served in |
+| --- | --- | --- |
+| 1 | `<div t-ref="readonlyContent" class="o_readonly" t-out="state.value"/>` | `html_viewer.xml`, appended to the bundle by the xml bundle |
+| 2 | `iframeTarget.innerHTML=content;` | `html_viewer.js` |
+
+Both now call `__WOOW_INGRESS_MARKUP_IN_VALUE__`, a third helper published in
+the same map as #210's two. Each occurs once in `web.assets_backend`,
+`web.assets_web`, `web.assets_web_print` and `project.webclient`;
+`odoo18ce/tests/fixtures/bundles/README.md` carries the counts and how they
+were derived.
+
+**Why the readonly path is the more common one, and why it is only a render
+escape.** A field is readonly on every form the user cannot edit, on every
+record shown to a portal -- `project.webclient` is the project-sharing client,
+which carries these same bytes -- and in the html field's history dialog, which
+mounts the same component. So the pictures and linked documents of stored
+markup were fetched from the Home Assistant root and 404'd on the far more
+common of the two paths, which is why #237 carries `severity: important` where
+its siblings do not. But a viewer has no save, so there is **no `OUT` half**:
+nothing here can put a Supervisor token in a record.
+
+What carries that claim is *where* the prefix goes on, and it is worth stating
+precisely because the obvious reassurance is false. The prefix goes on the value
+**as it is inserted**: the helper returns a new value and mutates nothing, so
+`state.value` -- and the revision the history dialog memoised -- still hold the
+record's own bytes. The one write anywhere near this component is that dialog's
+"Restore history", and it does **not** go through `HtmlField.updateValue`, so
+#210's `OUT` is *not* standing behind it: the only implementation of
+`restoreRequested` (`project/static/src/views/project_task_form/project_task_form_controller.js`)
+hands `record.update()` the memoised ORM revision directly. It is clean because
+nothing the viewer rendered is in that path, not because a strip would catch it
+-- and the Static-tier test asserts the untouched original for that reason,
+rather than trusting a strip that is not there.
+
+**Why a third helper and not `IN`.** `IN` tests `typeof h === "string"` and
+returns anything else as it came. The value a readonly html field renders is an
+OWL `Markup` *object*: the relational model wraps every `html` field value as
+`markup(value || "")` (`web/static/src/model/relational_model/utils.js`), and
+`HtmlViewer.formatValue` keeps the wrapper. So calling `IN` at either site
+would have been a silent no-op -- the shape of bug this ADR's "an unmatched
+rewrite is a no-op" rule is about, reached from the other direction.
+`__WOOW_INGRESS_MARKUP_IN_VALUE__` prefixes through `IN` and puts the wrapper
+back through the **value's own constructor**, because OWL's `safeOutput`
+inserts a value as HTML only when it `instanceof Markup` and *escapes*
+everything else: returning a prefixed plain string would have displayed the
+record's markup as text, which is worse than the 404 it fixes. A primitive
+string goes through `IN` unchanged, so the one helper serves both sites --
+`innerHTML` takes a string as markup too -- and anything else (an empty html
+field is `false`) comes back as it came rather than as the word `"false"`.
+`instanceof String` is realm-scoped, which is sound here and only here: a
+page's OWL and that page's shim are one realm, and the Static-tier test builds
+its `Markup` inside the shim's own context rather than reaching across.
+
+**What the template rewrite had to learn.** Odoo 18 appends OWL templates to
+the bundle after the JavaScript as `registerTemplate(name, path, template)`
+with the last argument a template literal, which is what makes a template
+reachable by an exact-expression rewrite at all -- the snippet-thumbnail
+postscript found that. Three things beyond it:
+
+- **The pattern is not the file.** The served bytes are lxml's
+  re-serialisation of the template (`XMLAsset._fetch_content`, then
+  `generate_xml_bundle`'s `etree.tostring`), so the file's two spaces after
+  `t-ref` and its space before `/>` are gone. A pattern copied from the source
+  file would have matched nothing, silently. The fixture is derived through
+  Odoo's own serve path for that reason.
+- **The anchor is the whole div**, because `t-out="state.value"` on its own
+  also occurs in `web.MonetaryField`'s ghost value, in the same bundle.
+- **The fallback must be an arrow function.** OWL compiles a template
+  expression by rewriting every symbol it does not know into a `ctx[...]`
+  lookup, and a `function`'s parameter is not exempt: the
+  `(window.X||function(h){return h})(v)` idiom the five #210 rules use compiles
+  to `function(ctx['h']){return ctx['h']}` and takes the whole template out at
+  compile time. An arrow's parameter is tracked as a local and survives, and
+  `window` is one of OWL's reserved words. Verified against the `owl.js` the
+  pinned deb ships.
+
+The `hasFullHtml` iframe is rendered with
+`sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"`, and
+the rewrite is indifferent to it: the helper runs in the parent realm on a
+string, so what changes is the value assigned and not who assigns it. The
+iframe is `about:blank` and inherits the page's base URL, which is why a
+root-relative `src` resolved against the Home Assistant root in there in the
+first place.
+
+Group B stays uncovered and the Public origin stays untouched. What proves this
+fix is the Static-tier contract
+(`odoo18ce/tests/test_ingress_readonly_html_viewer.py`: the helper executed
+against the rendered shim, including the no-op plain `IN` would have been;
+both patterns counted in the derived excerpts; and both insertions run in node
+with the globals present and absent, the iframe one with `hasFullHtml` set and
+with only `cssAssetId` set) plus the Live rerun after Deploy: a readonly html
+field carrying a root-relative `<img>` at
+`route_escape=0`/`http_4xx_5xx=0`/`console_error=0` on both surfaces.

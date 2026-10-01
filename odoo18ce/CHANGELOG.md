@@ -42,6 +42,36 @@
   version bump.
 
 ### Fixed
+- Under Ingress, a **readonly html field** now renders its record's pictures
+  and linked documents under the Ingress prefix, down both of the paths it has.
+  #210 fixed the editable path; this is the readonly `HtmlViewer`, which ADR
+  0004's postscript named as the markup site that "reaches markup twice over"
+  -- `t-out="state.value"` on the plain path and `iframeTarget.innerHTML` on
+  the `hasFullHtml`/`cssAssetId` one -- and it is the more common of the two: a
+  field is readonly on every form the user cannot edit, on every record a
+  portal shows (the project-sharing client serves the same bytes) and in the
+  html field's history dialog, which mounts the same component. Every
+  root-relative URL in the stored markup was resolved against the Home
+  Assistant root and answered 404. Nothing was ever stored wrong and nothing is
+  now: a viewer has no save, so there is no strip half here, and the value the
+  component holds still carries the record's own bytes -- the prefix goes on as
+  the markup is inserted. Both rewrites call one new Runtime shim helper,
+  `__WOOW_INGRESS_MARKUP_IN_VALUE__`, because the value a readonly html field
+  renders is an OWL `Markup` object and #210's `__WOOW_INGRESS_MARKUP_IN__`
+  returns a non-string as it came -- calling it here would have been a silent
+  no-op. The new helper prefixes through that one and puts the wrapper back
+  through the value's own constructor, since OWL inserts a `Markup` as HTML and
+  escapes anything else. One of the two rewrites is the gateway template's
+  first rewrite of an **OWL template**: its pattern comes from the bytes the xml
+  bundle serves rather than from the source file, because lxml re-serialises
+  the template on the way (the file's double space and its space before `/>`
+  are not there), it anchors on the whole `<div>` because `t-out="state.value"`
+  alone also occurs in the monetary field, and its fallback is an arrow
+  function because OWL rewrites a `function`'s parameter into a `ctx` lookup
+  and would take the component out at compile time. The `hasFullHtml` iframe's
+  `sandbox` is untouched and unaffected: the helper runs in the page's realm on
+  a string. The Public origin is unchanged. No version bump. Issue #237,
+  ADR 0004, parent #148.
 - Under Ingress, a website page view again records the page's **Canonical
   URL**. The fix that first shipped in 0.4.6 was applied on the test host and
   changed nothing there: every Ingress page view still stored the Home

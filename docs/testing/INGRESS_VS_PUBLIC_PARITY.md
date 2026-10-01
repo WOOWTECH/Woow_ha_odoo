@@ -417,6 +417,19 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 片段）。**這一列的 verdict 要等 Live 重跑才改**：兩面 `route_escape`／`http_4xx_5xx`／`console_error`
 > 皆為 0，且在 Ingress 下用編輯器存一次待辦後 `project.task.description` 的 `src` 仍是 root-relative。
 
+> **唯讀 html 欄位的兩個 render 點已於 2026-10-01 補上（#237，ADR 0004 的 2026-10-01 附記），Live
+> 重跑待 Deploy。** #210 修的是可編輯那條；唯讀 `HtmlViewer` 是 ADR 0004 附記裡「一次碰到兩處 markup」
+> 的那一項，而且是常見的那一邊——使用者不能編輯的表單、portal 看到的記錄（project sharing 的
+> `project.webclient` 送的是同一份位元組）、以及 html 欄位的歷史對話框都掛同一個元件。兩條改寫：
+> 樣板裡的 `t-out="state.value"`（純文字那條路）與 `iframeTarget.innerHTML=content;`
+> （`hasFullHtml`／`cssAssetId` 那條路）。**沒有「出」的那一半**：唯讀沒有存檔，前綴是在插入的那一刻才
+> 加上去的，元件自己的 `state.value` 仍是記錄的原位元組，所以歷史對話框的「Restore history」（重新
+> 向 ORM 取修訂）與 `onWillUpdateProps` 的比較都看到伺服器送來的值。兩條都走 shim 新發佈的第三個
+> helper `__WOOW_INGRESS_MARKUP_IN_VALUE__`：唯讀 html 欄位的值是 OWL 的 `Markup` 物件，而 #210 的
+> `__WOOW_INGRESS_MARKUP_IN__` 對非字串原樣回傳，直接套用會是沉默的 no-op。靜態層契約在
+> `odoo18ce/tests/test_ingress_readonly_html_viewer.py`（含兩個 pattern 的測量，以及兩條路徑在
+> globals 有／無兩種情況下的執行）。`U-A6` 的探測清單**不**擴充，`innerHTML` 一途仍記 accepted。
+
 > **網站頁「Edit this content」連結的前綴重複（`U-A2`）已於 2026-09-30 修正（#211），Live 重跑待
 > Deploy。** `/@/<website path>` 是 Odoo 18 從網站頁進後台的 route，也是唯一一條**尾段本身就是網站
 > 路徑**的 route。Odoo 把已經帶前綴的 `location.pathname` 接進那個尾段，shim 的 `path()` 只認第 0 位
