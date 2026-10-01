@@ -1174,7 +1174,24 @@ def test_the_probe_fails_when_the_request_class_cannot_be_built_over_an_environ(
     with loader_has(install_patch(declared, request)):
         verdict, sentence = probe.url_swap(odoo_http_module(HTTPRequest))
     assert verdict == probe.UNPROVABLE
-    assert "could not be built" in sentence
+    # Named for the class that would not build, not for the one built over it.
+    assert sentence.startswith("odoo.http.HTTPRequest could not be built over a bare environ")
+
+
+def test_the_probe_names_a_request_that_will_not_take_the_wrapper() -> None:
+    """The other construction, reported as itself: the wrapper built and the
+    request Odoo puts it in did not."""
+
+    class Request:
+        def __init__(self, httprequest, session):
+            self.httprequest = httprequest
+
+    probe, ingress = load_probe(), ingress_request()
+    declared, _ = odoo_website_visitor(ingress)
+    with loader_has(install_patch(declared, ingress)):
+        verdict, sentence = probe.url_swap(odoo_http_module(request_class=Request))
+    assert verdict == probe.UNPROVABLE
+    assert sentence.startswith("odoo.http.Request could not be built over an HTTPRequest")
 
 
 def test_the_probe_reports_an_odoo_http_that_no_longer_has_what_it_reads() -> None:

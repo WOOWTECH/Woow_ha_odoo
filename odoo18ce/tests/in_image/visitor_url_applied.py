@@ -184,10 +184,17 @@ def probe_request(http):
     for attribute in ("HTTPRequest", "Request"):
         if not hasattr(http, attribute):
             return None, f"odoo.http has no {attribute}; the request it builds cannot be read here"
+    # Each step is named for itself: a nightly whose HTTPRequest wants more
+    # than an environ is not its Request wanting more than an HTTPRequest, and
+    # the build step promises to name what it could not read.
     try:
-        return http.Request(http.HTTPRequest(dict(PROBE_ENVIRON))), None
+        httprequest = http.HTTPRequest(dict(PROBE_ENVIRON))
     except Exception as exc:
-        return None, f"odoo.http.Request could not be built over a bare environ: {exc!r}"
+        return None, f"odoo.http.HTTPRequest could not be built over a bare environ: {exc!r}"
+    try:
+        return http.Request(httprequest), None
+    except Exception as exc:
+        return None, f"odoo.http.Request could not be built over an HTTPRequest: {exc!r}"
 
 
 def loaded(function):
