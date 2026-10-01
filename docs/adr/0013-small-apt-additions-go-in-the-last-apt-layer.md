@@ -233,6 +233,36 @@ writes it, and the blob it pushes is then the blob it caches. CI keeps
 reading both and writing only the Actions one, because its blobs never
 reach an image (#219).
 
+## Postscript (2026-10-01, #156)
+
+"The pinned `.deb`'s `Depends` becomes a tracked file" is now the bump
+bot's work rather than a human's. The weekly `odoo-bump` reads `Depends`
+out of the same package it hashes and **merges** it into
+`odoo18ce/odoo-deb-depends.txt`
+(`.github/scripts/odoo_deb_depends.py`): a regenerate would lose the
+`deferred`, `dropped`, `alternatives` and `satisfied-by` notes, which is
+state the `.deb` cannot supply, and turn the guard test red three ways.
+The two bullets above are what it writes — a gained dependency gets a
+`deferred` note and the static tier stays green, a lost one that layer
+(a) still installs gets a `dropped` note — and the pull request body
+names both for the reviewer, because nothing fails to tell them.
+
+One question the bot does not answer: which member of an alternatives
+group apt resolves. That lives in `apt-cache policy` inside the base
+image, not in the `.deb`, so a group whose recorded member the new
+spelling no longer names — or one the list records nothing of — is left
+exactly as it is and asked about in the pull request body. Meanwhile apt
+resolves the group while installing the `.deb`, into layer (b) — the cost
+the bullet above already accepts for a dependency the list misses.
+
+The same reasoning makes the merge step unable to fail the bump. A step
+that fails stops the ones after it, so a list the merge cannot read would
+cost the weekly bump its pull request and its image build — the gate this
+ADR and ADR 0002 both refuse to spend on the dependency list. The script
+and the step therefore fail open: the list is left as it is, the pull
+request body says a human is needed and why, and the cost is once again
+layer (b) size.
+
 ## Postscript (2026-10-01, #215)
 
 "Base-image bumps are split from Odoo bumps" is now the shape of the

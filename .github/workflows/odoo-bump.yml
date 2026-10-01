@@ -3,7 +3,10 @@ name: Odoo nightly bump
 
 # Weekly: find the newest Odoo 18.0 nightly package and the newest dated
 # Debian base-image tag, and propose each of them in a pull request of its
-# own. The PR gate then proves the image still builds. A human merges them;
+# own. The Odoo one also merges the new package's `Depends` into
+# odoo18ce/odoo-deb-depends.txt, so that layer (a) and the list keep agreeing
+# without a human noticing first (issue #156).
+# The PR gate then proves the image still builds. A human merges them;
 # see docs/adr/0002-odoo-nightly-bumps-are-human-merged.md for why neither is
 # merged automatically, and its postscript for why they are two pull requests:
 # the base image sits below every layer, so a base bump is a full ~700 MiB
@@ -113,8 +116,8 @@ jobs:
               "and CI will not start until each is closed and reopened"
           fi
 
-      # The Odoo path: the two ODOO_DEB_* lines and the CHANGELOG, never
-      # the base-image tag.
+      # The Odoo path: the two ODOO_DEB_* lines, the dependency list and the
+      # CHANGELOG, never the base-image tag.
 
       - name: Pin the new Odoo package
         if: steps.odoo.outputs.changed == 'true'
@@ -126,10 +129,57 @@ jobs:
           echo "downloading ${url}"
           curl -fsSL --max-time 900 "${url}" -o /tmp/odoo.deb
           sha="$(sha256sum /tmp/odoo.deb | cut -d' ' -f1)"
-          rm -f /tmp/odoo.deb
+          # The package stays for the next step, which reads its `Depends`
+          # out of the same bytes this SHA256 covers, and deletes it.
           sed -i -E "s/^ARG ODOO_DEB_VERSION=\"18\.0\.[0-9]{8}\"$/ARG ODOO_DEB_VERSION=\"${NEWEST}\"/" "${ADDON_DIR}/Dockerfile"
           sed -i -E "s/^ARG ODOO_DEB_SHA256=\"[0-9a-f]{64}\"$/ARG ODOO_DEB_SHA256=\"${sha}\"/" "${ADDON_DIR}/Dockerfile"
           grep -E '^ARG ODOO_DEB_(VERSION|SHA256)=' "${ADDON_DIR}/Dockerfile"
+
+      - name: Merge the new package's Depends into the dependency list
+        id: depends
+        if: steps.odoo.outputs.changed == 'true'
+        env:
+          NEWEST: ${{ steps.odoo.outputs.newest }}
+        run: |
+          set -euo pipefail
+          # Read with the command odoo-deb-depends.txt documents at its own
+          # `# source:` block, and *merge*: the `deferred`, `dropped`,
+          # `alternatives` and `satisfied-by` notes are state the `.deb`
+          # cannot supply, and a regenerate would lose them and turn the
+          # layer guard red three ways (issue #156, ADR 0013).
+          #
+          # Nothing here may fail the step. The steps after a failed one do
+          # not run, so the pin would never reach its pull request and the
+          # base-image path would never start -- the whole weekly bump lost
+          # to a list whose entire cost is layer (b) size. The script fails
+          # open by itself; this covers a `dpkg-deb` that cannot read the
+          # package and any other surprise, by leaving the list as it is and
+          # saying so in the body.
+          report=/tmp/odoo-depends.md
+          if ! { dpkg-deb -f /tmp/odoo.deb Depends > /tmp/odoo-depends.field \
+            && python3 .github/scripts/odoo_deb_depends.py \
+              --list "${ADDON_DIR}/odoo-deb-depends.txt" \
+              --dockerfile "${ADDON_DIR}/Dockerfile" \
+              --depends-field /tmp/odoo-depends.field \
+              --deb-version "${NEWEST}" \
+              --report "${report}"; }; then
+            echo "::warning::the new package's Depends could not be read or" \
+              "merged; odoo-deb-depends.txt is left as it is"
+            git checkout HEAD -- "${ADDON_DIR}/odoo-deb-depends.txt"
+            cat > "${report}" <<'UNMERGEABLE'
+          - **Left untouched, needs a human**: the new package's `Depends` could not be read or merged, so the dependency list is exactly as it was. Layer (a) and the guard test still agree, and a dependency this nightly moved is resolved by apt into layer (b) instead, which costs a few MiB and nothing else (ADR-0013).
+          UNMERGEABLE
+          fi
+          rm -f /tmp/odoo.deb
+          # A gained dependency is recorded `deferred` and nothing fails --
+          # ADR 0013, because the build jobs need the static tier -- so the
+          # pull request body is where the reviewer learns of it.
+          {
+            echo 'report<<DEPENDS_REPORT_EOF'
+            cat "${report}"
+            echo 'DEPENDS_REPORT_EOF'
+          } >> "$GITHUB_OUTPUT"
+          git diff --stat -- "${ADDON_DIR}/odoo-deb-depends.txt"
 
       - name: Record the Odoo bump under Unreleased
         if: steps.odoo.outputs.changed == 'true'
@@ -164,7 +214,11 @@ jobs:
 
             The SHA256 in the Dockerfile was computed from the downloaded package. The PR gate builds the image; the entry is recorded under `## Unreleased` in the CHANGELOG and ships with the next Release.
 
-            This pull request touches only the two `ODOO_DEB_*` lines, so the Release that carries it re-sends the Odoo layer and the small ones above it, not the whole image; ADR-0013 holds the measured figures. The Debian base image is bumped separately, in its own `base-image` pull request.
+            ### `odoo-deb-depends.txt`
+
+            ${{ steps.depends.outputs.report }}
+
+            This pull request touches only the two `ODOO_DEB_*` lines and, when the new package's dependencies moved, that list — so the Release that carries it re-sends the Odoo layer and the small ones above it, not the whole image; ADR-0013 holds the measured figures. The Debian base image is bumped separately, in its own `base-image` pull request.
 
             Before merging, consider a Deploy of the resulting image on the woowtech host first. Closing this PR is fine; the next weekly run opens a fresh one.
           labels: dependencies
@@ -177,11 +231,12 @@ jobs:
         run: |
           set -euo pipefail
           # create-pull-request commits what it finds to its own branch and
-          # leaves the workspace on the branch it started from, so these two
+          # leaves the workspace on the branch it started from, so these three
           # files should already be unchanged; restoring them from HEAD --
           # index included -- makes sure. Anything else still dirty would ride
           # along in the base-image pull request, so stop instead.
-          git checkout HEAD -- "${ADDON_DIR}/Dockerfile" "${ADDON_DIR}/CHANGELOG.md"
+          git checkout HEAD -- "${ADDON_DIR}/Dockerfile" "${ADDON_DIR}/CHANGELOG.md" \
+            "${ADDON_DIR}/odoo-deb-depends.txt"
           if [ -n "$(git status --porcelain)" ]; then
             git status --porcelain
             echo "::error::the workspace still carries changes the base-image PR must not include"
