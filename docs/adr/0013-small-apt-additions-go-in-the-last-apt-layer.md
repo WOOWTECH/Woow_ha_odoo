@@ -233,6 +233,16 @@ writes it, and the blob it pushes is then the blob it caches. CI keeps
 reading both and writing only the Actions one, because its blobs never
 reach an image (#219).
 
+## Postscript (2026-10-01, #215)
+
+"Base-image bumps are split from Odoo bumps" is now the shape of the
+workflow and not only of the merge decision: `odoo-bump` proposes the
+Odoo pin and the base-image tag in two pull requests, each touching only
+its own `ARG` lines, so a routine weekly bump can never cost the full
+download a base change costs. The bullet above describes what the bot did
+before that. See the postscript on
+[ADR 0002](0002-odoo-nightly-bumps-are-human-merged.md).
+
 ## References
 
 - [ADR 0001](0001-distribution-follows-release-tags.md) — what a user

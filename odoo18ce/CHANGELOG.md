@@ -22,6 +22,25 @@
   The two comments that carried a figure now point at the measurement. No
   behaviour change and no version bump.
 
+### Changed
+- The weekly bump bot proposes the Debian **base-image** bump in a pull
+  request of its own, labelled `base-image`, instead of folding it into the
+  weekly Odoo pin. The base sits below every layer of the image, so moving its
+  tag rebuilds all of them -- layer (a) included, which an Odoo bump leaves
+  alone -- and the Release that carries it is a full download of the whole
+  image, about 700 MiB, for every host on both architectures. That is the
+  download that failed twice in #153, and bundling it with the routine weekly
+  bump made the routine bump cost the same. `odoo-bump.yml` now runs two
+  independent paths: the Odoo path rewrites only the two `ODOO_DEB_*` lines on
+  `chore/odoo-nightly-bump` as before, and the base-image path starts from a
+  clean tree, rewrites only `BASE_IMAGE_TAG` on `chore/base-image-bump`, and
+  says in its body what merging it costs and that it is merged quarterly or on
+  a security need. Neither is auto-merged (ADR 0002, new postscript), the
+  base-image pull request is rewritten in place rather than reopened, and both
+  bullets go through one CHANGELOG writer that merges into whatever
+  `## Unreleased` already holds. CI only: no change to the image and no
+  version bump.
+
 ### Fixed
 - Under Ingress, a website page view again records the page's **Canonical
   URL**. The fix that first shipped in 0.4.6 was applied on the test host and
