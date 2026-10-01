@@ -9,6 +9,7 @@ import json
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 from urllib.parse import urlsplit
 
@@ -1852,6 +1853,118 @@ class ViewportTests(unittest.TestCase):
         for bad in ("390", "x844", "0x844", "390x844x2", "abc"):
             with self.assertRaises(ValueError, msg=bad):
                 parse_viewport(bad)
+
+
+# --------------------------------------------------------------------------
+# The decision record: what a "read-only" run bounds, and what it does not.
+# --------------------------------------------------------------------------
+
+ROOT = Path(__file__).resolve().parents[1]
+REPO = ROOT.parent
+ADR_0012 = REPO / "docs/adr/0012-sweeps-verify-on-the-test-host.md"
+LIVE_TIER = REPO / "docs/agents/live-tier.md"
+ADAPTER = ROOT / "tests/e2e_menu_action_adapter.py"
+
+
+def text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def collapsed(body: str) -> str:
+    """`body` with its line wrapping collapsed, so a quoted sentence matches
+    wherever the paragraph it lives in happens to break."""
+    return " ".join(body.split())
+
+
+def github_anchor(heading: str) -> str:
+    """GitHub's fragment for a markdown heading: lowercased, punctuation
+    dropped, spaces hyphenated. Lets a test derive a cross-document link's
+    anchor from the heading it points at instead of spelling it twice."""
+    kept = [char for char in heading.lower() if char.isalnum() or char in " -_"]
+    return "".join(kept).strip().replace(" ", "-")
+
+
+class ReadOnlyBoundaryRecordTests(unittest.TestCase):
+    """#227: the two writes no route list can bound are recorded, not re-derived."""
+
+    def postscript(self) -> str:
+        """The #227 postscript alone, wrapping collapsed."""
+        heading = "Postscript (2026-10-01, #227)"
+        found = [part for part in text(ADR_0012).split("\n## ")
+                 if part.startswith(heading)]
+        self.assertEqual(len(found), 1,
+                         "the boundary is recorded as a dated postscript on ADR 0012")
+        return collapsed(found[0])
+
+    def test_the_record_says_read_only_means_no_business_writes_not_zero_rows(self) -> None:
+        # The phrase this postscript exists to stop over-promising: ADR 0012's
+        # own body says the standing permission "covered read-only Live runs
+        # only", and a crawl of a website page has never been zero-write.
+        tail = self.postscript().lower()
+        self.assertIn("no business writes", tail)
+        self.assertIn("zero rows", tail)
+
+    def test_the_record_cites_both_mechanisms_where_they_were_read(self) -> None:
+        # Both were read out of the pinned `.deb` during #212's audit. A
+        # statement with no citation is one the next sweep has to re-derive.
+        tail = self.postscript()
+        self.assertIn("ir_http.py:203", tail)             # visitor tracking, any tracked page
+        self.assertIn("templates.xml:13", tail)           # the header cart link's own write
+        self.assertIn("/shop/products/recently_viewed_update", tail)   # the page's own JS
+
+    def test_the_record_says_which_subcommand_each_write_reaches(self) -> None:
+        # `crawl` navigates only `/odoo/action-<id>`, whose response is the web
+        # client bootstrap and not a tracked page, so the tracking write is
+        # `open`'s alone. Worth the sentence: the Issue that asked for this
+        # record had it the other way round.
+        tail = self.postscript()
+        # Every driver that opens a website page makes the tracking write, so
+        # the record names the hand-check driver beside `open` -- its `visit` is
+        # the run that exists to make it. A review round caught the first
+        # version calling it `open`'s alone.
+        self.assertIn("the adapter's `open` with a website target", tail)
+        self.assertIn("e2e_ingress_hand_checks.py", tail)
+        self.assertIn("`crawl` is the exception", tail)
+        self.assertIn("/odoo/action-<id>", tail)
+        self.assertIn("a crawl never makes it", tail)
+
+    def test_the_original_decision_is_untouched(self) -> None:
+        adr = collapsed(text(ADR_0012))
+        self.assertIn("an Iteration of a Sweep may deploy to the test host and run "
+                      "Live-tier checks that write, without asking first", adr)
+        self.assertIn("**Data a run creates is named after the run.**", adr)
+        self.assertIn("## Postscript (2026-10-01, #228)", adr)
+        # The postscripts are appended in the order they were decided.
+        self.assertLess(adr.index("## Postscript (2026-10-01, #228)"),
+                        adr.index("## Postscript (2026-10-01, #227)"))
+
+    def test_the_route_list_points_at_the_record_rather_than_carrying_it(self) -> None:
+        # #227's second acceptance criterion, as something a test can hold: the
+        # route list names the writes and sends the reader to the record, and
+        # the reasoning lives in the record rather than in both places.
+        adapter = collapsed(text(ADAPTER))
+        self.assertIn("docs/adr/0012-sweeps-verify-on-the-test-host.md", adapter)
+        self.assertIn("ir_http.py:203", adapter)
+        # What moved out, so the only copy is not back in the comment: the
+        # reasoning about why bounding the tracking write would be a decision
+        # about the guarantee as a whole.
+        for moved in ("the read-only guarantee as a whole",
+                      "would mean bounding every website page"):
+            with self.subTest(moved):
+                self.assertNotIn(moved, adapter)
+                self.assertIn(moved, collapsed(text(ADR_0012)))
+
+    def test_the_operational_half_points_at_the_same_record(self) -> None:
+        # An operator reading what a run leaves behind on the host finds the
+        # ambient rows there, not only in a test module's comment. The anchor is
+        # derived from the heading rather than spelled a second time, so
+        # rewording the heading fails here instead of leaving a link that
+        # silently lands at the top of the ADR.
+        heading = "Postscript (2026-10-01, #227)"
+        self.assertIn("\n## %s\n" % heading, text(ADR_0012))
+        live = text(LIVE_TIER)
+        self.assertIn("website.track", live)
+        self.assertIn("0012-sweeps-verify-on-the-test-host.md#%s" % github_anchor(heading), live)
 
 
 if __name__ == "__main__":

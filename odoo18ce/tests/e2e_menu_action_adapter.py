@@ -496,35 +496,26 @@ class GetWrite(NamedTuple):
 # re-runs the handler on a read/write cursor, so a `readonly` route that writes
 # writes anyway.
 #
-# Three limits on what that buys, none of them something a list keyed on the
-# target's route can see. The controller is not the whole request:
-# `views/templates.xml:13` calls `website.sale_get_order()` from the cart link of
-# every page header, which writes the same way `/shop/checkout` does
-# (models/website.py:457), so a page whose controller writes nothing can still
-# write. The target's GET is not the whole navigation: the page's own JavaScript
-# posts on its own account, and `/shop/products/recently_viewed_update`
-# (controllers/main.py:2288) writes a `website.visitor` from a product page
-# nobody asked to write. And the route navigated is not always the route
-# answered: `page.goto` follows a 30x, so a route that redirects into a listed
-# one writes behind the guard -- no `website_sale` route does (the set is closed
+# Four limits on what that buys, none of them something a list keyed on the
+# target's route can see. Three are writes a GET makes outside its own
+# controller, and what they mean for the read-only guarantee -- "no business
+# writes", not zero rows -- is recorded in
+# `docs/adr/0012-sweeps-verify-on-the-test-host.md` (postscript 2026-10-01,
+# #227) rather than here: the cart link of every page header calls
+# `website.sale_get_order()` from the template (`views/templates.xml:13`) and
+# writes the way `/shop/checkout` does (models/website.py:457); the page's own
+# JavaScript posts on its own account
+# (`/shop/products/recently_viewed_update`, controllers/main.py:2288); and
+# serving a tracked page writes a `website.visitor` and a `website.track` row
+# (`website/models/ir_http.py:203`), gated on the template the response rendered
+# rather than on the route, which is why no key can bound it. The fourth limit
+# is this list's own: the route navigated is not always the route answered,
+# since `page.goto` follows a 30x, so a route that redirects into a listed one
+# writes behind the guard -- no `website_sale` route does (the set is closed
 # under its own redirects), which is a property of today's Odoo and not of this
 # list. `project`'s two outdated portal prefixes are redirects of exactly that
 # shape and are listed below for it; they are the ones that were found, not the
 # ones that exist.
-#
-# One write outside the list was read and left outside it:
-# `website/models/ir_http.py:188-205` creates or touches a `website.visitor` on
-# a GET whose response is a tracked page, whichever module serves it. It is out
-# because it is not a property of the route: the gate is `view.track` on the
-# template the response happened to render (`response_template` in its
-# `qcontext`), so the same route can write on one website and not on another, and
-# no list keyed on a route can say which. Bounding it would mean bounding every
-# website page an `open` target can name -- `/`, `/contactus`, `/shop` -- which
-# is a decision about whether `open` may judge a website page off
-# `WRITE_DATABASE` at all, and that is the read-only guarantee as a whole and not
-# this seam. (`crawl` is not affected either way: it navigates only
-# `/odoo/action-<id>`, whose response is the web client bootstrap and not a
-# tracked page, so it never makes this write.)
 #
 # Most of the `/my/...` keys below are one write seen from several routes.
 # `_get_page_view_values` (portal/controllers/portal.py:437) calls

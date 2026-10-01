@@ -174,6 +174,15 @@ maintenance bootstrap writes `web.base.url`, `web.base.url.freeze` and
   when a decision changes their meaning, annotate them, do not rewrite them.
 - **A sentence about the host's state** in the pull request, when the run
   leaves fixtures behind or changes a setting.
+- **Rows no run asked for, on any run that opens a website page.** Serving a
+  tracked page writes a `website.visitor` and a `website.track` row, and the
+  page's own markup and JavaScript write too — so "read-only" here means **no
+  business writes**, not zero rows. Which writes, where they were read, and why
+  no targets file can bound them:
+  [ADR 0012, postscript 2026-10-01 (#227)](../adr/0012-sweeps-verify-on-the-test-host.md#postscript-2026-10-01-227).
+  Quote the guarantee that way in an evidence README; do not promise zero rows,
+  and do not delete the rows to make it true — #235's run exported the ones it
+  cleared and said why.
 
 ## When it cannot run
 

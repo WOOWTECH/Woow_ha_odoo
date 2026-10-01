@@ -111,3 +111,73 @@ means nothing, and that the guard — not the reviewer of the evidence — is
 where that is caught. The rule, each route's class and the reason for it live
 beside the list in the adapter; `ensure_cart` leaving a non-empty cart alone
 is the precedent it was read off.
+
+## Postscript (2026-10-01, #227)
+
+What "read-only" bounds, written down because this record uses the phrase
+twice and every Issue that quotes the boundary inherits it. A read-only Live
+run makes **no business writes**. It does not leave **zero rows**, and never
+has on a database with `website` installed.
+
+The target-seam guard #212 built — `GET_WRITING_ROUTES` in
+`odoo18ce/tests/e2e_menu_action_adapter.py`, under the convergence rule of the
+postscript above — bounds **navigations to routes that write by design**: a
+route a targets file names, whose write was read out of the pinned `.deb` and
+classified. Two writes sit outside that seam, were read during the same audit,
+and cannot be bounded by any list keyed on a route:
+
+1. **Visitor tracking fires on any tracked page's GET.**
+   `website/models/ir_http.py:203` calls
+   `website.visitor._handle_webpage_dispatch` with the `website.page` the
+   response rendered, whichever module served the route; that upserts a
+   `website.visitor` row and inserts a `website.track` row in one statement
+   (`website/models/website_visitor.py:288-300` and `:239-251`). The gate is
+   `:202`, and what it tests is the `track` flag of the template in the
+   response's `qcontext` rather than the route — the page record itself is often
+   `False` — so the same route writes on one website and not on another. The
+   gate's other half, `not request.env.cr.readonly`, bounds nothing on this
+   add-on: cont-init configures no `db_replica_host`, so
+   `Registry.cursor(readonly=True)` hands back a read/write cursor and the write
+   lands anyway; the full reading of that is beside `GET_WRITING_ROUTES`.
+   Bounding this write would mean bounding every website page a target can name
+   (`/`, `/contactus`, `/shop`), which is a decision about whether `open` may
+   judge a website page off `WRITE_DATABASE` at all, and that is the read-only
+   guarantee as a whole rather than one seam in it. Any run that opens a website
+   page makes this write: the adapter's `open` with a website target, and the
+   hand-check driver's `visit` (`odoo18ce/tests/e2e_ingress_hand_checks.py`),
+   which exists to make it — `U-C5` for #160 is judged from the row, not from
+   the page. `crawl` is the exception: it navigates only `/odoo/action-<id>`,
+   whose response is the web client bootstrap and not a tracked page, so a crawl
+   never makes it.
+2. **A page writes through its own markup and its own JavaScript.** The
+   `website_sale` header renders the cart link from `website.sale_get_order()`
+   (`website_sale/views/templates.xml:13`, on any request whose session carries
+   no `website_sale_cart_quantity`), and that moves the draft order onto the
+   logged-in partner when the two disagree, exactly as `/shop/checkout` does
+   (`website_sale/models/website.py:457`) — so a page whose controller writes
+   nothing can still write. And the target's GET is not the whole navigation: a
+   product page's own JavaScript calls `/shop/products/recently_viewed_update`
+   (`website_sale/static/src/js/website_sale_recently_viewed.js:44`, whose route
+   is `website_sale/controllers/main.py:2288`), which creates a
+   `website.visitor` and records a viewed product — once per product per half
+   hour, since a cookie guards the call. What a loaded page requests on its own
+   account is not a target, and no pre-flight over a targets file sees it.
+
+Both are harmless **by content**, which is why the guarantee is restated rather
+than withdrawn: they carry page-view telemetry and no business state — no
+order, invoice, journal entry or setting, nothing a parity verdict reads and
+nothing another run's fixtures stand on. They are also not new. The
+2026-10-01 #235 run counted them in its own record: 19 new `website.track`
+rows written by its page views
+(`docs/testing/evidence/2026-10-01-issue-235/README.md`), and check 5 of that
+run — #160's visitor-URL check, a `U-C5` reading — *reads* one of those rows
+back as its measurement. For that check the ambient write is the instrument,
+not only a side effect.
+
+So the guarantee is quoted as **no business writes**, not as zero rows, and the
+boundary above is unchanged: nothing here widens what a run may touch. Making
+a run *name* these ambient writes in its own evidence — a `website.track` count
+delta per run — is a feature with an Issue of its own (#256), not part of this
+statement. `GET_WRITING_ROUTES`' comment points here rather than carrying the
+only copy, and the citations are read from the Odoo the add-on pins
+(`ODOO_DEB_VERSION`, `odoo18ce/Dockerfile`) the way that list's are.

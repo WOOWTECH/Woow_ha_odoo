@@ -157,6 +157,29 @@
   `U-A2`, which is the shape #211 is about. `tests/test_e2e_ingress_hand_checks.py`
   pins that case and the rest of the pure parts. Live tier only: no change to
   the image and no version bump.
+- **What a "read-only" Live run actually bounds is now written down**, as a dated
+  postscript on `docs/adr/0012-sweeps-verify-on-the-test-host.md` (2026-10-01,
+  #227), with the operational pointer in `docs/agents/live-tier.md`. A read-only
+  run makes **no business writes**; it does not leave **zero rows**, and never
+  has on a database with `website` installed. The target-seam guard #212 built
+  bounds *navigations to routes that write by design*, and two writes sit outside
+  that seam which no list keyed on a route can bound. Visitor tracking upserts a
+  `website.visitor` and inserts a `website.track` row on any tracked page's GET
+  (`website/models/ir_http.py:203`), gated on the template the response rendered
+  rather than on the route — so every run that opens a website page makes it,
+  `open` with a website target and the hand-check driver's `visit` alike, and
+  only `crawl` never does. And a page writes through its own markup and
+  JavaScript: the header cart link (`website_sale/views/templates.xml:13`) and
+  `/shop/products/recently_viewed_update`
+  (`website_sale/static/src/js/website_sale_recently_viewed.js:44`). Both carry
+  page-view telemetry and no business state, which is why the guarantee is
+  restated rather than withdrawn, and the 2026-10-01 #235 run had already counted
+  them: 19 new `website.track` rows, one of which its `U-C5` check reads back as
+  its measurement. The `GET_WRITING_ROUTES` comment now points at that postscript
+  instead of carrying the only copy, and is nine lines shorter for it. Making a
+  run *name* those ambient writes in its own evidence — a count delta per run —
+  is #256. Documentation and one static test: no behaviour change, no image
+  change, no version bump.
 
 ### Fixed
 - The markup strip that keeps the Ingress prefix out of a saved html field now
