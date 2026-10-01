@@ -236,6 +236,8 @@ changed, and no fixture was created.
 ## What this run does **not** say
 
 - **The `/shop/payment` GET write is still unreported.** `/shop/payment` is on `GET_WRITING_ROUTES` ("stores a shop_warning on the cart") and #224 — still open — is the issue that makes such a write appear in the record's `writes` field. Until it lands, `_judge` compares `none` against `none` for that write, so check 4's `PARITY` is a verdict on the screen and its literals, not on what the GET wrote. #243's run, which is written to come after #224, is where that is measured. #228 landed later the same day (PR #252) and classifies `/shop/payment` as **convergent**, so the target this run used is one that rule still allows and the run is reproducible on the adapter as it now stands.
+
+  *Annotated 2026-10-01, after this run: **#224 landed too** (PR #254), so the adapter now reports that GET write in the record's `writes` field and `_judge` compares it across surfaces. The records in this directory are what this run measured on the adapter as it stood, and are not rewritten; what changes is that the gap named above is closed for the next run, which is #243's.*
 - **The two-session peer-snapshot path is untouched.** Check 2 is single-session. #234 is the other one; it closed on the Static tier later the same day (PR #251) and left `e2e_collab_peer_snapshot_live.py` behind unrun, with its Live measurement registered to #243.
 - **#237's and #238's own Live boxes are not ticked here.** Both fixes are in this image, but their checks belong to #243's register and nothing in #235's six overlaps them: #210's checks are the **editable** html field, #237's are the readonly one, #238's are the legacy editor.
 
