@@ -94,6 +94,33 @@
   silently broke would otherwise pass in the one tier nothing watches.
 
 ### Changed
+- The weekly bump bot keeps `odoo18ce/odoo-deb-depends.txt` current. It reads
+  `Depends` out of the same Odoo package it hashes and **merges** it into the
+  committed list instead of regenerating it: the `deferred`, `dropped`,
+  `alternatives` and `satisfied-by` notes are state the `.deb` cannot supply
+  -- which member of an alternatives group bookworm's apt resolves is a fact
+  about the base image, `python3-lxml-html-clean | python3-lxml` resolving to
+  the *second* name -- and a regenerate loses them and turns the layer guard
+  red three ways. A dependency the nightly **gains** is appended with a
+  `deferred` note naming the bump, so layer (a) is untouched and the static
+  tier stays **green**: the build jobs need it, and a red one would cost the
+  bump pull request the image build ADR 0002's human merge rests on. One the
+  nightly **loses** keeps its line with a `dropped` note while layer (a) still
+  installs it, and goes only when (a) does not. The pull request body gains a
+  section naming what was added, removed, deferred or dropped, and says so in
+  one line when nothing moved. The one question the bot refuses is which
+  member of an alternatives group apt resolves: a group whose recorded member
+  the new spelling no longer names, or one the list records nothing of, is left
+  untouched and asked about in the body, because the answer is in `apt-cache
+  policy` inside the base image and not in the `.deb`. Nothing in the step can
+  fail the bump either -- a failed step stops the ones after it, so an
+  unreadable `Depends` or a list the merge cannot parse would cost the weekly
+  bump its pull request and its image build; instead the list is left as it is
+  and the body says a human is needed. The merge is a script with unit tests,
+  down to a no-op against the real `Depends` of the currently pinned package,
+  and tests that hold its readers equal to the guard test's. Issue #156,
+  parent #153, ADR 0013 (new postscript). CI only: no change to the image and
+  no version bump.
 - The weekly bump bot proposes the Debian **base-image** bump in a pull
   request of its own, labelled `base-image`, instead of folding it into the
   weekly Odoo pin. The base sits below every layer of the image, so moving its
