@@ -141,6 +141,18 @@
   prefix was. Its pure parts are tested at the Static tier
   (`tests/test_e2e_collab_peer_snapshot.py`), including that the prefix shape it
   looks for is the gateway's own.
+- The **Live tier** gained a driver for the Ingress checks that are an action
+  rather than a screen: `tests/e2e_ingress_hand_checks.py`, with `visit`,
+  `editbtn` and `todosave`. The menu/action adapter judges one screen against
+  the same screen on the other surface, and three things #235 had to see are
+  not that shape -- a page view whose result is a `website.track` row, a click
+  that has to land in the web client, and a save whose result is in
+  `project.task.description`. The driver borrows the adapter's own
+  `SurfaceDriver`, so the Ingress session, the database reading and the
+  `Masker` that hides credentials and origins are the ones every other record
+  is written with; it holds no decision of its own, because what each reading
+  means is the evidence README's judgement. Live tier only: no change to the
+  image and no version bump.
 
 ### Fixed
 - The markup strip that keeps the Ingress prefix out of a saved html field now
