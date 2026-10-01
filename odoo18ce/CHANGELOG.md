@@ -3,6 +3,39 @@
 ## Unreleased
 
 ### Added
+- `open`'s write bound now covers the **portal** controllers of every module the
+  add-on installs, not just `website_sale` plus the one `sale` route #212 read on
+  the way. `GET_WRITING_ROUTES` went from 11 prefixes to 22, each new one citing
+  the write it was read from in the pinned Odoo: `/my/invoices/`,
+  `/my/purchase/`, `/my/projects/` and `/my/tasks/` (the portal pager stores an
+  `access_token` on the records either side of the one being viewed --
+  `portal/controllers/portal.py:93`, `:100`, `portal/models/portal_mixin.py:33`
+  -- and the project and task pages also token every attachment they are about to
+  render, `project/controllers/portal.py:209` and `:556`),
+  `/my/invoices/overdue` (which bumps the company's batch payment sequence,
+  `account/models/company.py:272`), `/my/project/` and `/my/task/` (the outdated
+  spellings, which redirect into the two writing pages, and `page.goto` follows a
+  30x), `/mail/unfollow` (`mail/controllers/mail.py:225` unlinks a follower) and
+  `/digest/` (which unsubscribes a user and sets a digest's periodicity on a
+  plain GET).
+- `/chat/` and `/meet/` are bounded too, and they are the first entries on that
+  list that **no query rule bounds**: `mail`'s Discuss public pages create a
+  `mail.guest` and a `discuss.channel.member` from a channel uuid in the path
+  alone (`mail/controllers/discuss/public_page.py:96`), and create the
+  `discuss.channel` itself from an unknown token (`:69`) -- with a
+  `request.env.cr.commit()` on the concurrent-insert path (`:81`) that a rollback
+  cannot take back. The Runtime shim already rewrites the invitation link that
+  leads there (`nginx.conf.template:576`), so it is a route this product
+  navigates. Every other GET write the audit deferred needs a query that
+  `parse_targets` refuses; these two need nothing.
+- The list's comment now records which controllers were read and **found clean**
+  -- every portal list page, `/my/account` and `/my/security` (whose writes are
+  POST-only), the payment result pages, the downloads, the chatter avatar and
+  both rating pages -- which two are clean only on a bare GET (`/payment/pay` and
+  `/my/payment_method` store an invoice token when the query names an
+  `invoice_id`, `account_payment/controllers/payment.py:149`), and where the
+  audit stopped, so the next one does not re-read the same routes and knows to
+  start on `mail`. Guard-only; no behaviour change and no version bump.
 - The static tier measures how much of nginx's 4096-byte configuration token
   buffer the Runtime shim's prefix script has left, and fails while there is
   still room to act. That script is one single-quoted parameter, and every

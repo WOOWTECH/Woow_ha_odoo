@@ -594,6 +594,10 @@ class OpenTargetTests(unittest.TestCase):
                          # A language segment, which Odoo strips before routing:
                          # the ordinary spelling on a multilingual site.
                          "/zh_TW/shop/checkout", "/fr/shop/cart", "/en/website/lang/fr",
+                         # A below-only prefix under a language segment: the
+                         # stripped path is what has to be matched, and the
+                         # trailing slash still has to reach the document page.
+                         "/zh_TW/my/tasks/9", "/fr/my/invoices/overdue",
                          # Dot segments, which the browser resolves before it asks.
                          "/shop/./checkout", "/shop/x/../checkout", "/shop/%2e/checkout",
                          # A backslash, which the browser folds to a slash.
@@ -629,6 +633,82 @@ class OpenTargetTests(unittest.TestCase):
                 ):
                     self.assertEqual(get_writing_route("/shop/payment/validate"), narrow)
                     self.assertEqual(get_writing_route("/shop/payment"), wide)
+
+    def test_the_portal_routes_the_audit_read_a_write_on_are_bounded(self) -> None:
+        # The portal audit this list records in its comment: one prefix per
+        # write it read, and a route the audit read and found clean stays off.
+        # A detail page's prefix ends in a slash, so the list page above it --
+        # a parity path of its own, and a page the audit read as clean -- stays
+        # open while every document under it is bounded.
+        for route, prefix in (
+            ("/my/orders/7", "/my/orders/"),
+            ("/my/invoices/7", "/my/invoices/"),
+            ("/my/purchase/7", "/my/purchase/"),
+            ("/my/projects/7", "/my/projects/"),
+            ("/my/projects/7/task/9", "/my/projects/"),
+            ("/my/tasks/9", "/my/tasks/"),
+            # The outdated spellings, which redirect into the two above --
+            # `page.goto` follows a 30x, so the landing page's write is this
+            # route's write.
+            ("/my/project/7/task/9", "/my/project/"),
+            ("/my/task/9", "/my/task/"),
+            ("/mail/unfollow", "/mail/unfollow"),
+            ("/digest/3/unsubscribe", "/digest/"),
+            ("/digest/3/set_periodicity", "/digest/"),
+            # The Discuss public pages, whose write a path alone reaches: no
+            # query to bound it, unlike the rest of the deferred writes.
+            ("/chat/tok_1", "/chat/"),
+            ("/chat/tok_1/general", "/chat/"),
+            ("/chat/7/tok_1", "/chat/"),
+            ("/meet/tok_1", "/meet/"),
+        ):
+            with self.subTest(route):
+                self.assertEqual(get_writing_route(route), prefix)
+        # Read route by route and found clean: the portal list pages, the
+        # account and security pages, the payment and donation forms, and the
+        # rating pages, whose GET stopped writing in Odoo 18.
+        for clean in ("/my", "/my/home", "/my/account", "/my/security",
+                      "/my/orders", "/my/quotes", "/my/invoices", "/my/purchase", "/my/rfq",
+                      "/my/projects", "/my/tasks", "/my/timesheets",
+                      # Near misses of the two outdated prefixes: `/my/task/`
+                      # must not reach `/my/tasks`, which writes nothing.
+                      "/my/task", "/my/project",
+                      "/terms", "/payment/pay", "/payment/confirmation", "/payment/status",
+                      "/my/payment_method", "/donation/pay", "/rate/tok_1/5",
+                      # The Discuss page that renders without the persona step,
+                      # which is why `/discuss/` is not a key.
+                      "/discuss/channel/7"):
+            with self.subTest(clean):
+                self.assertIsNone(get_writing_route(clean))
+
+    def test_a_narrower_prefix_under_a_below_only_one_is_the_one_reported(self) -> None:
+        # `/my/invoices/overdue` sits under `/my/invoices/`, which ends in a
+        # slash, and writes something else -- it bumps a company sequence rather
+        # than touching an invoice -- so it carries its own key and the longest
+        # match has to report it. The invoice list page above both stays open.
+        self.assertEqual(get_writing_route("/my/invoices/overdue"), "/my/invoices/overdue")
+        self.assertEqual(get_writing_route("/my/invoices/7"), "/my/invoices/")
+        self.assertIsNone(get_writing_route("/my/invoices"))
+
+    def test_a_portal_target_is_refused_off_the_write_database(self) -> None:
+        # Each prefix the portal audit added, at the seam that uses it: a target
+        # naming one is refused before a browser opens, on the database the
+        # write is not allowed on.
+        for route in ("/my/invoices/7", "/my/invoices/overdue", "/my/purchase/7",
+                      "/my/projects/7", "/my/projects/7/task/9", "/my/tasks/9",
+                      "/my/project/7/task/9", "/my/task/9",
+                      "/mail/unfollow", "/digest/3/unsubscribe",
+                      "/chat/7/tok_1", "/meet/tok_1"):
+            with self.subTest(route):
+                targets = parse_targets([
+                    json.dumps({"module": "m", "target": route, "expect_selector": "#x"}),
+                ])
+                with self.assertRaises(RuntimeError) as caught:
+                    require_write_database(targets, "odoo_test")
+                self.assertIn(route, str(caught.exception))
+                self.assertIn(get_writing_route(route), str(caught.exception))
+                # And permitted on the one database ADR 0012 allows it on.
+                require_write_database(targets, WRITE_DATABASE)
 
     def test_the_get_writing_guard_did_not_move_into_the_operation_enum(self) -> None:
         # The enum only ever names reads: NON_MUTATING_OPERATIONS is every
