@@ -106,7 +106,7 @@ def swap_url(httprequest, value):
     return None
 
 
-def restore_url(httprequest, arrived, was_cached) -> None:
+def restore_url(httprequest, arrived, was_cached, report=True) -> None:
     """Put the address the browser really used back on the request.
 
     The rest of the response, and the next handler on this request, must see
@@ -119,8 +119,9 @@ def restore_url(httprequest, arrived, was_cached) -> None:
     whatever the dispatch was already raising, so nothing escapes it. A request
     that will not take its own address back is left reading as the Canonical
     URL for the whole of the rest of the response, which is wrong for every
-    handler after this one, so that is reported -- unless the replacement had
-    not landed on it either, in which case there was nothing to put back.
+    handler after this one, so that is reported -- unless ``report`` is off,
+    which is the caller saying it has a better account of this request than
+    "it was replaced and could not be put back": nothing was replaced.
     """
     if not was_cached:
         try:
@@ -129,13 +130,8 @@ def restore_url(httprequest, arrived, was_cached) -> None:
         except Exception:
             pass
     refused = swap_url(httprequest, arrived)
-    if refused is None:
+    if refused is None or not report:
         return
-    try:
-        if getattr(httprequest, URL_ATTRIBUTE) == arrived:
-            return
-    except Exception:
-        pass
     _logger.warning(
         "the request's url was replaced for this page view and could not be put back, so the "
         "rest of this response reads it as something other than %s: %s, on %s.%s",
@@ -174,8 +170,10 @@ def dispatch_on_the_canonical_url(original, self, website_page):
         # the address it arrived on, would make the swap a silent no-op: the
         # page view is then stored as it arrived, and said so, rather than
         # looking corrected. Whatever a refused assignment did land on the
-        # request is put back first.
-        restore_url(httprequest, arrived, was_cached)
+        # request is put back first, and silently: the warning below is the
+        # account of this request, and "it was replaced and could not be put
+        # back" would be the opposite of what happened.
+        restore_url(httprequest, arrived, was_cached, report=False)
         _logger.warning(
             "the request's url could not be replaced, so this page view records %s: "
             "%s, on %s.%s",

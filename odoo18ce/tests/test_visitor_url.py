@@ -1041,8 +1041,9 @@ def test_a_url_left_on_the_request_after_the_page_view_is_reported(caplog) -> No
 
 def test_a_replacement_that_never_landed_is_reported_once_and_not_twice(caplog) -> None:
     """The refused forward path puts back whatever an assignment may have
-    landed. When it landed nothing, there is nothing to report about putting it
-    back, and a second warning per page view would be noise."""
+    landed, and says nothing about having done it: nothing was replaced, so
+    "it was replaced and could not be put back" would be the opposite of what
+    happened, and a second warning per page view would be noise."""
 
     class ReadOnlyRequest:
         url = property(lambda self: f"{HA_BASE}/contactus")
@@ -1056,28 +1057,43 @@ def test_a_replacement_that_never_landed_is_reported_once_and_not_twice(caplog) 
     reported = [record.message for record in caplog.records]
     assert len(reported) == 1
     assert "could not be replaced" in reported[0]
+    assert "could not be put back" not in reported[0]
 
 
-def test_the_reason_the_swap_was_refused_is_the_one_reported() -> None:
-    """Two shapes of refusal, two reasons: one raised, one read back as the
-    address it arrived on. Reporting either as the other is how the 0.4.6 log
-    read -- it named werkzeug, and werkzeug was not the problem."""
+def test_a_put_back_asked_not_to_report_stays_quiet_however_it_fails(caplog) -> None:
+    """Whether anything landed on the request is the caller's to know, not the
+    put-back's: a request whose url stops being readable once written gives it
+    nothing to go on, so a guess there is how a log says "it was replaced" of a
+    request nothing was replaced on."""
+
+    class UnreadableAfterWriting:
+        def _read(self):
+            if self.written:
+                raise RuntimeError("this request will not say what it holds")
+            return f"{HA_BASE}/"
+
+        def _write(self, value):
+            self.written += 1
+
+        url = property(_read, _write)
+
+        def __init__(self):
+            self.written = 0
+
     request = ingress_request()
     declared, _ = odoo_website_visitor(request)
     module = install_patch(declared, request)
 
-    class Raising:
-        def _refuse(self, value):
-            raise AttributeError("read-only")
+    with caplog.at_level("WARNING"):
+        module.restore_url(UnreadableAfterWriting(), f"{HA_BASE}/", False, report=False)
+    assert caplog.records == []
 
-        url = property(lambda self: f"{HA_BASE}/", _refuse)
-
-    class Swallowing:
-        url = property(lambda self: f"{HA_BASE}/", lambda self, value: None)
-
-    assert "assigning it raised" in module.swap_url(Raising(), PUBLIC_BASE)
-    assert module.swap_url(Swallowing(), PUBLIC_BASE) == f"it reads back as {HA_BASE + '/'!r}"
-    assert module.swap_url(HttpRequest(f"{HA_BASE}/"), PUBLIC_BASE) is None
+    # With the report on -- the path the dispatch takes once a replacement
+    # really did land -- the same failure is a warning.
+    with caplog.at_level("WARNING"):
+        module.restore_url(UnreadableAfterWriting(), f"{HA_BASE}/", False)
+    assert len(caplog.records) == 1
+    assert "could not be put back" in caplog.records[0].message
 
 
 # --- The build tier performs the swap, it does not read a flag ---------------
@@ -1451,10 +1467,11 @@ def test_the_probe_reads_odoos_own_request_class_and_builds_none_of_its_own() ->
 
 
 def test_the_build_step_tells_a_broken_swap_from_one_it_could_not_perform() -> None:
-    """Two probe verdicts, two messages: one says a page view would record the
-    Home Assistant host, the other says this Odoo changed shape and nothing is
-    known about the patch. One message for both is the container-versus-patch
-    conflation `probe_reported` exists to avoid."""
+    """Three probe verdicts, three messages: a page view would record the Home
+    Assistant host, a page view would be right and the rest of its response
+    wrong, or this Odoo changed shape and nothing is known about the patch. One
+    message for all of them is the container-versus-patch conflation
+    `probe_reported` exists to avoid."""
     probe, (_, run) = load_probe(), visitor_url_step()
     for verdict in (probe.NOT_REPLACEABLE, probe.NOT_PUT_BACK, probe.UNPROVABLE):
         assert f"^visitor-url: {verdict}" in run, verdict
