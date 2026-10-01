@@ -929,6 +929,22 @@ secret。欄位與判定由 `odoo18ce/tests/test_e2e_collab_peer_snapshot.py` �
 不佔守恆檢查的分母，§10.6 的 76 項數字不因它而動。兩個 surface 走的是同一批頁面，所以兩邊的
 delta 不相等只是先後順序的產物（第一輪建的 visitor 列第二輪已經在了），不是落差。
 
+**第四個 schema：`woow.ingress-markup/v1`（#243，2026-10-01）。** `#243` 這一輪的四列
+（#237／#238／#239／#240）都不是 `odoo-parity-evidence/v1` 的形狀。那個 schema 一筆記一個計畫項目、
+兩個 surface 各一欄，由 `diff` join 之後判定；這裡每筆記**一次互動**，而且判準**依 surface 不同**——
+同一個 root-relative `src`，Ingress 要它落在前綴底下，Public 要它落在 origin 根上，兩邊相等才是失敗，
+所以不能用兩面對 diff 的方式判。每筆另外帶一個或兩個「存回去的欄位值」（`project.task.description`、
+`res.users.signature`、`mailing.mailing.body_arch` 與 `body_html`），那是 parity schema 沒有地方放的東西。
+圖片判定是 `UNDER-PREFIX`／`AT-ORIGIN-ROOT`／`NOT-LOADED`／`ESCAPED`／`ABSENT`（最差者勝，`ABSENT`
+最重——空畫面不是乾淨畫面，而是沒量到），存檔判定是 `CLEAN`／`PREFIX-STORED`。去識別化沿用
+`woow.peer-snapshot.v1` 的 `redact`，前綴形狀也沿用它那一份（由 gateway template 推出並被測試綁住），
+所以這個模組不會長出第二條會漂走的 regex。逃逸判定一律委派 `adapter.is_prefix_escape`，不在這裡重寫——
+會漏掉的那個形狀是**雙前綴**：它仍在前綴底下，所以「有沒有離開前綴」會答沒有。與前兩個附加 schema 一樣
+**不**進 `conservation`：這八個 check 都是第 9 節各自那一列的 Live 欄，不是共用層那 76 項，§10.6 的守恆
+數字不因它而動。欄位與判定由 `odoo18ce/tests/test_e2e_ingress_markup_live.py` 固定；瀏覽器步驟**沒有**
+靜態測試，模組開頭有說，理由與 `e2e_collab_peer_snapshot_live.py` 相同。
+
+
 落差報告最終彙整為：
 
 ```
