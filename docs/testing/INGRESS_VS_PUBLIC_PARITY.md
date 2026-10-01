@@ -172,7 +172,7 @@ L0  通道               ← nginx 監聽、header、壓縮、快取、緩衝、
 | `RC-12` | **shim 未攔截的注入路徑** | shim 掛在 `fetch`／`XHR.open`／`history`／`setAttribute`（含 `xlink:href`）／`setAttributeNS`／若干 DOM 屬性 setter／`window.open`／`Worker`／`WebSocket`／`navigator.sendBeacon`／`EventSource`／`new Audio`／`HTMLMediaElement.src`／`HTMLSourceElement.src`；以標記插入的 HTML（`innerHTML`／`insertAdjacentHTML`／`outerHTML`）、`style` 屬性與動態 `<style>` 文字（含 CSS `@import`）**依決議不覆蓋**（ADR 0004 2026-09-28 附記，#169：HTML 編輯器與網站編輯器由這些路徑存回記錄內容，掛鉤會把帶 token 的 Ingress 前綴寫進資料庫） | 見 `U-A6`：covered 途徑逃逸＝shim 缺陷；accepted 途徑逃逸＝已決議，由該畫面自己的 Literal rewrite 處理（#158 已於 2026-09-28 完成；#170 網站編輯器 Blocks 面板縮圖亦於 2026-09-28 完成，見 `U-D2`：`style` 屬性的值會回寫資料庫，所以改在**繪製處**——Ingress 資產 location 上 OWL 樣板文字的一條 Shipped rewrite——而非在回應上）；**動作說明 HTML**（`ir.actions.act_window` 的 `help` 欄位，由 `/web/action/load` 的 JSON 回應送達、經 `markup()` 以 `innerHTML` 插入）已由 Ingress 監聽器上一個專屬 `location = /web/action/load` 覆蓋：它是 Ingress `location /` 的複本，另加 `href`／`src`／`action`／`data-src`／`srcset` 五個屬性的**跳脫引號**規則（`src=\"/` → `src=\"$safe_ingress_path/`），並在每條之前先寫一條 `$safe_ingress_path` 的同值規則以免重複加前綴（sub_filter 在同一位元組上以**書寫順序**決勝，先寫者勝）；Public 監聽器與其他 JSON 回應不受影響（ADR 0004 動作說明附記）。**另有兩條路由同樣送出 markup()'d 的 `help`，但刻意不納入**：`/web/action/run` 與 `/web/dataset/call_button/<model>/<method>` 回的是呼叫當下算出來的 action，其 `context` 會帶記錄內容當作精靈預設值（`marketing_card` 的 `action_share()` 即是：`context.default_body_arch` 含 `<img src="/web/image/card.campaign/…">`，使用者一存就寫進 `mailing.mailing`）；替它們加前綴等於把 Supervisor token 寫進資料庫，正是本決議要避免的事。經由這兩條路由顯示的 `help` 仍會逃逸，這是兩害相權後較輕的一邊。這條**不在 `U-A6` 的探測清單內**，`innerHTML` 探測仍記為 accepted：驗證它的是 Static tier 的 `test_ingress_action_help.py`，加上 2026-09-28 在測試主機上對本分支本地建置所跑的一對 Ingress 爬蟲（`docs/testing/evidence/2026-09-28-issue-158/`：拿掉該 `location` 的對照組在兩個問卷選單上各記 `route_escape`／`http_4xx_5xx`／`console_error` = 8，加回去後全為 0，四張圖回 200）；**兩面的 `PARITY` 判定仍欠**：本地 add-on 沒有 `public_url`，要等有 Release 的那一輪；媒體來源（`new Audio`、`HTMLMediaElement.src`、`HTMLSourceElement.src`）已於 2026-09-28 由 shim 包裝（#159，ADR 0004 媒體來源附記），並於 2026-09-29 加入 `U-A6` 探測清單成為一條 **covered** 途徑 `media`（#203）：一次探測同時走三個 setter、同指一個 probe path，任一 wrapper 回歸即記逃逸。2026-09-29 在 0.4.5 上重跑，`media` 有發出請求且未逃逸、`U-A6` 維持 `PARITY`（run `WOOW-PARITY-20260929T053445Z`，見 `docs/testing/evidence/2026-09-29-issue-203/ua6-media-checks.jsonl`）。此外亦有 Static tier 的 shim 契約測試（`test_ingress_media_sources.py`），與報到台（`ir.actions.client` 609）在爬蟲裡回到 `PARITY` |
 | `RC-13` | **HA 宿主干擾** | HA 自身的登入逾時、授權框替換、鍵盤快捷鍵、主題、iframe 尺寸、Supervisor 請求上限與逾時 | 操作到一半 iframe 被換成授權框、快捷鍵無效、大檔上傳被截斷 |
 | `RC-14` | **內容型別敏感改寫** | sub_filter 對 HTML／JSON／JS／CSS 規則不同；shim 僅注入 `text/html` | 改錯型別 → JSON 破損、預覽白畫面（v0.3.34/0.3.35 即此類） |
-| `RC-15` | **深連結不可分享** | ingress URL 內含 token，換人／換裝置不通用，且外送即外洩 | 書籤失效、貼給同事打不開、token 進入郵件與紀錄 |
+| `RC-15` | **深連結不可分享** | ingress URL 的路徑內含 token，換人／換裝置不通用，且外送即外洩。**那串 token 是 add-on 的 `ingress_token`**（每個已安裝 add-on 一份、重裝或還原備份才換），不是 per-user 的 session——per-user 的 session 是另一個 secret，走 `ingress_session` cookie，不出現在路徑裡（2026-10-01 由 #234 查證，見 ADR 0004 第三個 2026-10-01 附記）。貼給別人打不開是**那個 cookie** 擋的，不是路徑不同；路徑那串仍然是憑證，外送即外洩的判斷不變 | 書籤失效、貼給同事打不開、token 進入郵件與紀錄 |
 
 ---
 
@@ -473,6 +473,47 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 下開啟並儲存郵件設計器的 body，兩面 `route_escape`／`http_4xx_5xx`／`console_error` 皆為 0，且
 > `mailing.mailing` 的 `body_arch` **與** `body_html` 存後仍是 root-relative。
 
+> **協作 peer snapshot 的前綴（`project.task.description` 的 token write）已於 2026-10-01 修正
+> （#234，ADR 0004 的第三個 2026-10-01 附記），Live 量測由 #243 執行。** 這是 ADR 0004 開放清單裡
+> 唯一一個「寫進資料庫」而不只是畫面錯的項目：To-do 的 description 是 `'collaborative': true`，協作
+> 傳輸送的是**序列化節點**（每個 attribute 的值逐位元組，`history_plugin.js:1168`），後加入的 peer 會
+> 拿到先加入那個 peer 的整份文件作為 snapshot，接收端用 `node.setAttribute(key, value)` 套上去
+> （`:1198`）——而 shim 包了 `setAttribute`，`path()` 認不出不屬於本頁的前綴，會**再加一次**，所以接收
+> 端的 editable 裡是 `<本頁前綴><對方前綴>/web/image/…`。
+>
+> **issue 的前提要修正，而結論不變。** 路徑裡的 token 是**add-on 的** `ingress_token`（Supervisor 的
+> app user-data schema 用 `secrets.token_urlsafe` 預設一次，每個安裝的 add-on 一份），不是使用者的也
+> 不是 session 的；per-user 的 session 是另一個 secret，走 `ingress_session` cookie，不出現在路徑裡。
+> 本 repo 自己的 adapter 也是這樣用的：prefix 只從 `/addons/<slug>/info` 讀一次，所有 session 共用
+> （`e2e_menu_action_adapter.py:789`）。Supervisor 那一側的依據（2026-10-01 讀 `main`）：
+> `supervisor/apps/validate.py` 的 `SCHEMA_APP_USER`、`supervisor/apps/app.py` 的
+> `ingress_token`／`ingress_entry`、`supervisor/ingress.py` 的 `create_session`——本 repo 測不到，所以
+> 列出出處讓下一個人自己查。**同一個讀法也改了本計劃的兩列**：`RC-15` 與 `G-07` 原本把那串 token 稱為
+> *session* token；嚴重度與結論都不變（路徑裡仍是憑證，貼給同事仍打不開），擋住的是對方沒有的
+> `ingress_session` cookie，而不是每個人路徑不同。所以**同一個 add-on 的兩個 Ingress session 前綴相同**，#210 的
+> 字面 strip 本來就蓋得住那一組；會出現「本頁沒見過的前綴」的情況是：add-on 重裝或還原備份換了
+> token、第二個 add-on／第二套 HA 連同一個資料庫，以及**另一個 peer 在 Public origin**——那一面沒有
+> shim 也沒有 rewrite（ADR 0003 的對照組），收到什麼就存什麼，也沒有東西可以剝。Ingress 這邊擋不住
+> 那一次寫入，能做的是**下一次 Ingress 存檔時把記錄治好**。
+>
+> 修法是一個運算式：`__WOOW_INGRESS_MARKUP_OUT__` 除了去掉 `__INGRESS_PATH__` 的每一次出現，也去掉
+> 每一個符合 nginx `$safe_ingress_path` map 形狀的前綴。兩半都要：gateway 交給本頁的那個不論形狀都要
+> 去掉（#210 的契約用的 `/api/hassio_ingress/token` 正是 map 會拒絕的形狀，而它**原封不動**仍然通
+> 過），形狀那半是給本頁沒見過的前綴。形狀只寫在 map 那一處，`test_ingress_peer_snapshot_prefix.py`
+> 從 template 把兩邊都解出來比對，字元類與上下界都比。比上界長一個字元的 token **整個不動**（pattern
+> 尾端的 lookahead），因為把 URL 中間挖掉比原本那個已經量過、可回復的逃逸更糟。`IN` 刻意**不**學這個
+> 形狀：對方的前綴不在 render 時治好，所以 peer 傳來的圖在存檔並重新載入前仍是 404——治在「出」那一
+> 邊，token 的危害在那裡。沒有新 global、沒有新 `sub_filter`，#210 的五個點與 #238 的四個 `OUT` 規則
+> 一次全覆蓋（含郵件那個會寄出去的 `body_html`）。`U-A6` 的探測清單**不**擴充。
+>
+> **Live（由 #243 執行）**：#234 原本寫的「兩個 Ingress session 開同一張 to-do」照跑，但要**記下兩邊
+> 的前綴**而不是假設不同——同一個 add-on 會相同，那正是這一組本來就乾淨的原因；會產生 foreign 前綴
+> 的組合是「一個 Ingress session ＋ 一個 Public origin session 開同一筆記錄」。腳本已留下且
+> **尚未執行過**：`odoo18ce/tests/e2e_collab_peer_snapshot_live.py`（`probe` 不存檔只看傳輸到不到、
+> `run` 才存檔並把 `description` 讀回來分類；輸出一律把前綴換成 session 標籤，不會有 token 落地），
+> 純函式部分由 `test_e2e_collab_peer_snapshot.py` 在靜態層跑過。讀回來存著 foreign 前綴才把 #234
+> 升為 `severity: blocker`（parity plan 1.3），在那之前維持 `severity: important`。
+
 > **網站頁「Edit this content」連結的前綴重複（`U-A2`）已於 2026-09-30 修正（#211），Live 重跑待
 > Deploy。** `/@/<website path>` 是 Odoo 18 從網站頁進後台的 route，也是唯一一條**尾段本身就是網站
 > 路徑**的 route。Odoo 把已經帶前綴的 `location.pathname` 接進那個尾段，shim 的 `path()` 只認第 0 位
@@ -677,7 +718,7 @@ E 群組的判定**不只比較兩邊**：產出物裡只要有 HA 位址、相�
 | `G-04` | `@web/core/utils/urls` 的 `url()`／`getOrigin()` 在 Odoo 18 一律退回瀏覽器的 protocol + host（session info 無 `origin` 欄位），而同一個函式同時組出 `/web/image`、`/web/content` 等**站內**位址 | **Important** | RC-9 | `.6` 服務的 `web.assets_backend`：`getOrigin()` 取 `browser.location` 的 `protocol`／`host`，`url()` 以 `getOrigin(options.origin ?? session.origin)` 取基底 | **`STRUCTURAL`**（ADR 0006）。改寫這個共用函式會把站內位址一起變成絕對公開網址並離開 Ingress，正是 ADR 0006 否決「改寫 `session.origin`」的理由。承接路徑：凡經 `url()` 組出、要給外人開的網址，一律從 **Public origin** 產生。2026-09-22 盤點 `.6` 實際服務的 15 個 bundle，目前沒有任何對外分享連結走這條路；日後若出現，逐一評估能否以精確表達式補丁，否則留在本列。追蹤 #70 |
 | `G-05` | ~~Ingress-only 且 Supervisor 取不到 LAN 位址（Canonical URL 為空）時，Website 分享 snippet 仍把 `location.href` 交給社群網站，其中含 Supervisor 的 ingress token~~ **已修正（2026-09-23）** | ~~**Important**~~ | RC-9 | `nginx.conf.template` 的 `const currentUrl=` 補丁現在**無論有沒有 Canonical URL 都剝掉 ingress 前綴** | ADR 0006 已補一段修正，把這條列為「空值即今日行為」的唯一例外：今日行為是把憑證交給第三方，那不值得保留。無 Canonical URL 時連結仍指向 HA 主機、仍然打不開，但不再帶 token。另兩條補丁不受影響。促成重審的是 #108——空值的形態比原先估計的容易達到 |
 | `G-06` | ~~add-on 啟動**之後**才安裝 `website`（例如從 Apps 畫面裝），預設網站的 `domain` 一直是空的，直到下一次重啟；Ingress 下首頁的 `canonical`／`og:url`／`og:image`／`twitter:image` 與 `sitemap.xml` 因此以 HA 位址為基底~~ **已修正並在測試主機驗證（2026-09-25，`docs/testing/evidence/2026-09-25-issue-164/`）** | ~~**Important**~~ | RC-9 | `odoo-maintenance.py` 只在 add-on 啟動當下 `website` 已在 registry 時才寫 `website.domain`（「website module not installed」）；#143 跑 `odoo_parity` 時 `P-5` FAIL、`U-D8` GAP | Rewrite scan service 每輪多一步 **Canonical URL catch-up**（`odoo-canonical-catchup`）：以 `psql` 讀每個資料庫的預設網站 `domain`，空值或與 Canonical URL 不同時，才用同一支 maintenance library 經 `odoo shell` 補寫；穩態每輪不載入 registry。add-on log 出現 `maintenance db=<name>: … website.domain=<Canonical URL>`。追蹤 #164；Ingress 下 `sitemap.xml` 仍跟著請求位址走，已由 `AD-8` 收錄為核准分歧（#172） |
-| `G-07` | Odoo 自己在瀏覽器開出的新分頁（問卷的 Test 按鈕、任何開新分頁的連結、「在新分頁開啟」），在 ingress 下位址必然是 `<HA_BASE><INGRESS_PREFIX>/…`，帶著 Supervisor 的 session token | **`STRUCTURAL`**（原始發現記為 Important；依第 1.4 節，證據記錄的 severity 為 `none`） | RC-15 | `docs/testing/evidence/2026-09-28-issue-183/checks.jsonl` 的 `check:U-C23\|shared\|generic`（run `WOOW-PARITY-20260928T070408Z`，2026-09-28，#183）：verdict `STRUCTURAL`、severity `none`、`public_path` `<PUBLIC_BASE>/survey/<token>`；ingress 分頁在 `<HA_BASE><INGRESS_PREFIX>/survey/<token>`，public 分頁在 `<PUBLIC_BASE>/survey/<token>`，兩邊開的是同一頁。原始發現見 `docs/testing/evidence/2026-09-25-issue-143/checks.jsonl`（run `WOOW-PARITY-20260925T043539Z`）：同樣的形態，但記於決定之前，verdict 仍是 `GAP`／`important` | **Public origin 承接**：ingress 的每一個頂層頁面都在 Supervisor 路徑之下，新分頁因此只有兩種結果——帶 token，或離開 Ingress 去別的 origin。Runtime shim 只夠得到 `window.open`，`target="_blank"` 錨點、中鍵與「在新分頁開啟」走的是 `href`，而 `href` 必須保持前綴才能在頁內導覽；分頁落到別的 origin 還要求第二次登入，LAN fallback 下離開內網就打不開，通道斷線時也打不開。ADR 0006 對 Ingress 內位址的判斷相同，故不改 shim、不改 Literal rewrite；要給別人開的同一個畫面，從 Public origin 取位址分享。使用者文件見 `odoo18ce/DOCS.md`「What only the Public origin can do」。決定本身見 #168（已關閉）；依新規則的補跑已於 2026-09-28 完成（#183） |
+| `G-07` | Odoo 自己在瀏覽器開出的新分頁（問卷的 Test 按鈕、任何開新分頁的連結、「在新分頁開啟」），在 ingress 下位址必然是 `<HA_BASE><INGRESS_PREFIX>/…`，帶著 Supervisor 的 ingress token（是 add-on 的那一份；per-user 的 session 走 cookie，見 `RC-15`） | **`STRUCTURAL`**（原始發現記為 Important；依第 1.4 節，證據記錄的 severity 為 `none`） | RC-15 | `docs/testing/evidence/2026-09-28-issue-183/checks.jsonl` 的 `check:U-C23\|shared\|generic`（run `WOOW-PARITY-20260928T070408Z`，2026-09-28，#183）：verdict `STRUCTURAL`、severity `none`、`public_path` `<PUBLIC_BASE>/survey/<token>`；ingress 分頁在 `<HA_BASE><INGRESS_PREFIX>/survey/<token>`，public 分頁在 `<PUBLIC_BASE>/survey/<token>`，兩邊開的是同一頁。原始發現見 `docs/testing/evidence/2026-09-25-issue-143/checks.jsonl`（run `WOOW-PARITY-20260925T043539Z`）：同樣的形態，但記於決定之前，verdict 仍是 `GAP`／`important` | **Public origin 承接**：ingress 的每一個頂層頁面都在 Supervisor 路徑之下，新分頁因此只有兩種結果——帶 token，或離開 Ingress 去別的 origin。Runtime shim 只夠得到 `window.open`，`target="_blank"` 錨點、中鍵與「在新分頁開啟」走的是 `href`，而 `href` 必須保持前綴才能在頁內導覽；分頁落到別的 origin 還要求第二次登入，LAN fallback 下離開內網就打不開，通道斷線時也打不開。ADR 0006 對 Ingress 內位址的判斷相同，故不改 shim、不改 Literal rewrite；要給別人開的同一個畫面，從 Public origin 取位址分享。使用者文件見 `odoo18ce/DOCS.md`「What only the Public origin can do」。決定本身見 #168（已關閉）；依新規則的補跑已於 2026-09-28 完成（#183） |
 
 ---
 
@@ -713,6 +754,17 @@ E 群組的判定**不只比較兩邊**：產出物裡只要有 HA 位址、相�
 
 **去識別化硬性規則**：不得寫入憑證、ingress token、原始 URL、query string、cookie 值、
 真實客戶資料。URL 一律以「基底代號 + 規範路徑」記錄（例：`<PUBLIC_BASE>/my/orders/42`）。
+
+**另一個 schema：`woow.peer-snapshot.v1`（#234，2026-10-01）。** 協作 peer snapshot 那一次量測不是「一個
+plan item 在兩個 surface 上的同一個控制項」，所以塞不進上面那個 schema：它有**兩個 session**（
+`--pair ingress-ingress` 時兩邊都在 Ingress，只有一個 surface），要記的是每個 session 各自的前綴、傳輸
+到底有沒有送到、以及**存進記錄的是誰的前綴**——parity 記錄沒有欄位放這些。所以
+`odoo18ce/tests/e2e_collab_peer_snapshot_live.py` 自帶一個 schema 與自己的 `report`，**不**進
+`conservation`（它不是 U/AD/G 項目，不佔守恆檢查的分母；#243 的那一列是 hand-driven check，與 #235 的六
+個 check 同一種記法）。上面的去識別化規則一樣適用，而且更嚴：每個前綴一律換成所屬 session 的標籤
+（`<ingress:A>`／`<ingress:B>`／`<ingress:unknown>`），所以記錄能說出「存到的是誰的前綴」而不帶那串
+secret。欄位與判定由 `odoo18ce/tests/test_e2e_collab_peer_snapshot.py` 固定，schema 名稱與本節這一段由同
+一個測試綁在一起。
 
 落差報告最終彙整為：
 

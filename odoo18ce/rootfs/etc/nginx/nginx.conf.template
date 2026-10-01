@@ -29,6 +29,22 @@ http {
         https secure;
         default nosecure;
     }
+    # What an Ingress prefix is. Home Assistant's path is
+    # `/api/hassio_ingress/<token>`, and the token is the *add-on's*
+    # `ingress_token` -- one persisted secret per installed add-on, not one per
+    # user and not one per session (the session is a separate secret, and it
+    # travels in the `ingress_session` cookie). A request whose
+    # `X-Ingress-Path` does not match this is served with no prefix at all, so
+    # this map decides which prefixes exist.
+    #
+    # It has a second reader: the markup strip of issue #234
+    # (`$ingress_markup_global_shim`) removes any prefix of **this** shape from
+    # a value on its way to a record, and not only the one the gateway handed
+    # the page -- a collaborative peer's snapshot, or a record the Public
+    # origin stored, can carry another token. The two patterns are held
+    # together by `tests/test_ingress_peer_snapshot_prefix.py`, which derives
+    # both from this file; change the shape here and that test says where else
+    # it is read.
     map $http_x_ingress_path $safe_ingress_path {
         default "";
         "~^/api/hassio_ingress/[A-Za-z0-9_-]{16,128}$" $http_x_ingress_path;
@@ -274,6 +290,37 @@ http {
     # occurrence of it in a record is the harm and not content worth keeping
     # -- including one a user typed, which the test says out loud.
     #
+    # **Every occurrence of a prefix, not of the prefix** (issue #234). `P` is
+    # the one the gateway handed this page, and a value on its way to a record
+    # can carry another: the To-do description is `'collaborative': true`, and
+    # the collaboration transport ships serialised attributes byte for byte,
+    # which the receiving peer applies through `setAttribute` -- so the sending
+    # page's prefix arrives in the receiver's editable and the receiver's save
+    # is what would store it. The token in it is the add-on's rather than the
+    # user's, so two sessions of one add-on share it and `P` already covered
+    # that pair; a prefix `P` does not match arrives when the add-on's token is
+    # not the one in the value -- a reinstall or a restored backup mints a new
+    # one, a second add-on or a second Home Assistant can reach the same
+    # database, and a peer on the Public origin stores what it was sent and has
+    # no shim to strip anything. So `mS` is the shape `$safe_ingress_path`
+    # validates (the map at the top of this file is the authority; a test holds
+    # the two together) and the strip removes every match of it as well as
+    # every occurrence of `P`.
+    #
+    # Both strips are needed, and in that order. `P` is removed whatever its
+    # shape, because the gateway is what decided it was a prefix and the value
+    # is in the page; the shape strip is for prefixes this page never saw. A
+    # token longer than the map accepts is left **alone** rather than cut to
+    # the bound -- the trailing lookahead is what refuses it -- because a
+    # URL with bytes taken out of its middle is worse than the escape, which
+    # is measured and reversible. And the strip stays the only place that
+    # knows the shape: `IN` does not heal a foreign prefix, it stacks this
+    # page's on top as it always did, so a picture a peer sent is fetched from
+    # a path that 404s until the value is saved and reloaded. Rewriting
+    # somebody else's address into ours on the way *in* would be changing a
+    # value that is still the record's; the record is made clean on the way
+    # out, where the token is the harm.
+    #
     # `__WOOW_INGRESS_MARKUP_IN_VALUE__(value)` is `IN` for a value that may be
     # an OWL `Markup` object rather than a string (added by issue #237 for the
     # readonly `HtmlViewer`; issue #238 made it the helper **every** markup
@@ -309,7 +356,7 @@ http {
     # before this line otherwise, and every rewritten expression falls back to
     # the untouched value when the globals are absent.
     map $upstream_http_content_type $ingress_markup_global_shim {
-        default 'var mT=/<[A-Za-z][^<>]*>/g,mA=/(^|\s|[\x22\x27])([^\s=\/<>\x22\x27]+)(\s*=\s*)(?:([\x22\x27])((?:(?!\4)[^<>])*)(?=\4)|[^\s<>\x22\x27]+)/g,mU=function(n){return ",src,href,action,data-src,".indexOf(","+n.toLowerCase()+",")>=0},mF=function(m,s,n,e,q,v){return q&&mU(n)&&v.charAt(0)==="/"&&v.charCodeAt(1)!==47&&v.charCodeAt(1)!==92?s+n+e+q+path(v):m},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mA,mF)}):h},mIV=function(v){return v instanceof String?new v.constructor(mIn(v.toString())):mIn(v)},mOut=function(s){return typeof s==="string"&&s.indexOf(P)>=0?s.split(P).join(""):s},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_IN_VALUE__",mIV);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
+        default 'var mT=/<[A-Za-z][^<>]*>/g,mA=/(^|\s|[\x22\x27])([^\s=\/<>\x22\x27]+)(\s*=\s*)(?:([\x22\x27])((?:(?!\4)[^<>])*)(?=\4)|[^\s<>\x22\x27]+)/g,mU=function(n){return ",src,href,action,data-src,".indexOf(","+n.toLowerCase()+",")>=0},mF=function(m,s,n,e,q,v){return q&&mU(n)&&v.charAt(0)==="/"&&v.charCodeAt(1)!==47&&v.charCodeAt(1)!==92?s+n+e+q+path(v):m},mIn=function(h){return typeof h==="string"?h.replace(mT,function(g){return g.replace(mA,mF)}):h},mIV=function(v){return v instanceof String?new v.constructor(mIn(v.toString())):mIn(v)},mS=/\/api\/hassio_ingress\/[A-Za-z0-9_-]{16,128}(?![A-Za-z0-9_-])/g,mOut=function(s){if(typeof s!=="string")return s;if(s.indexOf(P)>=0)s=s.split(P).join("");return s.replace(mS,"")},mP=function(k,f){try{Object.defineProperty(window,k,{value:f,writable:false,configurable:false,enumerable:true})}catch(e){window[k]=f}};mP("__WOOW_INGRESS_MARKUP_IN__",mIn);mP("__WOOW_INGRESS_MARKUP_IN_VALUE__",mIV);mP("__WOOW_INGRESS_MARKUP_OUT__",mOut)';
     }
 
     map $upstream_http_content_type $ingress_runtime_shim {

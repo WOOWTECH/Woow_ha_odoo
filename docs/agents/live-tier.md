@@ -116,13 +116,23 @@ is a different string from the approved prefix and prompts.
   knows every item, so `report` reconciles a partial run against it.
 
 `e2e_parity_outbound_live.py`, `e2e_pos_offline_live.py`,
-`e2e_menu_action_adapter.py` (`crawl` / `open` / `diff`) and `e2e_settings_ingress.py`
+`e2e_menu_action_adapter.py` (`crawl` / `open` / `diff`),
+`e2e_settings_ingress.py` and `e2e_collab_peer_snapshot_live.py`
 take the same `--env-file`, and the same `--run-id` discipline where they take
 a marker at all — the menu/action adapter mints its own run id and prints it,
 so the id goes in the evidence README rather than on the command line.
 
 Browsers come from Playwright's shared install (`PLAYWRIGHT_BROWSERS_PATH` is
 set in the image). Run headless; `--headed` needs a display nobody has.
+
+**Two sessions on one record** (`e2e_collab_peer_snapshot_live.py`, #234) is the
+one run that is not one browser session. `probe` opens both, says whether the
+collaboration transport delivered and **writes nothing**; `run` saves on the
+receiving session and reads the field back. Run `probe` first: the browser steps
+have never been executed against this host, so it is also how a failure is
+attributed. `--pair ingress-public` drives one session on each surface, which is
+the pair that can carry a foreign Ingress prefix. Its record is a
+`woow.peer-snapshot.v1` and does not feed `conservation` (parity plan §12).
 
 ## Deploying
 
