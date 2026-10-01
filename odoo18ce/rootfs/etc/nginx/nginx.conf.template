@@ -88,8 +88,9 @@ http {
 
     # Injection-way and media-source hooks (issues #169, #159). Not a script of
     # its own: this is the tail of the prefix script's IIFE below, spliced in by
-    # variable reference because that script is a few hundred bytes short of
-    # nginx's 4096-byte parameter buffer. It runs inside the same closure and so
+    # variable reference because that script is close to nginx's parameter
+    # buffer -- `tests/test_nginx_parameter_budget.py` measures how close and
+    # holds a reserve against it. It runs inside the same closure and so
     # prefixes through the same path() helper, and reuses the same prop()
     # property-setter wrapper; there is no second URL helper.
     #
@@ -134,8 +135,11 @@ http {
 
     # The URL helper the shim publishes (issue #174). Not a script of its own
     # either: this is the last statement of the prefix script's IIFE, spliced
-    # in by variable reference because that script is ~200 bytes short of
-    # nginx's 4096-byte parameter buffer. It runs inside the same closure, so
+    # in by variable reference because that script is close to nginx's
+    # parameter buffer -- how close is measured, and the move this splice is
+    # an instance of is described, in `tests/test_nginx_parameter_budget.py`;
+    # no figure is kept here, because the one that was went stale.
+    # It runs inside the same closure, so
     # `path` here is the one helper the fetch, XHR, `window.open` and
     # attribute wrappers already use -- there is no second URL helper, and no
     # value can be prefixed twice by going through both.
