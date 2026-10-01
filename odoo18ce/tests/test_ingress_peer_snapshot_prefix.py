@@ -21,7 +21,11 @@ The Supervisor token in that prefix is the add-on's, not the session's:
 ``ingress_token`` is one persisted value per installed app, defaulted once by
 ``secrets.token_urlsafe`` -- 43 characters of ``[A-Za-z0-9_-]``. The per-user
 *session* is a separate 64-byte secret, and it travels as the ``ingress_session``
-cookie, not in the path. This repository's own adapter says the same thing from
+cookie, not in the path. (Read 2026-10-01 from ``home-assistant/supervisor`` on
+``main``: ``supervisor/apps/validate.py``'s ``SCHEMA_APP_USER``,
+``supervisor/apps/app.py``'s ``ingress_token``/``ingress_entry``, and
+``supervisor/ingress.py``'s ``create_session``. Nothing here can test that; it is
+cited so the next reader can check it.) This repository's own adapter says the same thing from
 the other side: it reads the prefix from ``/addons/<slug>/info`` once and uses
 it for every session (``e2e_menu_action_adapter.py:789``). So two Ingress
 sessions on one add-on edit under the **same** prefix, and #210's literal strip
@@ -113,6 +117,12 @@ STRIP_LOOKAHEAD = re.compile(r"(?P<shape>.*)\(\?!(?P<klass>\[[^\]]+\])\)\Z", re.
 # One driver per case, with the prefix the payload names rendered into the shim
 # *and* into the page URL, so a shape-valid prefix and the #210 prefix can both
 # be driven against the same programs.
+#
+# This is #210's `HARNESS` with the prefix moved into the payload, and it is a
+# copy rather than an import for one reason: taking the prefix from the payload
+# means editing that constant, and this issue's own acceptance criteria say
+# #210's contract keeps passing **untouched**. `SHIM_CONTEXT` and every driver
+# are imported, so the copy is the five lines around them.
 HARNESS = r"""
 const assert = require("node:assert/strict");
 const vm = require("node:vm");
@@ -330,6 +340,19 @@ def test_the_receiving_peer_stacks_this_pages_prefix_on_the_foreign_one() -> Non
                 "shim": rendered_shim(OWN_PREFIX),
                 "program": "result = __WOOW_INGRESS_URL__(%s);" % _js(OWN_PREFIX + PICTURE),
                 "expected": OWN_PREFIX + PICTURE,
+            },
+            {
+                # And two is the most it becomes. An attribute *mutation* from a
+                # peer goes through the wrapper twice -- the collaboration
+                # plugin's `safeSetAttribute` sets the value on a clone, lets the
+                # sanitizer see it and copies it back -- and this is why that
+                # does not stack a third: the value now begins with this page's
+                # prefix, which `path()` recognises.
+                "name": "path() on a value that already carries both",
+                "shim": rendered_shim(OWN_PREFIX),
+                "program": "result = __WOOW_INGRESS_URL__(%s);"
+                           % _js(OWN_PREFIX + FOREIGN_PREFIX + PICTURE),
+                "expected": OWN_PREFIX + FOREIGN_PREFIX + PICTURE,
             },
         ],
     })

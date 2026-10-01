@@ -19,6 +19,7 @@ from pathlib import Path
 
 from e2e_collab_peer_snapshot_live import (
     CLEAN,
+    EVIDENCE_SCHEMA,
     FOREIGN_PREFIX_STORED,
     INGRESS_PREFIX_SHAPE,
     NOT_RUN,
@@ -33,6 +34,7 @@ from e2e_collab_peer_snapshot_live import (
 )
 
 TEMPLATE = Path(__file__).resolve().parents[1] / "rootfs/etc/nginx/nginx.conf.template"
+PARITY_PLAN = Path(__file__).resolve().parents[2] / "docs/testing/INGRESS_VS_PUBLIC_PARITY.md"
 
 # Documentation-only tokens of the length Supervisor's `secrets.token_urlsafe`
 # default produces (43 characters of the class the gateway accepts).
@@ -190,6 +192,20 @@ class RecordTests(unittest.TestCase):
         self.assertEqual(record["field"], "project.task.description")
         self.assertEqual(record["issue"], 234)
         self.assertIn(record["pair"], PAIRS)
+
+    def test_the_schema_is_the_one_the_parity_plan_registers(self):
+        """Section 12 of the plan is where evidence schemas are declared, and
+        this one is not `odoo-parity-evidence/v1` for reasons recorded there.
+        A record whose schema no document names is a record nobody reading an
+        evidence directory can place."""
+        record = evidence_record(**self.kwargs())
+        self.assertEqual(record["schema"], EVIDENCE_SCHEMA)
+        plan = PARITY_PLAN.read_text(encoding="utf-8")
+        section = plan[plan.index("## 12. "):]
+        self.assertIn(EVIDENCE_SCHEMA, section,
+                      "the parity plan's section 12 must register this schema")
+        self.assertIn("conservation", section,
+                      "and say that it does not feed the conservation check")
 
 
 class ReportTests(unittest.TestCase):

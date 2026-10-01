@@ -64,8 +64,16 @@ of reading the field back.
 
 Environment: the names the parity run uses (`--env-file` fills unset ones) --
 HA_BASE_URL, HA_TOKEN, ADDON_SLUG, ODOO_PUBLIC_URL, ODOO_TEST_LOGIN,
-ODOO_TEST_PASSWORD, PARITY_TARGET. `ODOO_PUBLIC_URL` is needed only by
-`--pair ingress-public`.
+ODOO_TEST_PASSWORD, PARITY_TARGET, and `IGNORE_HTTPS_ERRORS=1` for a
+self-signed certificate. The whole list is required even for
+`--pair ingress-ingress`, which never opens the Public origin: this shares the
+parity run's `Env`, and that is the parity run's contract. No artifact directory
+is used -- `run` appends its one record to `--out`, and `probe` prints and keeps
+nothing.
+
+The record is a `woow.peer-snapshot.v1` and deliberately not an
+`odoo-parity-evidence/v1`; the parity plan's section 12 says why, and
+`test_e2e_collab_peer_snapshot.py` holds the two together.
 """
 from __future__ import annotations
 
@@ -78,7 +86,7 @@ import sys
 from typing import Any, Iterable, Mapping, Sequence
 
 from e2e_menu_action_adapter import parse_env_file, sanitize_diagnostic
-from e2e_parity_shared_layers_live import TIMEOUT, Env, IngressSide, PublicSide, artifact_dir
+from e2e_parity_shared_layers_live import TIMEOUT, Env, IngressSide, PublicSide
 
 # The shape of an Ingress prefix, which is nginx's `$safe_ingress_path` map and
 # not a guess: a request whose `X-Ingress-Path` does not match it is served
@@ -87,6 +95,12 @@ from e2e_parity_shared_layers_live import TIMEOUT, Env, IngressSide, PublicSide,
 # cannot drift away from the add-on it is measuring.
 INGRESS_PREFIX_SHAPE = re.compile(r"/api/hassio_ingress/[A-Za-z0-9_-]{16,128}(?![A-Za-z0-9_-])")
 
+# Not `odoo-parity-evidence/v1`. That schema is one record per *plan item*, with
+# one column for each of the two **surfaces** a control was observed on; this
+# measurement has two **sessions** and, in the `ingress-ingress` pair, only one
+# surface -- and what it has to carry is each session's prefix and whose was
+# stored, which a parity record has nowhere to put. Registered in the parity
+# plan's section 12 beside that schema, and no run here feeds `conservation`.
 EVIDENCE_SCHEMA = "woow.peer-snapshot.v1"
 
 CLEAN = "CLEAN"
@@ -247,9 +261,10 @@ def _side_env(env: Env) -> Env:
 
 def open_pair(env: Env, browser, pair: str, *, viewport=(1600, 1000)):
     """Session A first, then session B: the second to join is the receiver."""
-    context_args: dict[str, Any] = {}
-    if os.environ.get("IGNORE_HTTPS_ERRORS", "").lower() in ("1", "true", "yes"):
-        context_args["ignore_https_errors"] = True
+    context_args: dict[str, Any] = {
+        # The spelling every other script in this directory uses.
+        "ignore_https_errors": os.environ.get("IGNORE_HTTPS_ERRORS", "0") == "1",
+    }
     first = IngressSide(_side_env(env), browser, viewport=viewport, **context_args)
     if pair == "ingress-public":
         second = PublicSide(_side_env(env), browser, viewport=viewport, **context_args)
@@ -346,17 +361,29 @@ def labels_for(first, second) -> dict[str, str]:
 # --- Commands -----------------------------------------------------------------
 
 
+def stage(env: Env, browser, pair: str, task_id: int | None, marker: str):
+    """Both commands' common half, up to the point where only `run` saves.
+
+    Session A opens the to-do and types `marker` **without saving**; session B
+    joins the same record; the run waits for that marker to reach B. Everything
+    after this differs: `probe` prints and stops, `run` types B's own marker,
+    saves and reads the field back. A failure in here leaves the two contexts
+    to `browser.close()` in `main`, which is the last thing either command does.
+    """
+    first, second = open_pair(env, browser, pair)
+    labels = labels_for(first, second)
+    task_id = task_id or find_todo(first)
+    open_todo(first, task_id)
+    type_marker(first, marker)
+    open_todo(second, task_id)
+    return first, second, labels, task_id, wait_for_transport(second, marker)
+
+
 def do_probe(env: Env, browser, pair: str, task_id: int | None) -> int:
     """Open both sessions, report what they were served, and stop before saving."""
-    first, second = open_pair(env, browser, pair)
+    first, second, labels, task_id, transport = stage(
+        env, browser, pair, task_id, "WOOW-PEER-PROBE")
     try:
-        labels = labels_for(first, second)
-        task_id = task_id or find_todo(first)
-        open_todo(first, task_id)
-        marker = "WOOW-PEER-PROBE"
-        type_marker(first, marker)
-        open_todo(second, task_id)
-        transport = wait_for_transport(second, marker)
         print(json.dumps({
             "pair": pair,
             "task_id": task_id,
@@ -383,15 +410,9 @@ def do_probe(env: Env, browser, pair: str, task_id: int | None) -> int:
 
 
 def do_run(env: Env, browser, pair: str, task_id: int | None, run_id: str, out_path: str) -> int:
-    first, second = open_pair(env, browser, pair)
+    first, second, labels, task_id, transport = stage(
+        env, browser, pair, task_id, "%s-A" % run_id)
     try:
-        labels = labels_for(first, second)
-        task_id = task_id or find_todo(first)
-        open_todo(first, task_id)
-        sender_marker = "%s-A" % run_id
-        type_marker(first, sender_marker)
-        open_todo(second, task_id)
-        transport = wait_for_transport(second, sender_marker)
         type_marker(second, "%s-B" % run_id)
         save_form(second)
         stored = read_description(second, task_id)
@@ -434,8 +455,8 @@ def main(argv: Iterable[str] | None = None) -> int:
             sub.add_argument("--run-id", required=True,
                              help="the marker both sessions type, e.g. WOOW-PEER-<UTC timestamp>")
             sub.add_argument("--out", required=True, help="JSONL file; the record is appended")
-    said = commands.add_parser("report")
-    said.add_argument("records")
+    report_command = commands.add_parser("report")
+    report_command.add_argument("records")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     if args.command == "report":
@@ -450,7 +471,6 @@ def main(argv: Iterable[str] | None = None) -> int:
             parse_env_file(handle, os.environ)
     os.environ["ODOO_DB"] = args.db
     env = Env(args.db)
-    os.makedirs(artifact_dir(), exist_ok=True)
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as playwright:

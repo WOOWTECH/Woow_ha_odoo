@@ -936,6 +936,17 @@ the **add-on's** `ingress_token`, not the user's and not the session's: one
 persisted secret per installed add-on, defaulted once by `secrets.token_urlsafe`
 in Supervisor's app user-data schema, while the per-user session is a separate
 secret that travels as the `ingress_session` cookie and never appears in a path.
+Read on 2026-10-01 from `home-assistant/supervisor` on `main`, and named so the
+next reader can check it rather than take it: `supervisor/apps/validate.py`
+(`SCHEMA_APP_USER`, `vol.Optional(ATTR_INGRESS_TOKEN, default=secrets.token_urlsafe)`
+-- a *user-data* default, so it survives a restart and an update),
+`supervisor/apps/app.py` (`ingress_token` reads `self.persist`, and
+`ingress_entry` is `/api/hassio_ingress/<it>`) and `supervisor/ingress.py`
+(`create_session` mints `secrets.token_hex(64)` with a 15-minute sliding
+validity, and `_update_token_list` maps *app* tokens to slugs). That is the one
+load-bearing claim here that this repository cannot test, which is why it is
+cited rather than asserted -- and why the Live row below records both prefixes
+instead of assuming them equal.
 This repository says the same thing from the other side and has since #144: the
 menu/action adapter reads the prefix from `/addons/<slug>/info` **once** and
 uses it for every session it opens (`e2e_menu_action_adapter.py:789`), which
@@ -962,6 +973,16 @@ add-on's token is not the one in the value:
   wider strip does for it is **heal** the record: the next Ingress session to
   save the field removes the prefix, whoever put it there.
 
+The same reading corrects two rows of the parity plan, which called that token a
+*session* token: `RC-15` (deep links are not shareable) and `G-07` (a tab Odoo
+opens for you). Both keep their severity and their advice -- the path still
+carries a credential, and a link pasted to a colleague still does not open --
+but what refuses it is the `ingress_session` cookie their browser does not have,
+not a path that differs per person. `DOCS.md` says "your session token" to a
+user and is left as it is: the sentence it is in tells them to share the Public
+origin address instead, which is the right advice either way, and which secret
+it is is not a user's question.
+
 **What the transport actually carries**, which is what decides where the strip
 has to be and how wide. It is not a serialised document: the collaboration
 plugin ships *steps over serialised nodes*, each attribute's value byte for byte
@@ -975,6 +996,14 @@ not this page's, treats the whole thing as a root-relative path and prefixes it
 prefix>/web/image/...`. That is why the rule is every occurrence of *a* prefix
 and not one leading prefix, and the Static-tier contract executes the stacking
 rather than describing it.
+
+Two is the most it becomes, and that is worth one sentence because the
+attribute-*mutation* path meets the wrapper **twice**: the collaboration plugin
+registers its own `set_attribute_overrides`, and `safeSetAttribute` sets the
+value on a clone so the sanitizer can see it, reads it back and sets it on the
+node. What stops a third prefix is `path()`'s own already-prefixed check -- by
+then the value begins with this page's prefix -- so the contract pins that too,
+rather than leaving a reader to wonder whether the stack grows with each hop.
 
 **The fix is one expression, and it keeps one authority for what a prefix is.**
 `__WOOW_INGRESS_MARKUP_OUT__` now removes every occurrence of `__INGRESS_PATH__`

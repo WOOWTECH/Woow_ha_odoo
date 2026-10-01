@@ -31,8 +31,12 @@
   no rewrite and therefore stores what it is sent. The Ingress side cannot
   prevent that write; what this change does for it is heal the record on the
   next Ingress save. The Public origin is untouched, and `U-A6`'s probe list is
-  not extended. No version bump. Issue #234, ADR 0004 (third 2026-10-01
-  postscript), parent #148.
+  not extended. The same reading corrects two rows of the parity plan that
+  called that token a *session* token (`RC-15`, `G-07`); both keep their
+  severity and their advice, because the path still carries a credential and a
+  link pasted to a colleague still does not open -- what refuses it is the
+  `ingress_session` cookie their browser does not have. No version bump. Issue
+  #234, ADR 0004 (third 2026-10-01 postscript), parent #148.
 
 ### Added
 - `odoo18ce/tests/e2e_collab_peer_snapshot_live.py`, the two-session Live-tier
