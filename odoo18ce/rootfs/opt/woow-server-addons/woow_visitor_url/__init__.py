@@ -80,8 +80,14 @@ def website_base():
 
 
 def swap_url(httprequest, value):
-    """Make ``httprequest.url`` read as ``value``. None when it took, and a
-    short reason why it did not when it did not.
+    """Make ``httprequest.url`` read as ``value``.
+
+    Returns ``(None, True)`` when it took, and ``(reason, landed)`` when it did
+    not: ``reason`` is a phrase naming what happened and ``landed`` says
+    whether the assignment itself was accepted, which is what decides whether
+    there is anything on the request to put back. An assignment that raised
+    left nothing; one that was accepted and reads back as something else left
+    that something else.
 
     Assignment is what reaches both shapes of request -- Odoo's wrapper and the
     werkzeug request it wraps -- and the value is read back afterwards, because
@@ -96,17 +102,29 @@ def swap_url(httprequest, value):
     try:
         setattr(httprequest, URL_ATTRIBUTE, value)
     except Exception as exc:
-        return f"assigning it raised {exc!r}"
+        return f"assigning it raised {exc!r}", False
     try:
         read_back = getattr(httprequest, URL_ATTRIBUTE)
     except Exception as exc:
-        return f"reading it back raised {exc!r}"
+        return f"reading it back raised {exc!r}", True
     if read_back != value:
-        return f"it reads back as {read_back!r}"
-    return None
+        return f"it reads back as {read_back!r}", True
+    return None, True
 
 
-def restore_url(httprequest, arrived, was_cached, report=True) -> None:
+def reads_url(httprequest, otherwise):
+    """What the request's ``url`` reads as, or ``otherwise`` when asking raises.
+
+    Used to say what this page view is about to record, which is the request's
+    own answer and not what it was asked to hold.
+    """
+    try:
+        return getattr(httprequest, URL_ATTRIBUTE)
+    except Exception:
+        return otherwise
+
+
+def restore_url(httprequest, arrived, was_cached) -> None:
     """Put the address the browser really used back on the request.
 
     The rest of the response, and the next handler on this request, must see
@@ -115,13 +133,12 @@ def restore_url(httprequest, arrived, was_cached, report=True) -> None:
     wrapper has no deleter for a forwarded attribute, so there the arrived
     value is written back instead -- the same address, now cached.
 
-    This runs in a ``finally``, where an exception of its own would replace
-    whatever the dispatch was already raising, so nothing escapes it. A request
-    that will not take its own address back is left reading as the Canonical
-    URL for the whole of the rest of the response, which is wrong for every
-    handler after this one, so that is reported -- unless ``report`` is off,
-    which is the caller saying it has a better account of this request than
-    "it was replaced and could not be put back": nothing was replaced.
+    Called only when a value really did land on the request, so a request that
+    will not take its own address back is left reading something else for the
+    whole of the rest of the response, which is wrong for every handler after
+    this one, and is reported. This runs in a ``finally``, where an exception
+    of its own would replace whatever the dispatch was already raising, so
+    nothing escapes it.
     """
     if not was_cached:
         try:
@@ -129,8 +146,8 @@ def restore_url(httprequest, arrived, was_cached, report=True) -> None:
             return
         except Exception:
             pass
-    refused = swap_url(httprequest, arrived)
-    if refused is None or not report:
+    refused, _ = swap_url(httprequest, arrived)
+    if refused is None:
         return
     _logger.warning(
         "the request's url was replaced for this page view and could not be put back, so the "
@@ -164,20 +181,21 @@ def dispatch_on_the_canonical_url(original, self, website_page):
     if stored == arrived:
         return original(self, website_page)
 
-    refused = swap_url(httprequest, stored)
+    refused, landed = swap_url(httprequest, stored)
     if refused is not None:
         # A request whose url refuses the assignment, or goes on reading as
-        # the address it arrived on, would make the swap a silent no-op: the
-        # page view is then stored as it arrived, and said so, rather than
-        # looking corrected. Whatever a refused assignment did land on the
-        # request is put back first, and silently: the warning below is the
-        # account of this request, and "it was replaced and could not be put
-        # back" would be the opposite of what happened.
-        restore_url(httprequest, arrived, was_cached, report=False)
+        # something other than what it was given, would make the swap a silent
+        # no-op: the page view is then recorded on whatever the request does
+        # read, and said so, rather than looking corrected. A value that landed
+        # is put back first -- and reported if it will not go -- while an
+        # assignment that raised left nothing to put back and nothing to say
+        # about putting it back.
+        if landed:
+            restore_url(httprequest, arrived, was_cached)
         _logger.warning(
             "the request's url could not be replaced, so this page view records %s: "
             "%s, on %s.%s",
-            arrived, refused,
+            reads_url(httprequest, arrived), refused,
             type(httprequest).__module__, type(httprequest).__qualname__,
         )
         return original(self, website_page)

@@ -272,7 +272,7 @@ def patch_module(swap_url=None, restore_url=None):
 
 def _assigning_swap(httprequest, value):
     setattr(httprequest, "url", value)
-    return None
+    return None, True
 
 
 def _assigning_restore(httprequest, arrived, was_cached):
@@ -1060,40 +1060,87 @@ def test_a_replacement_that_never_landed_is_reported_once_and_not_twice(caplog) 
     assert "could not be put back" not in reported[0]
 
 
-def test_a_put_back_asked_not_to_report_stays_quiet_however_it_fails(caplog) -> None:
-    """Whether anything landed on the request is the caller's to know, not the
-    put-back's: a request whose url stops being readable once written gives it
-    nothing to go on, so a guess there is how a log says "it was replaced" of a
-    request nothing was replaced on."""
+def test_a_replacement_that_landed_and_will_not_go_is_reported_as_both(caplog) -> None:
+    """A refusal is not proof that nothing landed: a request whose setter takes
+    the value, whose getter does not echo it, and which refuses a second write
+    keeps the replacement. The page view is then recorded on what the request
+    really reads -- which the warning names, rather than naming the address it
+    arrived on -- and the request being left holding it is its own line."""
 
-    class UnreadableAfterWriting:
-        def _read(self):
-            if self.written:
-                raise RuntimeError("this request will not say what it holds")
-            return f"{HA_BASE}/"
+    class OneWayTransforming:
+        url = property(lambda self: self.held, lambda self, value: self._write(value))
 
-        def _write(self, value):
-            self.written += 1
-
-        url = property(_read, _write)
-
-        def __init__(self):
+        def __init__(self, url):
+            self.held = url
             self.written = 0
 
+        def _write(self, value):
+            if self.written:
+                raise ValueError("no second assignment")
+            self.written += 1
+            self.held = value + "#transformed"
+
+    request = OdooRequest(OneWayTransforming(f"{HA_BASE}/contactus"), Website(PUBLIC_BASE))
+    declared, tracks = odoo_website_visitor(request)
+    install_patch(declared, request)
+    with caplog.at_level("WARNING"):
+        declared()._handle_webpage_dispatch(None)
+    left = f"{PUBLIC_BASE}/contactus#transformed"
+    assert tracks == [{"url": left}]
+    assert request.httprequest.url == left
+    reported = [record.message for record in caplog.records]
+    assert len(reported) == 2
+    left_behind = [line for line in reported if "could not be put back" in line]
+    recorded = [line for line in reported if "could not be replaced" in line]
+    assert len(left_behind) == 1 and f"{HA_BASE}/contactus" in left_behind[0]
+    # The page view is named for what it really records, not for the address
+    # the request arrived on.
+    assert len(recorded) == 1 and left in recorded[0]
+
+
+def test_the_reason_the_swap_was_refused_is_the_one_reported() -> None:
+    """Three shapes of refusal, three readings: one raised and left nothing on
+    the request, one took the value and reads back as the address it arrived
+    on, and one took it. Reporting any of them as another is how the 0.4.6 log
+    read -- it named werkzeug, and werkzeug was not the problem."""
     request = ingress_request()
     declared, _ = odoo_website_visitor(request)
     module = install_patch(declared, request)
 
-    with caplog.at_level("WARNING"):
-        module.restore_url(UnreadableAfterWriting(), f"{HA_BASE}/", False, report=False)
-    assert caplog.records == []
+    class Raising:
+        def _refuse(self, value):
+            raise AttributeError("read-only")
 
-    # With the report on -- the path the dispatch takes once a replacement
-    # really did land -- the same failure is a warning.
-    with caplog.at_level("WARNING"):
-        module.restore_url(UnreadableAfterWriting(), f"{HA_BASE}/", False)
-    assert len(caplog.records) == 1
-    assert "could not be put back" in caplog.records[0].message
+        url = property(lambda self: f"{HA_BASE}/", _refuse)
+
+    class Swallowing:
+        url = property(lambda self: f"{HA_BASE}/", lambda self, value: None)
+
+    raised, landed = module.swap_url(Raising(), PUBLIC_BASE)
+    assert "assigning it raised" in raised
+    # Nothing landed on a request that refused the assignment, so there is
+    # nothing on it to put back and nothing to report about putting it back.
+    assert landed is False
+    assert module.swap_url(Swallowing(), PUBLIC_BASE) == (
+        f"it reads back as {HA_BASE + '/'!r}", True
+    )
+    assert module.swap_url(HttpRequest(f"{HA_BASE}/"), PUBLIC_BASE) == (None, True)
+
+
+def test_what_the_page_view_really_records_is_what_the_warning_names() -> None:
+    """``reads_url`` answers with the request's own reading, and with the
+    arrived address only when the request will not give one."""
+    request = ingress_request()
+    declared, _ = odoo_website_visitor(request)
+    module = install_patch(declared, request)
+
+    class Unreadable:
+        @property
+        def url(self):
+            raise RuntimeError("this request will not say what it holds")
+
+    assert module.reads_url(HttpRequest(f"{HA_BASE}/"), "fallback") == f"{HA_BASE}/"
+    assert module.reads_url(Unreadable(), "fallback") == "fallback"
 
 
 # --- The build tier performs the swap, it does not read a flag ---------------
@@ -1334,7 +1381,7 @@ def test_the_probe_does_not_ignore_the_modules_word_either() -> None:
 
     def swap_url(httprequest, value):
         setattr(httprequest, "url", value)
-        return "it reads back as something else"
+        return "it reads back as something else", True
 
     with loader_has(patch_module(swap_url=swap_url)):
         verdict, sentence = probe.url_swap(odoo_http_module())
@@ -1367,7 +1414,7 @@ def test_the_probe_does_not_take_the_modules_word_for_the_replacement() -> None:
     """A replacement that reports success and changes nothing is exactly the
     0.4.6 defect, so the probe reads the url back itself."""
     probe = load_probe()
-    nothing = lambda httprequest, value: None  # "it took", and it did not
+    nothing = lambda httprequest, value: (None, True)  # "it took", and it did not
     with loader_has(patch_module(swap_url=nothing)):
         verdict, sentence = probe.url_swap(odoo_http_module())
     assert verdict == probe.NOT_REPLACEABLE

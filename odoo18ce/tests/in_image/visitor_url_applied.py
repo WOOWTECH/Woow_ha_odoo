@@ -277,7 +277,7 @@ def url_swap(http):
     except Exception as exc:
         return UNPROVABLE, f"{name}.{URL_ATTRIBUTE} could not be read: {exc!r}"
     try:
-        refused = swap(httprequest, REPLACEMENT)
+        refused, _ = swap(httprequest, REPLACEMENT)
     except Exception as exc:
         return UNPROVABLE, f"{PATCH_MODULE}.{SWAP_FUNCTION} raised on {name}: {exc!r}"
     try:
