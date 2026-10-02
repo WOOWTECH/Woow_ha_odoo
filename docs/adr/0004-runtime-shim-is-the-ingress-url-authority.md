@@ -1461,8 +1461,13 @@ escalation and not instead of it (`foreign_prefix_healed`, plus
 `foreign_prefix_still_stored` for what is in the field now), and `report` splits
 `CLEAN` into `with_a_delivered_transport` and `with_no_delivery`, so the two
 sentences #243's run was quoted as having said cannot be written as one again.
-Whether #234's severity follows the confirmation or the persistence is a decision
-for that issue; #265's run reports both readings and takes neither.
+Whether #234's severity follows the confirmation or the persistence was a decision
+for that issue, and it has been taken: **#234 stays `severity: important` and stays
+closed** (2026-10-02). It reads the persistence — the token entered the row and the
+next Ingress save removed it, which is the whole of what this fix was ever claimed
+to do — and what remains open is the shape the fix cannot cover rather than the fix
+itself: a record written by a Public-origin peer that **no Ingress session ever
+saves again** keeps the token. That is `G-08`, not #234.
 
 One thing the run found about its own method, worth keeping because it is the
 second time a marker has cost a reading here (#263 was the first). A run is one

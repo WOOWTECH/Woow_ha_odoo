@@ -184,6 +184,14 @@ than inside it: `foreign_prefix_healed` (this one was removed) and
 neither. Registered as **`G-08`** in §11 of the parity plan so it is not only in
 this directory.
 
+*Noted the same day, after this run: **#234 has taken that decision — it stays
+`severity: important` and stays closed.** It reads the persistence: the token
+entered the row and the next Ingress save removed it, which is the whole of what
+that fix was ever claimed to do. What stays open is the shape the fix cannot cover,
+which is `G-08`'s and not #234's — a record a Public-origin peer wrote and that no
+Ingress session ever saves again. The readings above are unchanged; this run still
+reports both and the row carries both.*
+
 ## The first attempt
 
 `peer-first-attempt.jsonl`, run `WOOW-PEER-20261002T062800Z`. Its

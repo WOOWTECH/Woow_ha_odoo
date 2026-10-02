@@ -99,8 +99,10 @@
   the write" are measured, the write itself is registered as `G-08` in the parity
   plan's §11, and `report` escalates on it: #234's criterion is a *confirmed*
   stored foreign token, so the rule reads every value the run read and not only the
-  last, with the heal reported beside it rather than instead of it. Whether #234's
-  severity follows the confirmation or the persistence is left to that issue.
+  last, with the heal reported beside it rather than instead of it. #234 read that
+  and **stays `severity: important`**, closed: the token entered the row and the next
+  Ingress save removed it, which is all this fix ever claimed. What stays open is
+  `G-08`'s shape — a record a Public peer wrote and no Ingress session saves again.
   Evidence:
   `docs/testing/evidence/2026-10-02-issue-265/`; #243's directory is **annotated**,
   not rewritten. No image change and no version bump.
