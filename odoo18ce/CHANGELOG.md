@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.10 — 2026-10-01
 
 ### Added
 - A targets file may now aim at a GET-writing route only when that route's write
