@@ -198,6 +198,32 @@ steps, because `do_run` saves on the receiving session and reads once. With
 nothing delivered there was no foreign prefix to heal, so the healing half had no
 subject. Recorded as owed.
 
+**Annotated after the fact: #265 has found out why nothing was delivered, and the
+answer is that this driver never focused the receiving session.** With no view
+setting `collaborative_trigger`, the collaboration plugin joins the peer network
+on the editable's `focus` event and nowhere else, and a session that has not
+joined discards every signalling notification it receives — the other session's
+`ptp_join` included, with no log and nothing in the DOM
+(`collaboration_odoo_plugin.js:91-99` and `:156-158`, read from the deployed
+image). The sending session joined by accident, because typing needs focus; the
+receiving one was first focused *after* the 30-second wait had expired. So both
+pairs here were predicted to time out by the source, and the sentence above —
+"the two sessions never became collaboration peers" — turns out to have been
+true, but it was an inference from a timeout rather than a reading. Nothing on
+this host or in its configuration was involved: the field is collaborative on
+both surfaces, the bus is connected on both, and the two sessions subscribe to
+the same channel, all measured on #265's run.
+
+What that changes here is the **account** of these two verdicts and not the
+verdicts: they are what the field held after what this run did, and the
+paragraphs above are not rewritten. The reading they could not make has since
+been made on the same Release — #265's run delivered on both pairs, `CLEAN` on
+`ingress-ingress` **after a delivered snapshot**, and `FOREIGN-PREFIX-STORED` on
+`ingress-public`, the write #234 is about, observed for the first time and healed
+by the next Ingress save. The healing half named above now has an implementation
+and a subject. Evidence:
+`docs/testing/evidence/2026-10-02-issue-265/`.
+
 **Annotated after the fact: during the `probe` steps one `ingress-public` probe
 reported a `delivered: true` that was false, and #263 says why.** The table above
 reads the two `run` records in `peer.jsonl`, which stage a marker minted from the
@@ -362,6 +388,14 @@ exported before cleaning, are the defect's writes rather than the row's run's.
 - It does not say a **delivered** peer snapshot keeps the field clean. The
   transport never delivered on either pair, so #234's two `CLEAN` verdicts are
   about the save path only.
+
+  *Annotated 2026-10-02, after this run: **#265 has made that reading**, on the
+  same Release and against the same host. A delivered snapshot keeps the field
+  clean on `ingress-ingress`, and on `ingress-public` it does **not** — the Public
+  peer's save stored the Ingress prefix on both images, and one Ingress save
+  removed it. Why nothing was delivered here is in the #234 section above: this
+  driver never focused the receiving session, so it never joined the peer network.
+  The bullet stands as what this run could say.*
 - It does not measure the `cssAssetId`-only branch of `HtmlViewer`, which has no
   screen on this host. That remains the Static tier's.
 - It does not measure #239's rule 2 branch, nor #239's document tile, nor #238's

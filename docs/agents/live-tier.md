@@ -135,7 +135,18 @@ docstring, this file and the parity plan all said it did not, because a form
 controller saves on `beforeunload` and navigating away from a dirty To-do form
 therefore persists the editor's content. A `probe` that did write exits non-zero.
 `run` saves on the receiving session and reads the field back, and discards the
-sending session's leftover for the same reason.
+sending session's leftover for the same reason — except on `--pair
+ingress-public`, where that session discards the leftover and then **saves once on
+purpose**: that save is the healing half of the measurement (#265).
+
+**The receiving session has to be focused, and the driver does it.** With no view
+setting `collaborative_trigger`, the collaboration plugin joins the peer network on
+the editable's `focus` event and nowhere else, and a session that has not joined
+discards every signalling notification it receives with no log and nothing in the
+DOM. That is why #243's run timed out on both pairs for 30 seconds each
+(`collaboration_odoo_plugin.js:91-99` and `:156-158`, #265). If a future reading of
+this driver shows `delivered: false` again, read the `collaboration` block in the
+record before suspecting the host.
 
 **The read-back is the guarantee here, not the discard.** Odoo also saves a form
 on `visibilitychange`, and that path is not gated on the record being dirty — so a
@@ -146,14 +157,47 @@ names the write. If a run reports `wrote_nothing: false`, treat it as #243's run
 treated the real thing: export the value, strip the marker, and say so in the
 evidence.
 
-Run `probe` first — it is how a failure is attributed. Both subcommands take
-`--run-id`, and `probe` mints one (`WOOW-PEER-PROBE-<UTC timestamp>`) when it is
-not given: a marker unique to the run is what makes `delivered` falsifiable at
-all, and **a `delivered` whose `waited_seconds` is `0.0` is a shape to distrust**
-— §12 of the parity plan says what that reading cost #243's run. `--pair
-ingress-public` drives one session on each surface, which is the pair that can
-carry a foreign Ingress prefix. Its record is a `woow.peer-snapshot.v1` and does
-not feed `conservation` (parity plan §12).
+Run `probe` first — it is how a failure is attributed, and since #265 it says
+*why* rather than only *whether*: both sessions report whether the field is
+collaborative, whether their bus worker is connected, which collaboration channel
+they subscribed to and whether they joined the peer network, and the run counts
+the signalling each posted. `transport_diagnosis`'s `cause` is the first rung that
+holds. `--pair ingress-public` drives one session on each surface, which is the
+pair that can carry a foreign Ingress prefix; it is also the pair `run` measures
+**twice** — once after the Public peer saves, which may carry the prefix, and once
+after the Ingress session has loaded that value and saved it, which must be clean.
+`final_verdict` is the second one wherever it was taken, and it is what the
+escalation rule reads. The record is a `woow.peer-snapshot.v1` and does not feed
+`conservation` (parity plan §12).
+
+**Every marker carries the run id *and* the pair**, and both subcommands take
+`--run-id` (`probe` mints `WOOW-PEER-PROBE-<UTC timestamp>` when it is not given).
+A marker unique to the run is what makes `delivered` falsifiable at all; the pair
+is in it because one run drives both pairs and `run` stores its marker, so without
+it the second pair opens a record that already holds the first pair's marker — the
+baseline guard then refuses the match and the transport reading is **void**, which
+is what happened on #265's first attempt. A rerun of the same pair takes a new
+`--run-id`. **A `delivered` whose `waited_seconds` is `0.0` is still a shape to
+look at twice**, and the field to read beside it is `marker_pre_existing`: §12 of
+the parity plan says what that reading cost #243's run.
+
+**What has been measured, as of 2026-10-02 (#265).** Both pairs deliver on this
+host: the transport works, and the two `CLEAN` verdicts #243's run recorded were
+about the save path only because this driver never focused the receiving session.
+On `ingress-public` a delivered snapshot **does** put the add-on's Ingress prefix
+in `project.task.description` — the Public origin stores what it is handed — and
+the next Ingress save removes it. Registered as `G-08`; evidence in
+`docs/testing/evidence/2026-10-02-issue-265/`.
+
+**So `run --pair ingress-public` and `report` exit non-zero on this host, and that
+is the expected reading rather than a broken run.** #234's rule escalates on a
+*confirmed* stored foreign prefix, and that pair confirms one every time it
+delivers. Read `escalate_issue_234_to_blocker` with `foreign_prefix_healed` and
+`foreign_prefix_still_stored` beside it before writing anything down — a run that
+confirmed the write and healed it is not the same reading as one that left it in
+the field. An unattended Iteration must not treat that exit code as a harness
+failure, and must not "fix" it by weakening the rule: that is exactly what a
+review caught #265 doing in its first pass.
 
 ## Deploying
 
