@@ -102,6 +102,18 @@ which replaces each Ingress prefix with the label of the session it belongs to
 *whose* prefix was stored without carrying the secret, which is the whole point
 of reading the field back.
 
+**The ambient rows a run leaves are counted by the run** (#256, #264). Both
+commands count `website.track` and `website.visitor` over session A's own RPC
+once both sessions are logged in and again on the way out, and `run` appends the
+delta to `--out`'s name with `.ambient.json` for its extension (`peer.jsonl` ->
+`peer.ambient.json`) -- counts only, no URL and no visitor identity. This driver
+opens `/odoo/...` backend routes only, so the expected delta is zero; the point
+is that **a zero that is read is a reading and a zero that is assumed is not**,
+which is the distinction #256 draws about the adapter's `crawl`. `probe` keeps
+no file, so its figure is printed on stderr and not written -- it is still read.
+The counts come over the session and never over `ssh`, and the denominator is
+every document GET either session's browser context made under its own base.
+
 Environment: the names the parity run uses (`--env-file` fills unset ones) --
 HA_BASE_URL, HA_TOKEN, ADDON_SLUG, ODOO_PUBLIC_URL, ODOO_TEST_LOGIN,
 ODOO_TEST_PASSWORD, PARITY_TARGET, and `IGNORE_HTTPS_ERRORS=1` for a
@@ -126,7 +138,14 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
-from e2e_menu_action_adapter import parse_env_file, sanitize_diagnostic
+from e2e_menu_action_adapter import (
+    AMBIENT_BASIS_DOCUMENTS,
+    RunInfo,
+    SessionAmbientDriver,
+    ambient_accounting,
+    parse_env_file,
+    sanitize_diagnostic,
+)
 from e2e_parity_shared_layers_live import TIMEOUT, Env, IngressSide, PublicSide
 
 # The shape of an Ingress prefix, which is nginx's `$safe_ingress_path` map and
@@ -502,6 +521,29 @@ def open_pair(env: Env, browser, pair: str, *, viewport=(1600, 1000)):
     return first, second
 
 
+# What this run's ambient denominator counted, on top of the shared sentence.
+AMBIENT_BASIS = AMBIENT_BASIS_DOCUMENTS + (
+    " Both sessions are counted and the row counts come over session A's RPC: the two models are "
+    "database-wide, so a row cannot be attributed to one of two sessions that were both open, and a "
+    "denominator over one of them would be a fraction of the window the counts are taken over."
+)
+
+
+def ambient_figure(first, second) -> SessionAmbientDriver:
+    """The ambient-row figure for this run's two sessions (#256, #264).
+
+    The expected delta here is zero -- this driver opens `/odoo/project.task/<id>`
+    and nothing else, and a backend route renders no tracked page -- and that is
+    the reason to read it rather than to skip it: a zero that is read is a
+    reading, and a zero that is assumed is not. A reason that reaches the record
+    is masked with the session's own masker and `redact`, because the record is
+    quoted in a pull request and a Playwright message carries both the host and
+    the prefix.
+    """
+    return SessionAmbientDriver(first, second,
+                                mask=lambda value: first.env.mask(redact(value, {})))
+
+
 def find_todo(side) -> int:
     """The to-do Odoo creates for every user: a personal task with no project.
 
@@ -661,15 +703,21 @@ def labels_for(first, second) -> dict[str, str]:
 # --- Commands -----------------------------------------------------------------
 
 
-def stage(env: Env, browser, pair: str, task_id: int | None, marker_text: str):
+def stage(first, second, task_id: int | None, marker_text: str):
     """Both commands' common half, up to the point where only `run` saves.
 
     Session A opens the to-do and types `marker_text` **without saving**; session
     B joins the same record; the run waits for that marker to reach B. Everything
     after this differs: `probe` discards both forms and stops, `run` types B's own
-    marker, saves and reads the field back. A failure in here leaves the two
-    contexts to `browser.close()` in `main`, which is the last thing either
-    command does.
+    marker, saves and reads the field back.
+
+    The two sessions are opened by the caller (`open_pair`) and not here, for two
+    reasons that arrived together. The ambient figure's window opens at its first
+    reading and that reading goes over a session's own RPC, so it cannot be taken
+    until both sessions exist -- and everything this function navigates has to be
+    inside the window. And a failure in here used to leave both contexts to
+    `browser.close()` in `main`; now the caller's `finally` closes them whether
+    staging reached its end or not.
 
     **A's editable is read before A types**, and that reading is what the wait is
     judged against. It is the loaded document, so a marker found in it was stored
@@ -677,7 +725,6 @@ def stage(env: Env, browser, pair: str, task_id: int | None, marker_text: str):
     It is read from A rather than from B because B has not joined yet at that
     point, and both sessions load the same stored value.
     """
-    first, second = open_pair(env, browser, pair)
     labels = labels_for(first, second)
     task_id = task_id or find_todo(first)
     open_todo(first, task_id)
@@ -685,7 +732,7 @@ def stage(env: Env, browser, pair: str, task_id: int | None, marker_text: str):
     type_marker(first, marker_text)
     open_todo(second, task_id)
     transport = wait_for_transport(second, marker_text, baseline=baseline)
-    return first, second, labels, task_id, transport
+    return labels, task_id, transport
 
 
 def do_probe(env: Env, browser, pair: str, task_id: int | None, run_id: str) -> int:
@@ -695,84 +742,112 @@ def do_probe(env: Env, browser, pair: str, task_id: int | None, run_id: str) -> 
     both sessions and then reads `description` back to say so. `wrote_nothing` in
     the output is that reading, and a false one exits non-zero: the whole of #263
     is that this step's claim was never checked.
+
+    It keeps no file, so its ambient figure is printed and not written (#264).
+    The figure is still read: this command is the one a reader runs first and by
+    hand, and "it writes nothing" is a claim about the field, never about the rows
+    a page view leaves.
     """
     probe_marker = marker(run_id, "A")
-    first, second, labels, task_id, transport = stage(
-        env, browser, pair, task_id, probe_marker)
+    first, second = open_pair(env, browser, pair)
     try:
-        # Read B's editable before discarding: after a discard it holds the stored
-        # value, and what a reader needs from it is what the transport delivered.
-        second_editable = redact(editable_html(second), labels)[:2000]
-        # Both sessions, each independently: A's discard failing must not leave B
-        # dirty *and* unreported. `discard_quietly` says why a failure here is a
-        # line in the report rather than an exception instead of one.
-        discarded = {label: discard_quietly(side)
-                     for label, side in (("A", first), ("B", second))}
-        stored = read_description(first, task_id)
-        verdict = probe_verdict(transport=transport, stored=stored, run_id=run_id,
-                                discarded=discarded)
-        print(json.dumps({
-            "pair": pair,
-            "run_id": run_id,
-            "task_id": task_id,
-            "prefixes": {label: redact(side.env.prefix, labels)
-                         for label, side in (("A", first), ("B", second))},
-            "prefixes_equal": _equal_prefixes(
-                {"A": first.env.prefix, "B": second.env.prefix}
-            ),
-            "transport": transport,
-            "second_session_editable": second_editable,
-            "saved": False,
-            "discarded": discarded,
-            "wrote_nothing": verdict["wrote_nothing"],
-            "forms_left_dirty": verdict["forms_left_dirty"],
-            # The labels of the prefixes in the field, and deliberately **no**
-            # verdict: `classify` is relative to the session that saved, and no
-            # session saved here. Asking it anyway read every prefix as
-            # `FOREIGN-PREFIX-STORED` on the `ingress-ingress` pair -- the pair
-            # where both sessions share one prefix, so `labels` has one entry and
-            # any `saver` passed to it mismatches. That is the verdict the parity
-            # plan escalates #234 to `blocker` on, for a value `probe` never wrote.
-            "stored_prefixes": stored_prefix_labels(stored, labels),
-            "notes": verdict["detail"],
-        }, indent=2, ensure_ascii=False))
-        return verdict["exit_code"]
+        with ambient_accounting(ambient_figure(first, second),
+                                RunInfo(run_id=run_id, target=env.target, database=env.db),
+                                pair, None, command="probe", navigation_basis=AMBIENT_BASIS):
+            labels, task_id, transport = stage(first, second, task_id, probe_marker)
+            # Read B's editable before discarding: after a discard it holds the stored
+            # value, and what a reader needs from it is what the transport delivered.
+            second_editable = redact(editable_html(second), labels)[:2000]
+            # Both sessions, each independently: A's discard failing must not leave B
+            # dirty *and* unreported. `discard_quietly` says why a failure here is a
+            # line in the report rather than an exception instead of one.
+            discarded = {label: discard_quietly(side)
+                         for label, side in (("A", first), ("B", second))}
+            stored = read_description(first, task_id)
+            verdict = probe_verdict(transport=transport, stored=stored, run_id=run_id,
+                                    discarded=discarded)
+            print(json.dumps({
+                "pair": pair,
+                "run_id": run_id,
+                "task_id": task_id,
+                "prefixes": {label: redact(side.env.prefix, labels)
+                             for label, side in (("A", first), ("B", second))},
+                "prefixes_equal": _equal_prefixes(
+                    {"A": first.env.prefix, "B": second.env.prefix}
+                ),
+                "transport": transport,
+                "second_session_editable": second_editable,
+                "saved": False,
+                "discarded": discarded,
+                "wrote_nothing": verdict["wrote_nothing"],
+                "forms_left_dirty": verdict["forms_left_dirty"],
+                # The labels of the prefixes in the field, and deliberately **no**
+                # verdict: `classify` is relative to the session that saved, and no
+                # session saved here. Asking it anyway read every prefix as
+                # `FOREIGN-PREFIX-STORED` on the `ingress-ingress` pair -- the pair
+                # where both sessions share one prefix, so `labels` has one entry and
+                # any `saver` passed to it mismatches. That is the verdict the parity
+                # plan escalates #234 to `blocker` on, for a value `probe` never wrote.
+                "stored_prefixes": stored_prefix_labels(stored, labels),
+                "notes": verdict["detail"],
+            }, indent=2, ensure_ascii=False))
+            exit_code = verdict["exit_code"]
+        # Outside the accounting, the way the adapter returns its own exit code. A
+        # `return` from inside it leaves the body exception-free, so an accounting
+        # failure is raised as "the run's only failure" (#256) -- and `main`'s
+        # catch-all would turn a measured `wrote_nothing: false` into exit 2,
+        # collapsing the signal #263 exists to carry into "harness error".
+        return exit_code
     finally:
         for side in (first, second):
             side.close()
 
 
 def do_run(env: Env, browser, pair: str, task_id: int | None, run_id: str, out_path: str) -> int:
-    first, second, labels, task_id, transport = stage(
-        env, browser, pair, task_id, marker(run_id, "A"))
+    """Stage both sessions, let B save, and write the record and the run's figure.
+
+    The ambient figure is appended beside `out_path` (`peer.jsonl` ->
+    `peer.ambient.json`), appended because the records are: this command is run
+    once per pair and an evidence directory keeps every line.
+    """
+    first, second = open_pair(env, browser, pair)
     try:
-        type_marker(second, marker(run_id, "B"))
-        save_form(second)
-        stored = read_description(second, task_id)
-        record = evidence_record(
-            run_id=run_id,
-            database=env.db,
-            target=env.target,
-            pair=pair,
-            task_id=task_id,
-            prefixes={"A": first.env.prefix, "B": second.env.prefix},
-            transport=transport,
-            stored=stored,
-            labels=labels,
-            saver="B",
-            notes=transport_note(transport),
-        )
-        with open(out_path, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
-        print(json.dumps(record, indent=2, ensure_ascii=False))
-        # Only now: A's form is still dirty with A's own marker, and leaving it
-        # that way writes it on the way out (#263). What this command is documented
-        # to store is what B saved, so A's leftover is discarded -- but *after* the
-        # record is on disk and printed. A cleanup step must never be what loses a
-        # measurement that needed a deploy and a host to take. B's form is clean;
-        # the save is what made it clean.
-        discard_quietly(first)
-        return 0 if record["verdict"] == CLEAN else 1
+        with ambient_accounting(ambient_figure(first, second),
+                                RunInfo(run_id=run_id, target=env.target, database=env.db),
+                                pair, out_path, command="run", append=True,
+                                navigation_basis=AMBIENT_BASIS):
+            labels, task_id, transport = stage(first, second, task_id, marker(run_id, "A"))
+            type_marker(second, marker(run_id, "B"))
+            save_form(second)
+            stored = read_description(second, task_id)
+            record = evidence_record(
+                run_id=run_id,
+                database=env.db,
+                target=env.target,
+                pair=pair,
+                task_id=task_id,
+                prefixes={"A": first.env.prefix, "B": second.env.prefix},
+                transport=transport,
+                stored=stored,
+                labels=labels,
+                saver="B",
+                notes=transport_note(transport),
+            )
+            with open(out_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+            print(json.dumps(record, indent=2, ensure_ascii=False))
+            # Only now: A's form is still dirty with A's own marker, and leaving it
+            # that way writes it on the way out (#263). What this command is documented
+            # to store is what B saved, so A's leftover is discarded -- but *after* the
+            # record is on disk and printed. A cleanup step must never be what loses a
+            # measurement that needed a deploy and a host to take. B's form is clean;
+            # the save is what made it clean.
+            discard_quietly(first)
+            clean = record["verdict"] == CLEAN
+        # Outside the accounting, for `do_probe`'s reason: a verdict this run
+        # measured must not be turned into a harness error by the figure's own
+        # failure.
+        return 0 if clean else 1
     finally:
         for side in (first, second):
             side.close()

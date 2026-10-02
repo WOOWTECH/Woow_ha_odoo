@@ -844,7 +844,10 @@ schema 是第 12 節新登記的 `woow.ingress-markup/v1` 與既有的 `woow.pee
 `conservation`。證據在 `docs/testing/evidence/2026-10-02-issue-243/`（`markup.jsonl` 38 筆、`peer.jsonl`
 2 筆；同一個 check 與 surface 以**最後一筆**為判定，先前各次嘗試一併保留，因為那是當時真的讀到的東西）。
 這一輪沒有留下 `.ambient.json`——這兩個 driver 不是 adapter，不數 `website.track`／`website.visitor`，
-缺口見 #264。另有三項仍欠：#234 的傳輸從未送達（#265）、#239 的另外兩行（#266），以及 `probe`
+缺口見 #264。**事後附記**：#264 已經把那份記帳補進這三個 driver（markup 驅動、peer snapshot 的 `run`
+與 `probe`、hand checks），所以缺的是當時的器材而不是當時的判斷；這一輪自己的證據目錄仍然沒有
+`.ambient.json`，那是它當時真的留下的東西，不改寫——要帶著那幾行的是這一族的**下一次**跑。
+另有三項仍欠：#234 的傳輸從未送達（#265）、#239 的另外兩行（#266），以及 `probe`
 其實會寫入（#263）。
 
 這一輪另外跑了 `crawl --apps website` 兩面比對（30 判定 = 30 `PARITY`、
@@ -966,14 +969,32 @@ secret。欄位與判定由 `odoo18ce/tests/test_e2e_collab_peer_snapshot.py` �
 false 時 exit code 非 0；它靠的是離開前按下表單自己的 Discard，因為在 dirty 的 To-do 表單上導覽離開會把
 editor 的內容存進去，「只有存檔才會寫欄位」在這張表單上不成立。
 
-**第三個 schema：`odoo-parity-ambient/v1`（#256，2026-10-01）。** 任何一次開過 website 頁面的 run
-都會留下沒人要求的列：tracked page 的 GET 會 upsert 一筆 `website.visitor` 並插入一筆
+**第三個 schema：`odoo-parity-ambient/v1`（#256，2026-10-01；#264，2026-10-02）。** 任何一次開過
+website 頁面的 run 都會留下沒人要求的列：tracked page 的 GET 會 upsert 一筆 `website.visitor` 並插入一筆
 `website.track`，頁面自己的 markup 跟 JavaScript 也寫（理由與出處見 [ADR 0012 postscript
 2026-10-01 (#227)](../adr/0012-sweeps-verify-on-the-test-host.md#postscript-2026-10-01-227)）。
-以前「留了幾筆」要事後上主機數（#235 的 19 筆就是這樣來的）；現在 `crawl` 與 `open` 在登入後與
-最後一次導覽後各數一次，把差值寫在證據旁，檔名就是記錄檔換上 `.ambient.json` 這個副檔名
+以前「留了幾筆」要事後上主機數（#235 的 19 筆就是這樣來的）；現在是 run 自己在登入後與離開前各數
+一次，把差值寫在證據旁，檔名就是記錄檔換上 `.ambient.json` 這個副檔名
 （`ingress-open.jsonl` → `ingress-open.ambient.json`）：**只有數字**，不記 URL、不記訪客身分，
-所以沒有可去識別化的東西。這是**記帳而非判定**：`diff` 不讀它（`read_records` 拒收
+所以沒有可去識別化的東西；數列數一律走 session 自己的 RPC（`search_count`，空 domain），不走
+`ssh`——事後上主機數到的是另一個量測，構不成差值。#256 只做了 adapter 的 `crawl` 與 `open`，
+其餘 Live driver 於是又退回事後數（#243 那一輪就是，見上）；**#264 把同一份記帳給了全部**：
+`e2e_ingress_markup_live.py`（一個 surface 一個 check 一行）、`e2e_collab_peer_snapshot_live.py`
+的 `run` 與 `probe`、`e2e_ingress_hand_checks.py`（一次 invocation 一行）。
+
+新增欄位 `navigation_basis`，因為兩種 driver 的分母**數的不是同一件事**：adapter 數的是它自己發出的
+導覽（`SurfaceDriver._goto` 這一個出口），hand-driven driver 數的是它的 browser context 在該 surface
+base 底下送出的每一個 document GET（接 Playwright 的 `request` 事件）——後者才看得到「按連結造成的
+導覽」與「website editor 的 preview iframe 自己抓的文件」，代價是 redirect 那一跳也算，所以它是頁面
+瀏覽次數的**上界**而不是次數。兩邊都叫 `navigations`，所以那句話必須跟著數字走在同一筆記錄裡。
+記錄會 append 的 driver，數字也 append——一行一個 JSON 物件，照 invocation 發生的順序，因為那些記錄檔
+是整個 session 累積的（`markup.jsonl` 38 筆），truncate 會讓最後一次的數字代表每一次留下的列。
+`probe` 不留記錄檔，沒有東西可以擺在旁邊，所以它的數字印在 stderr、不寫檔：它只開 `/odoo/...` 後台
+路由，delta 預期是 0，而**讀到的 0 是讀數，假設的 0 不是**，這才是去數它的理由。兩個 session 的 run
+把 `surface` 記成 pair 名稱（例：`ingress-public`）：列數走 session A 的 RPC，分母是兩個 session 相加，
+因為那兩個 model 是整個資料庫的，一筆列事後沒辦法歸給兩個同時開著的 session 之一。
+
+這是**記帳而非判定**：`diff` 不讀它（`read_records` 拒收
 這個 schema），也和 `woow.peer-snapshot.v1` 一樣**不**進 `conservation`——它不是 U/AD/G 項目、
 不佔守恆檢查的分母，§10.6 的 76 項數字不因它而動。兩個 surface 走的是同一批頁面，所以兩邊的
 delta 不相等只是先後順序的產物（第一輪建的 visitor 列第二輪已經在了），不是落差。

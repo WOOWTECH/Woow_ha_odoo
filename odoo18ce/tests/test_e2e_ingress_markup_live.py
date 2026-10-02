@@ -24,6 +24,7 @@ wrong would produce a record that reads clean:
    through the redaction, including the stored field values the whole run is
    about.
 """
+import inspect
 import os
 import re
 import sys
@@ -556,3 +557,82 @@ def test_the_two_surfaces_of_one_check_are_counted_separately():
     ]
     summary = markup.summarise(records)
     assert summary["passed"] == 1 and summary["failed"] == 1
+
+
+# --- 5. The ambient-row figure (#264) -----------------------------------------
+#
+# Source pins. The counting needs a browser and a host, and what #264 fixed was
+# not a wrong value but a missing reading: #243's run drove the website editor,
+# whose preview iframes load tracked pages, and its evidence could only state an
+# absolute count read on the host afterwards.
+
+
+def test_each_surface_reads_the_ambient_rows_it_left():
+    source = inspect.getsource(markup.run_check)
+    assert "adapter.ambient_accounting(" in source
+    assert "adapter.SessionAmbientDriver(side, mask=env.mask)" in source
+    assert "command=check" in source, "the check name is this driver's command"
+    assert "append=True" in source, "the records append per invocation, so the figure does too"
+
+
+def test_the_figure_is_per_surface_because_the_session_is():
+    """Each surface opens its own `Side`, so the count goes over that session's
+    own RPC and the record names which surface it was taken on. A delta over a
+    database-wide count cannot be split between two surfaces afterwards."""
+    source = inspect.getsource(markup.run_check)
+    assert source.index("open_one(env, browser, surface)") < source.index("ambient_accounting(")
+    assert "surface, out_path, command=check" in source
+
+
+def test_the_denominator_counts_the_documents_the_editor_fetched_for_itself():
+    """`side.goto` is the only navigation call in this file, and it is not the
+    only navigation: `media-image-website` clicks Edit, and the editor loads the
+    website page into two preview iframes. Those are the page views that write
+    the rows being counted."""
+    source = inspect.getsource(markup.run_check)
+    assert "navigation_basis=adapter.AMBIENT_BASIS_DOCUMENTS" in source
+
+
+def test_a_surface_that_already_has_a_record_does_not_get_a_second_one():
+    """`summarise` reads the *last* record for a check and surface as its
+    verdict, so a failure after the record is on disk -- the accounting raises
+    when it is a passing run's only failure -- must not append a `NOT-RUN` line
+    that overwrites a verdict this run measured."""
+    source = inspect.getsource(markup.run_check)
+    assert "if surface.value in kept:" in source
+    assert source.index("if surface.value in kept:") < source.index('"the surface could not be driven')
+
+
+def test_the_module_says_where_the_figure_goes_and_which_check_needs_it():
+    said = " ".join(markup.__doc__.split())
+    assert adapter.ambient_summary_path("markup.jsonl") in said
+    assert "media-image-website" in said
+    assert "#256" in said and "#264" in said
+    assert "counts only" in said.lower()
+
+
+def test_a_figure_that_could_not_be_written_does_not_cost_the_other_surface_its_run():
+    """`ambient_accounting` raises when the figure is a passing run's only failure
+    (#256). Raised where it arrives, on the first surface of a `--surface both`
+    run, it would leave the second surface never opened, never measured and with
+    no record at all -- not even the `NOT-RUN` fallback, so `summarise` could not
+    report the gap either. It is held and raised once every surface has run."""
+    source = inspect.getsource(markup.run_check)
+    assert "unaccounted.append(error)" in source
+    assert "raise unaccounted[0]" in source
+    assert source.index("unaccounted.append(error)") < source.index("raise unaccounted[0]")
+    # And after the loop, not inside it: the raise sits outside the `for`.
+    lines = source.splitlines()
+    loop = next(len(line) - len(line.lstrip()) for line in lines if line.lstrip().startswith("for name in"))
+    raised = next(len(line) - len(line.lstrip()) for line in lines if line.lstrip() == "raise unaccounted[0]")
+    assert raised < loop
+
+
+def test_a_record_counts_as_kept_only_once_it_is_on_disk():
+    """The guard above reads `kept` as "this surface's record is on disk", and the
+    `--out` write is the one step in `keep` that can fail. Marking it kept first
+    would make that claim false in exactly the case it is consulted, and would
+    count a line the file never got as something the run recorded."""
+    source = inspect.getsource(markup.run_check)
+    assert source.index('open(out_path, "a"') < source.index("kept.add(")
+    assert source.index('open(out_path, "a"') < source.index("records.append(")

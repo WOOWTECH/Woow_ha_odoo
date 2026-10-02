@@ -538,7 +538,14 @@ class ProbeWritesNothingTests(unittest.TestCase):
         self.assertIn("probe_verdict(", source)
         self.assertIn('"wrote_nothing"', source,
                       "the output must carry the claim, so the evidence can be read for it")
-        self.assertIn('return verdict["exit_code"]', source)
+        # The exit code is the verdict's, wherever the statement sits. It is read
+        # one line and returned the next since #264, outside the ambient
+        # accounting: a `return` from inside it leaves the body exception-free, so
+        # a figure that could not be written would be raised as the run's only
+        # failure and `main`'s catch-all would turn this measured non-zero into a
+        # harness error.
+        self.assertIn('verdict["exit_code"]', source)
+        self.assertIn("return exit_code", source)
 
     def test_probe_reads_the_receiving_editable_before_it_discards(self):
         """A discard reloads the record, so the delivered content is gone after
@@ -672,6 +679,102 @@ class BehaviourIsWrittenDownTests(unittest.TestCase):
                       "section 12 must name the field a reader has to distrust")
         self.assertIn("0.0", section)
         self.assertIn("#263", section)
+
+
+class AmbientFigureTests(unittest.TestCase):
+    """#264: this run counts the ambient rows it left, and does not assume them.
+
+    Source pins, for this file's own reason: the counting happens in a browser
+    against a host, and what went wrong in the family it belongs to was a figure
+    nobody read rather than a value some function returned. #243's run left no
+    figure at all and its evidence had to state an absolute count read on the
+    host afterwards.
+    """
+
+    def test_both_commands_read_the_figure(self):
+        for command in (do_probe, do_run):
+            source = inspect.getsource(command)
+            with self.subTest(command.__name__):
+                self.assertIn("ambient_accounting(", source)
+                self.assertIn("ambient_figure(first, second)", source)
+                self.assertIn("navigation_basis=AMBIENT_BASIS", source)
+
+    def test_the_window_opens_before_the_staging_navigates(self):
+        """`stage` opens the to-do on both sessions, and those navigations have to
+        be inside the figure. So the pair is opened by the command -- the first
+        reading goes over a session's own RPC and cannot be taken before one
+        exists -- and `stage` takes the two sessions it was given."""
+        self.assertEqual(list(inspect.signature(stage).parameters),
+                         ["first", "second", "task_id", "marker_text"])
+        for command in (do_probe, do_run):
+            source = inspect.getsource(command)
+            with self.subTest(command.__name__):
+                self.assertLess(source.index("open_pair("), source.index("ambient_accounting("))
+                self.assertLess(source.index("ambient_accounting("), source.index("stage("))
+
+    def test_a_failure_in_staging_now_closes_both_contexts(self):
+        """It used to leave them to `browser.close()` in `main`, because `stage`
+        both opened them and could raise before handing them back."""
+        for command in (do_probe, do_run):
+            source = inspect.getsource(command)
+            with self.subTest(command.__name__):
+                self.assertLess(source.index("open_pair("), source.index("try:"))
+                self.assertIn("side.close()", source)
+
+    def test_run_appends_its_figure_beside_the_records_it_appends(self):
+        source = inspect.getsource(do_run)
+        self.assertIn("out_path, command=\"run\", append=True", source)
+
+    def test_probe_keeps_no_file_so_its_figure_is_printed(self):
+        """`probe` prints and keeps nothing, which is the one thing about it that
+        #263 did not change. A figure with nothing to sit beside is still read:
+        "it writes nothing" is a claim about the field, never about the rows a
+        page view leaves."""
+        source = inspect.getsource(do_probe)
+        self.assertIn("None, command=\"probe\"", source)
+
+    def test_the_counts_come_over_the_session_and_never_over_ssh(self):
+        """#256's rule, and the reason the figure is the run's own: a count read
+        on the host afterwards is a different measurement, and two of them taken
+        on different days cannot be subtracted."""
+        import e2e_collab_peer_snapshot_live as module
+
+        source = inspect.getsource(module.ambient_figure)
+        self.assertIn("SessionAmbientDriver(first, second", source)
+        self.assertNotIn("ssh", source)
+        self.assertIn("mask=", source, "a reason in the record carries the host and the prefix")
+
+    def test_a_measured_exit_code_is_returned_outside_the_accounting(self):
+        """`ambient_accounting` raises a figure it could not write when the body
+        left no exception of its own -- and a `return` from inside the `with` is
+        exactly that. Both commands' exit codes are measurements: `probe`'s carries
+        `wrote_nothing` (#263) and `run`'s carries the stored verdict, and `main`'s
+        catch-all turns anything raised into exit 2. So the code is read inside the
+        window and returned outside it, the way the adapter returns its own."""
+        for command in (do_probe, do_run):
+            source = inspect.getsource(command)
+            lines = source.splitlines()
+            opened = [len(line) - len(line.lstrip()) for line in lines
+                      if line.lstrip().startswith("with ambient_accounting(")]
+            returns = [len(line) - len(line.lstrip()) for line in lines
+                       if line.lstrip().startswith("return ")]
+            with self.subTest(command.__name__):
+                self.assertEqual(len(opened), 1)
+                self.assertTrue(returns)
+                for indent in returns:
+                    self.assertLessEqual(indent, opened[0],
+                                         "a return inside the accounting makes its body look clean")
+
+    def test_the_module_says_the_expected_zero_is_a_reading(self):
+        """The delta here should be zero -- `/odoo/...` renders no tracked page --
+        and that is the reason to read it rather than to skip it."""
+        import e2e_collab_peer_snapshot_live as module
+
+        said = " ".join(module.__doc__.split())
+        self.assertIn("peer.ambient.json", said)
+        self.assertIn("a zero that is read is a reading", said)
+        self.assertIn("#264", said)
+        self.assertIn("never over `ssh`", said)
 
 
 if __name__ == "__main__":

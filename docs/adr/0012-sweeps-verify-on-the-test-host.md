@@ -176,12 +176,30 @@ not only a side effect.
 
 So the guarantee is quoted as **no business writes**, not as zero rows, and the
 boundary above is unchanged: nothing here widens what a run may touch. The
-figure is no longer reconstructed by hand the way #235's was: since #256 the
-adapter's `crawl` and `open` count `website.track` and `website.visitor` after
-the login and again after the last navigation and write the delta beside the
-run's records, under the records' own name with `.ambient.json` for its
-extension (`ingress-open.jsonl` → `ingress-open.ambient.json`) — counts only,
-accounting rather than a verdict, and judged by nothing. `GET_WRITING_ROUTES`'
-comment points here rather than carrying the only copy, and the citations are
-read from the Odoo the add-on pins (`ODOO_DEB_VERSION`, `odoo18ce/Dockerfile`)
-the way that list's are.
+figure is no longer reconstructed by hand the way #235's was: since #256 a run
+counts `website.track` and `website.visitor` after the login and again on the
+way out and writes the delta beside its own records, under the records' own name
+with `.ambient.json` for its extension (`ingress-open.jsonl` →
+`ingress-open.ambient.json`) — counts only, taken over the session's own RPC and
+never over `ssh`, accounting rather than a verdict, and judged by nothing.
+`GET_WRITING_ROUTES`' comment points here rather than carrying the only copy,
+and the citations are read from the Odoo the add-on pins (`ODOO_DEB_VERSION`,
+`odoo18ce/Dockerfile`) the way that list's are.
+
+#256 built that in the adapter's `crawl` and `open`, which left the other Live
+drivers reconstructing the figure by hand again: #243's evidence (Release
+0.4.10, 2026-10-02) could state only an absolute count read on the host
+afterwards and had to say that no delta could be stated. #264 closed it — the
+markup driver, the peer snapshot's `run` and `probe` and the hand checks all
+carry the same figure now, each over its own session's RPC. Three details
+belong with the statement rather than only in the code. A driver whose records
+append appends its figure line too, one per surface or per invocation, because a
+single truncated figure would stand for rows every earlier invocation left. The
+denominator is not the same quantity in every file, and each file's
+`navigation_basis` says which it is: the adapter counts its own navigations,
+and a driver that navigates by clicking, or whose website-editor preview iframe
+fetches documents on its own account, counts the document GETs that actually
+went over the wire. And `probe`, which keeps no records, prints its figure
+rather than writing one: it opens only `/odoo/...` backend routes so its delta
+is expected to be zero, and a zero that is read is a reading where a zero that
+is assumed is not — the same distinction this postscript draws about `crawl`.
