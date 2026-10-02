@@ -426,8 +426,8 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > `img_loaded` 為 `[false, false]`、對 HA 根網址各 404 一次。單一 session；兩個 Ingress session 的
 > 協作快照是 #234，不在這一輪。證據見 `docs/testing/evidence/2026-10-01-issue-235/`。
 
-> **唯讀 html 欄位的兩個 render 點已於 2026-10-01 補上（#237，ADR 0004 的 2026-10-01 附記），Live
-> 重跑待 Deploy。** #210 修的是可編輯那條；唯讀 `HtmlViewer` 是 ADR 0004 附記裡「一次碰到兩處 markup」
+> **唯讀 html 欄位的兩個 render 點已於 2026-10-01 補上（#237，ADR 0004 的 2026-10-01 附記），
+> Live 重跑已於 2026-10-02 在 Release 0.4.10 上完成（#243），四項全過，這一列改記 `PARITY`。** #210 修的是可編輯那條；唯讀 `HtmlViewer` 是 ADR 0004 附記裡「一次碰到兩處 markup」
 > 的那一項，而且是常見的那一邊——使用者不能編輯的表單、portal 看到的記錄（project sharing 的
 > `project.webclient` 送的是同一份位元組）、以及 html 欄位的歷史對話框都掛同一個元件。兩條改寫：
 > 樣板裡的 `t-out="state.value"`（純文字那條路）與 `iframeTarget.innerHTML=content;`
@@ -440,7 +440,10 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > globals 有／無兩種情況下的執行）。`U-A6` 的探測清單**不**擴充，`innerHTML` 一途仍記 accepted。
 
 > **舊版 `web_editor` 編輯器（郵件設計器那一個）的十個改寫點已於 2026-10-01 補上（#238，ADR 0004
-> 的第二個 2026-10-01 附記），Live 重跑由 #243 統一執行。** Odoo 18 其實有**兩個** HTML 編輯器：
+> 的第二個 2026-10-01 附記），Live 重跑已於 2026-10-02 在 Release 0.4.10 上完成（#243）：
+> 寄出的 mailing 唯讀 iframe、designer 載入、以及存檔後 `body_arch` **與** `body_html` 兩個欄位
+> 都仍是 root-relative，三項全過，這一列改記 `PARITY`；rule 9／10 仍無畫面，照 #238 自己的理由記為
+> unreachable。** Odoo 18 其實有**兩個** HTML 編輯器：
 > #210 與 #237 改的是 `html_editor`，而還有三個 field widget 跑的是 `web_editor` 裡的舊編輯器，它的
 > load／save 是**不同的運算式**，所以前面八條規則一條都不會命中。三個 widget 逐一在 pinned deb 內查
 > 證：`html_legacy`**沒有任何出貨 view 用它**（除了它自己的註冊之外，整包只出現在
@@ -483,7 +486,11 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > `mailing.mailing` 的 `body_arch` **與** `body_html` 存後仍是 root-relative。
 
 > **協作 peer snapshot 的前綴（`project.task.description` 的 token write）已於 2026-10-01 修正
-> （#234，ADR 0004 的第三個 2026-10-01 附記），Live 量測由 #243 執行。** 這是 ADR 0004 開放清單裡
+> （#234，ADR 0004 的第三個 2026-10-01 附記），Live 量測已於 2026-10-02 在 Release 0.4.10 上
+> 執行（#243）：兩個 pair 都 `CLEAN`、兩邊前綴相等如預期、`escalate_issue_234_to_blocker: false`，
+> 所以 #234 維持 `severity: important`。**但協作傳輸兩個 pair 都沒有送達**，所以這兩個 `CLEAN`
+> 說的是「存檔路徑不存前綴」，**不是**「送達的 peer snapshot 不存前綴」；`ingress-public` 的兩段式
+> 復原讀取也還沒實作。兩者見 #265。** 這是 ADR 0004 開放清單裡
 > 唯一一個「寫進資料庫」而不只是畫面錯的項目：To-do 的 description 是 `'collaborative': true`，協作
 > 傳輸送的是**序列化節點**（每個 attribute 的值逐位元組，`history_plugin.js:1168`），後加入的 peer 會
 > 拿到先加入那個 peer 的整份文件作為 snapshot，接收端用 `node.setAttribute(key, value)` 套上去
@@ -524,7 +531,12 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 升為 `severity: blocker`（parity plan 1.3），在那之前維持 `severity: important`。
 
 > **媒體對話框「重新開啟時不會highlight原本那個附件」已於 2026-10-01 處理（#239，ADR 0004 的第四個
-> 2026-10-01 附記），Live 重跑由 #243 統一執行。** 這是 ADR 0004 開放清單裡最後兩項，而且是這一族
+> 2026-10-01 附記），Live 重跑已於 2026-10-02 在 Release 0.4.10 上部分完成（#243）：圖片那一行
+> 過（Ingress 4 格選中 1、Public 1 格選中 1，另外量到 `rule_in_served_method` 在 Ingress 為 true、
+> 在 Public 為 false，直接證明改寫只住在 Ingress asset location）；document 那一行在現行編輯器
+> **無法到達**（Replace 在 `image` namespace，document 是 `a.o_image`），但兩個運算元都帶前綴這個
+> 前提已在主機上量到；website 那一行**到達但沒驗到** rule 2（首頁唯一可見圖片沒有
+> `data-original-src`）。後兩行見 #266。這一列不因此改嚴重度——它什麼都不存。** 這是 ADR 0004 開放清單裡最後兩項，而且是這一族
 > 唯一「反向」的三項：不是插入 markup，而是**比較**——一邊期待 root-relative、另一邊拿到帶前綴的值。
 > 本輪的結論是**三項裡兩項真的壞掉、第三項本來就是對的，而對第三項照 issue 說的做會把它弄壞**：
 >
@@ -585,7 +597,10 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 編輯器的對話框上也跑一次**而不只是待辦表單：第 2 列的前綴只出現在 HTML 回應那條路上。
 
 > **HTML 編輯器「把 code view 切回去」會重新插入不帶 Ingress 前綴的 markup，已於 2026-10-01 處理
-> （#240，ADR 0004 的第五個 2026-10-01 附記），Live 重跑由 #243 統一執行。** 這是 ADR 0004 開放清單
+> （#240，ADR 0004 的第五個 2026-10-01 附記），Live 重跑已於 2026-10-02 在 Release 0.4.10 上
+> 完成（#243），兩半都過，這一列改記 `PARITY`。螢幕**不是**那一列寫的使用者簽名——該欄位在這個
+> build 由 `o_field_html_mail` 提供而且編輯器是空的——而是 `ir.actions.act_window.help`；另外
+> `?debug=1` 在這裡**不會**跨導覽保留，要掛在表單那一次導覽上。兩點都記在證據裡。** 這是 ADR 0004 開放清單
 > 上的**第一項**，也是最後一項關掉的——`html_editor` 自己這個欄位的**第六個** markup 插入點：
 > `toggleCodeView` 在切回編輯模式時直接把記錄的值塞進 editable
 > （`this.editor.editable.innerHTML=this.value;`），而 #210 的五條規則沒有一條落在那一行，所以 Ingress
@@ -813,7 +828,20 @@ POS 兩項在 #161 之後於 2026-09-27 補跑，收據列印（`U-F5`）與相�
 #160 的訪客網址兩項，六項全過。**這一輪不動上面那 76 項的守恆數字**，因為這六項都不在共用層那一組裡——
 它們是第 9 節以 `open` 另判的畫面（`project_todo`、`ecpay_invoice_website`）與第 10 節 `website` 的動作 596，
 各自的列已在上面改記 `PARITY`。所以 76 項維持 **60 `PARITY` + 0 `GAP` + 2 `APPROVED-DIVERGENCE` +
-6 `STRUCTURAL` + 8 `NOT-RUN`**。這一輪另外跑了 `crawl --apps website` 兩面比對（30 判定 = 30 `PARITY`、
+6 `STRUCTURAL` + 8 `NOT-RUN`**。
+
+2026-10-02 在 Release **0.4.10** 上跑了 Ingress markup 這一族欠的五列（#243）：#237 四項、#238 三項、
+#240 兩半、#239 三行中的一行、#234 兩個 pair。**這一輪同樣不動上面那 76 項的守恆數字**，理由與 #235
+那一輪相同——這些都是第 9 節各自那一列的 Live 欄，不是共用層那一組，所以 76 項仍維持
+**60 `PARITY` + 0 `GAP` + 2 `APPROVED-DIVERGENCE` + 6 `STRUCTURAL` + 8 `NOT-RUN`**。這一輪的判定
+schema 是第 12 節新登記的 `woow.ingress-markup/v1` 與既有的 `woow.peer-snapshot.v1`，兩者都**不**進
+`conservation`。證據在 `docs/testing/evidence/2026-10-02-issue-243/`（`markup.jsonl` 38 筆、`peer.jsonl`
+2 筆；同一個 check 與 surface 以**最後一筆**為判定，先前各次嘗試一併保留，因為那是當時真的讀到的東西）。
+這一輪沒有留下 `.ambient.json`——這兩個 driver 不是 adapter，不數 `website.track`／`website.visitor`，
+缺口見 #264。另有三項仍欠：#234 的傳輸從未送達（#265）、#239 的另外兩行（#266），以及 `probe`
+其實會寫入（#263）。
+
+這一輪另外跑了 `crawl --apps website` 兩面比對（30 判定 = 30 `PARITY`、
 1 跳過）與 #163 全部七個 target 兩面比對（7 判定 = 7 `PARITY`），後者是刻意跑整個 target 檔而不是只跑三行：
 0.4.9 是第一個部署 #238 那 182 行 Literal rewrite 的 Release，規則若在不該觸發的頁面觸發，會在無關 target 上
 顯示為字面值改變——沒有任何一個改變。證據見 `docs/testing/evidence/2026-10-01-issue-235/`。
@@ -928,6 +956,22 @@ secret。欄位與判定由 `odoo18ce/tests/test_e2e_collab_peer_snapshot.py` �
 這個 schema），也和 `woow.peer-snapshot.v1` 一樣**不**進 `conservation`——它不是 U/AD/G 項目、
 不佔守恆檢查的分母，§10.6 的 76 項數字不因它而動。兩個 surface 走的是同一批頁面，所以兩邊的
 delta 不相等只是先後順序的產物（第一輪建的 visitor 列第二輪已經在了），不是落差。
+
+**第四個 schema：`woow.ingress-markup/v1`（#243，2026-10-01）。** `#243` 這一輪的四列
+（#237／#238／#239／#240）都不是 `odoo-parity-evidence/v1` 的形狀。那個 schema 一筆記一個計畫項目、
+兩個 surface 各一欄，由 `diff` join 之後判定；這裡每筆記**一次互動**，而且判準**依 surface 不同**——
+同一個 root-relative `src`，Ingress 要它落在前綴底下，Public 要它落在 origin 根上，兩邊相等才是失敗，
+所以不能用兩面對 diff 的方式判。每筆另外帶一個或兩個「存回去的欄位值」（`project.task.description`、
+`res.users.signature`、`mailing.mailing.body_arch` 與 `body_html`），那是 parity schema 沒有地方放的東西。
+圖片判定是 `UNDER-PREFIX`／`AT-ORIGIN-ROOT`／`NOT-LOADED`／`ESCAPED`／`ABSENT`（最差者勝，`ABSENT`
+最重——空畫面不是乾淨畫面，而是沒量到），存檔判定是 `CLEAN`／`PREFIX-STORED`。去識別化沿用
+`woow.peer-snapshot.v1` 的 `redact`，前綴形狀也沿用它那一份（由 gateway template 推出並被測試綁住），
+所以這個模組不會長出第二條會漂走的 regex。逃逸判定一律委派 `adapter.is_prefix_escape`，不在這裡重寫——
+會漏掉的那個形狀是**雙前綴**：它仍在前綴底下，所以「有沒有離開前綴」會答沒有。與前兩個附加 schema 一樣
+**不**進 `conservation`：這八個 check 都是第 9 節各自那一列的 Live 欄，不是共用層那 76 項，§10.6 的守恆
+數字不因它而動。欄位與判定由 `odoo18ce/tests/test_e2e_ingress_markup_live.py` 固定；瀏覽器步驟**沒有**
+靜態測試，模組開頭有說，理由與 `e2e_collab_peer_snapshot_live.py` 相同。
+
 
 落差報告最終彙整為：
 

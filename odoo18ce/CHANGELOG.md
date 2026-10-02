@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- The Ingress markup family's owed Live-tier checks are run on Release 0.4.10
+  (#243), and four of the five rows have a driver they did not have:
+  `odoo18ce/tests/e2e_ingress_markup_live.py`, eight checks, each judged against
+  an expectation that **differs** by surface -- under Ingress a root-relative
+  `src` must resolve under the prefix, on the Public origin at the origin root,
+  and the two sides being *equal* is the failure, which is why none of these is
+  the adapter's two-surface diff. Its records are the parity plan's fourth
+  evidence schema, `woow.ingress-markup/v1`, and like the other two additions it
+  does not feed `conservation`. Escape judgement is `adapter.is_prefix_escape`
+  and the stored-prefix shape and its redaction come from
+  `e2e_collab_peer_snapshot_live`, so neither is reimplemented here.
+- Results: #237's four checks `PARITY` on both surfaces, with the iframe path's
+  `sandbox` attribute confirming which branch rendered; #238's three lines
+  `PARITY`, including the half that matters -- `mailing.mailing.body_html`, the
+  inlined field that leaves the installation, read back root-relative after a
+  real save from the designer; #240's two halves `PARITY`; #239's image line
+  `PARITY`; #234 `CLEAN` on both pairs with `escalate_issue_234_to_blocker:
+  false`, so it stays `severity: important`.
+- Three screens that were written down wrong, each corrected by a measurement
+  rather than a reading of the source. #237's check 2 cannot be taken on
+  `project.task.description` (`sanitize_tags=True` strips the `<head>`, so the
+  value renders the plain path -- check 1's screen measured twice); its check 1
+  is not on the To-do form (`project_todo`'s controller whitelists its cog items
+  and filters *Version History* out); and #240's is not the user signature,
+  which on this build is served by `o_field_html_mail` and renders an **empty**
+  editor, leaving no text to select and so no floating toolbar. Also measured:
+  `?debug=1` does **not** survive a navigation here, so it belongs on the form
+  navigation itself -- without it the toolbar comes up with seven groups and no
+  code view, which reads exactly like a missing button.
+- What the run leaves owed, each with an issue rather than a sentence: the
+  collaboration transport never delivered on either pair, so #234's `CLEAN` is
+  about the save path and not a delivered peer snapshot (#265); `probe` writes
+  the field it says it does not, and its constant marker made one reading a
+  false `delivered` (#263); the hand-driven drivers emit no `.ambient.json`, so
+  #256's accounting has a hole (#264); and two of #239's three lines are still
+  unmeasured, one of them needing a fixture carrying `data-original-src` (#266).
+
 ## 0.4.10 — 2026-10-01
 
 ### Added
