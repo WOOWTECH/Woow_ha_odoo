@@ -39,6 +39,58 @@
   false `delivered` (#263); the hand-driven drivers emit no `.ambient.json`, so
   #256's accounting has a hole (#264); and two of #239's three lines are still
   unmeasured, one of them needing a fixture carrying `data-original-src` (#266).
+- **#239's other two lines are measured, and all four media checks now build what
+  they measure** (#266, no Release and no Deploy -- the rules were already in
+  0.4.10, and the run reads `rule_in_served_method` **and**
+  `legacy_rule_in_served_method` as `true` under Ingress and `false` on the Public
+  origin rather than trusting the version number). `media-image-website` builds a
+  `website.page` whose stored arch carries one attachment's own `image_src` in
+  **both** `src` and `data-original-src` -- the only screen on which that attribute
+  can arrive prefixed, because the generic HTML location's `src="/` is a bare
+  substring and claims the tail of the longer attribute name, while a field value
+  over `call_kw` has its quotes escaped and is untouched. Ingress reads it prefixed
+  and selects its tile; the Public origin reads it root-relative and selects the
+  same one. A ninth check, `media-document-mailing`, reads the document tile on the
+  **legacy** dialog, which the mail designer opens: both surfaces select the
+  fixture's tile, and the control the open list implied, `#media-replace`, turns out
+  to be **present and hidden** -- the legacy editor hides its whole toolbar for a
+  media whose `data-mimetype` is not an image, and the dialog's own
+  `createElements` always stamps one on a document, so a double-click is the way in.
+  The current editor stays unreachable by construction and now says so from a
+  fixture rather than from an empty record.
+- Two readings in that first record exist because either would otherwise produce a
+  false pass, and both are new: `data-original-src` is read **again after the
+  element is selected**, because `ImageTools._initializeImage` deletes the whole
+  `data-original-*` group when the attribute fails to load; and the fixture carries
+  `data-mimetype-before-conversion`, because without it `loadImageInfo` overwrites
+  `data-original-src` with the root-relative value the ORM just returned -- so the
+  branch would compare two unprefixed values and pass whether or not the rule
+  shipped.
+- Why **all four** media checks build their fixtures and not only the two #266
+  named: the two it named could measure nothing because the host carries nothing
+  for their branches to execute on, and the two it did not could no longer measure
+  anything because #243's fixtures were made by hand and correctly cleaned up --
+  so the next run found a static module asset with no `ir.attachment` behind it and
+  an empty description, and could only say so. Both first attempts are kept in the
+  evidence as the reason. Each fixture is one public `ir.attachment` plus one
+  record, named after the run, removed by `--cleanup`; `public=True` is what lists
+  it whatever record the dialog was opened from, and `order: 'id desc'` with a
+  limit of 30 is what makes it the first tile rather than something to search for.
+- **One divergence found beside them, filed as #271 rather than against #239.**
+  Under Ingress the Documents tab lists every generated asset bundle:
+  `DocumentSelector.attachmentsDomain` excludes them with
+  `!['url', '=like', '/web/assets/%']`, and that pattern is a string literal in the
+  same bundle as the URL literals the Ingress asset location rewrites, so it
+  arrives prefixed (the served getter is 383 bytes against 320 -- one prefix
+  insertion) and the exclusion matches no stored `url`. The finding is the class:
+  a generic literal rewrite reaches **ORM domain literals**, not only URLs.
+  #239's severity does not move for it -- the preselection is correct on both
+  surfaces and a search domain travels in a request body, so nothing is stored.
+- This is also the markup family's first `.ambient.json`, which is what #243's
+  evidence said the next run of this family owed: 22 lines beside 22 records,
+  `website.track` and `website.visitor` deltas **0** on every line including the
+  website editor's five navigations per surface, absolute counts 198 and 59 on
+  either side of every window.
 - **Every Live driver now names the ambient rows it left, not only the adapter**
   (#264, found by the run above). #256 made the figure the run's own — count
   `website.track` and `website.visitor` after the login and again on the way out,
