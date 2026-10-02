@@ -198,6 +198,27 @@ steps, because `do_run` saves on the receiving session and reads once. With
 nothing delivered there was no foreign prefix to heal, so the healing half had no
 subject. Recorded as owed.
 
+**Annotated after the fact: during the `probe` steps one `ingress-public` probe
+reported a `delivered: true` that was false, and #263 says why.** The table above
+reads the two `run` records in `peer.jsonl`, which stage a marker minted from the
+run id (`WOOW-PEER-20261002T015318Z-A`) and both correctly report
+`delivered: false`; those are the records this section is written from and they do
+not move. The `probe` steps that came before them staged the *constant*
+`WOOW-PEER-PROBE`, and once the write recorded under **Writes** had stored that
+string the next probe found it in the receiving session's editable on its first
+poll — `"transport": {"delivered": true, "waited_seconds": 0.0}`, while the
+same-surface pair had just waited the full 30 s and failed. Nothing was delivered:
+`wait_for_transport` read the marker out of the *stored* value, not out of a peer
+snapshot, which is what a constant marker costs — the step's whole argument is
+that nothing has ever stored that marker, so its presence is the transport. Hence
+the reading this run leaves behind for later ones: a `delivered` whose
+`waited_seconds` is **0.0** is a shape to distrust. Not a shape to refuse — the
+receiving session joins *after* the sender typed, so the snapshot it is handed can
+legitimately carry the marker on the first poll. What made this one false was the
+**baseline**, not the clock: the marker was in the loaded document before anything
+was sent. #263 is what tells the two apart, and §12 of the parity plan carries the
+convention.
+
 ## #239 — the media dialog's preselection
 
 | Line | Screen | Reading | Verdict |
@@ -303,7 +324,20 @@ tokens.
 
 **The `probe` subcommand writes, and its own docstring and
 `docs/agents/live-tier.md` both say it does not.** That is a harness defect this
-run found and it is filed; the rows above are what it left.
+run found and it is filed as #263; the rows above are what it left.
+
+**Annotated after the fact: the first row's two `probe` markers are a driver
+defect, not a write this run's steps chose to make.** #263, filed from this run,
+establishes the mechanism — `probe` types its marker into
+`project.task.description` and then navigates away without saving, and the To-do
+form persists the dirty editor's content on that navigation, so the field was
+written whether or not the step intended it. The subcommand's own reasoning that
+"only a save writes the field" does not hold on this form, and #263 is the fix.
+The row above is **not** rewritten, because it is already true: it is what the run
+left on the host and what it put back, which is what a Writes row is for. What
+#263 changes is the attribution of its first cell — those two copies of
+`WOOW-PEER-PROBE`, 32 characters and the 5417-against-5385 length this run
+exported before cleaning, are the defect's writes rather than the row's run's.
 
 ## What this run does **not** say
 

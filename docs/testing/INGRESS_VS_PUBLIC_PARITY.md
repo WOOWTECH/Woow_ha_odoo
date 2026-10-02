@@ -529,6 +529,12 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > `run` 才存檔並把 `description` 讀回來分類；輸出一律把前綴換成 session 標籤，不會有 token 落地），
 > 純函式部分由 `test_e2e_collab_peer_snapshot.py` 在靜態層跑過。讀回來存著 foreign 前綴才把 #234
 > 升為 `severity: blocker`（parity plan 1.3），在那之前維持 `severity: important`。
+>
+> **事後補註（#263，2026-10-02）**：上一段的「**尚未執行過**」已於 2026-10-02 由 #243 在 Release
+> 0.4.10 上執行（兩組 pair 都 `CLEAN`、都**沒有**送到，#234 維持 `severity: important`），而上一段裡
+> 「`probe` 不存檔」這句話當時就是**錯的**：`probe` 每一輪都把自己的 marker 寫進
+> `project.task.description`，因為在 dirty 的 To-do 表單上導覽離開會把 editor 的內容存進去。#263 已修
+> ——離開前按表單自己的 Discard，再把欄位讀回來回報 `wrote_nothing`——判準與 0.0 秒那個形狀記在第 12 節。
 
 > **媒體對話框「重新開啟時不會highlight原本那個附件」已於 2026-10-01 處理（#239，ADR 0004 的第四個
 > 2026-10-01 附記），Live 重跑已於 2026-10-02 在 Release 0.4.10 上部分完成（#243）：圖片那一行
@@ -944,6 +950,21 @@ plan item 在兩個 surface 上的同一個控制項」，所以塞不進上面�
 （`<ingress:A>`／`<ingress:B>`／`<ingress:unknown>`），所以記錄能說出「存到的是誰的前綴」而不帶那串
 secret。欄位與判定由 `odoo18ce/tests/test_e2e_collab_peer_snapshot.py` 固定，schema 名稱與本節這一段由同
 一個測試綁在一起。
+
+**`transport.waited_seconds` 要當判準讀，不是當註解讀（#263，2026-10-02）。** `delivered` 為 true 而
+`waited_seconds` 是 **0.0** 的那個形狀**存疑**：#243 那一輪的 `ingress-public` 就記到過一次
+`{"delivered": true, "waited_seconds": 0.0}`，而同一台主機上同一組的另一面剛剛整整等了 30 秒才判沒送到；
+真相是沒送到。原因是當時 `probe` 打的 marker 是**常數**（`WOOW-PEER-PROBE`），而它自己又把那串字寫進了
+`project.task.description`，所以下一次 `probe` 第一次 poll 就在**載入的值**裡讀到它，把「重新載入」當成
+「傳輸送到」。這一步的全部論據是「沒有東西存過這個 marker，所以它出現在這裡就是傳輸而不是重新載入」，
+常數剛好把那句話廢掉。修法兩半，兩半都由上面那個測試綁住：marker 一律由 `marker(run_id, label)` 產生
+（`probe` 不給 `--run-id` 時自己 mint 一個 `WOOW-PEER-PROBE-<UTC timestamp>`），以及 `await_marker` 收一個
+**baseline**——送方還沒打字前的 editable，也就是兩邊都會載入的那份文件——在 baseline 裡就比對得到的 marker
+一律判**不是**送到（`marker_pre_existing: true`），而且不等待。0.0 秒本身**不是**錯的讀數：收方是在送方打
+完字之後才加入，它拿到的 snapshot 本來就可能第一次 poll 就帶著 marker，所以這個數字照記、讀的人多看一眼，
+而不是把它縮成一個布林值。`probe` 另外回報 `wrote_nothing`——那是把欄位讀回來**量到**的，不是宣稱的——為
+false 時 exit code 非 0；它靠的是離開前按下表單自己的 Discard，因為在 dirty 的 To-do 表單上導覽離開會把
+editor 的內容存進去，「只有存檔才會寫欄位」在這張表單上不成立。
 
 **第三個 schema：`odoo-parity-ambient/v1`（#256，2026-10-01）。** 任何一次開過 website 頁面的 run
 都會留下沒人要求的列：tracked page 的 GET 會 upsert 一筆 `website.visitor` 並插入一筆
