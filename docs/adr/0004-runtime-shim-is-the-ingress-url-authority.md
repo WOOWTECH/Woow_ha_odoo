@@ -779,9 +779,27 @@ fix is the Static-tier contract
 against the rendered shim, including the no-op plain `IN` would have been;
 both patterns counted in the derived excerpts; and both insertions run in node
 with the globals present and absent, the iframe one with `hasFullHtml` set and
-with only `cssAssetId` set) plus the Live rerun after Deploy: a readonly html
-field carrying a root-relative `<img>` at
-`route_escape=0`/`http_4xx_5xx=0`/`console_error=0` on both surfaces.
+with only `cssAssetId` set).
+
+**The Live rerun is done: 2026-10-02, Release 0.4.10, #243, all four checks on
+both surfaces at `route_escape=0`/`http_4xx_5xx=0`/`console_error=0`, and the
+record read back with no prefix** -- so the "no `OUT` half" decision holds where
+it can be observed. Two of the screens this record and #243 named were wrong, and
+both corrections are measurements rather than readings of the source. Check 1 is
+not on the To-do form: only `ProjectTaskFormController` adds the *Version History*
+cog item, and `project_todo`'s controller whitelists its own items and filters it
+out, so the screen is the project task form. Check 2 cannot be taken on
+`project.task.description` at all: that field is `sanitize_tags=True`, so the ORM
+strips `<html>`, `<head>` and `<style>` and the full-HTML seed came back as the
+bare `<img>` -- `computeContainsComplexHTML()` then never fires and the field
+renders the *plain* path, which is check 1's screen measured twice. It was taken
+on `mail.template.body_html`, which is `sanitize_tags=False` and renders through
+`html_mail`, a subclass of the same field; the rendered attribute there is exactly
+`sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"`, which
+is also how the run knows which branch rendered. The `cssAssetId`-only branch
+stays unmeasurable on that host for the reason given above, and this contract
+stays its standing evidence. Evidence:
+`docs/testing/evidence/2026-10-02-issue-243/`.
 
 ## Postscript (2026-10-01, the legacy `web_editor` editor)
 
@@ -924,16 +942,23 @@ in excerpts derived through Odoo's own serve path, the two mid-identifier
 patterns proved to be tails of their expressions, the rewritten template parsed
 back as XML and checked to keep the attribute `account`'s `t-inherit` selects it
 by, the unchanged commit driven on both sets of bytes, and every one of the ten
-sites run in node with the globals present **and** absent) plus the Live rerun,
-which #243 carries for the whole family and whose row this Iteration refined
-rather than left to guess: the mail designer's body loaded and saved under
-Ingress at `route_escape=0`/`http_4xx_5xx=0`/`console_error=0` on both surfaces,
-with `mailing.mailing.body_arch` **and** `body_html` still root-relative
-afterwards -- both, because the inlined second field does not go through
-`getEditingValue` and is the one that leaves the installation -- plus a *sent*
-mailing's body, which is the readonly iframe's own screen and needs no save.
-Rules 9 and 10 have no screen on this database and are recorded there as
-unreachable with that reason rather than dropped.
+sites run in node with the globals present **and** absent).
+
+**The Live rerun is done: 2026-10-02, Release 0.4.10, #243, all three lines
+`PARITY` on both surfaces.** The *sent* mailing's body renders through the
+readonly iframe with the `<img>` **attribute itself** prefixed; the designer loads
+under Ingress; and the save stores `mailing.mailing.body_arch` **and**
+`body_html` root-relative -- both, which is the half that matters, because the
+inlined second field does not go through `getEditingValue` and is the one that
+leaves the installation. One thing the row did not anticipate: all four fixture
+mailings on that database had **empty** bodies, so line 3 needed a root-relative
+picture seeded into a sent mailing first, and line 1 needed the designer actually
+*typed into* -- a body seeded over RPC leaves the form clean, the save button
+hidden, and a read-back of the seeded value would have scored a pass while
+exercising neither rule, since both are the save seam. Rules 9 and 10 stay
+unreachable for this record's own reason -- no shipped view sets `codeview` on a
+legacy-editor field -- and are recorded there as unreachable rather than dropped.
+Evidence: `docs/testing/evidence/2026-10-02-issue-243/`.
 
 ## Postscript (2026-10-01, the collaborative peer snapshot)
 
@@ -1074,13 +1099,31 @@ family's reruns, and this Iteration refined that row rather than leaving it to
 guess: two Ingress sessions on one to-do will show the *same* prefix and the row
 must record both rather than assume a difference, and the pair that can produce
 a foreign prefix on this host is one Ingress session and one Public-origin
-session on the same record. The script for it is left behind and **has not been
-run** -- `odoo18ce/tests/e2e_collab_peer_snapshot_live.py`, whose pure parts
-(the prefix shape, the redaction that puts a session's label where its token
-was, the verdict and the report) are tested at the Static tier by
-`test_e2e_collab_peer_snapshot.py`. Until that run reads a stored prefix, #234
-stays `severity: important`: nothing has measured an escape here, which is what
-its own criteria say the escalation to blocker waits for.
+session on the same record. The script is
+`odoo18ce/tests/e2e_collab_peer_snapshot_live.py`, whose pure parts (the prefix
+shape, the redaction that puts a session's label where its token was, the verdict
+and the report) are tested at the Static tier by
+`test_e2e_collab_peer_snapshot.py`.
+
+**It has now been run: 2026-10-02, Release 0.4.10, #243.** Both pairs `CLEAN`,
+`stored_prefixes` empty, `escalate_issue_234_to_blocker: false`, so **#234 stays
+`severity: important`** -- nothing has measured an escape here, which is what its
+own criteria say the escalation to blocker waits for. The prefix equality this
+record predicted for the `ingress-ingress` pair was measured rather than assumed
+(`prefixes_equal: true`), which is the reason that pair is clean.
+
+Two things that run did **not** establish, and they bound how far its `CLEAN`
+reaches. **The collaboration transport never delivered, on either pair**: the
+sender's unsaved marker never reached the receiving session in 30 s, so the two
+sessions never became peers. So the verdicts say the *save path* stores no
+prefix; they do not say a *delivered* peer snapshot stores none, which is what
+this postscript is about. And the two-step healing read this record asks for on
+the `ingress-public` pair -- read after the Public peer saves, then save once
+under Ingress and read again -- has no implementation in `do_run`, and had no
+subject on that run because nothing was delivered. Both are #265. Separately,
+`probe` turned out to write the field it says it does not, and its marker is a
+constant, which made one reading a false `delivered: true` (#263). Evidence:
+`docs/testing/evidence/2026-10-02-issue-243/`.
 
 ## Postscript (2026-10-01, the media dialog's preselection)
 
@@ -1201,12 +1244,40 @@ one row in #243's register that cannot escalate in severity from what the host
 shows. No new global, no new helper, Group B still uncovered, the Public origin
 untouched, `U-A6`'s probe list not extended, and the Rewrite scan unaffected --
 an attachment's `image_src` is not in a bundle, so no Generated rewrite could
-derive it. **The Live rerun belongs to #243**, which carries this family's
-reruns, and this Iteration refined that row by comment rather than leaving it to
-guess: the document half now has a different expectation -- a check that a
-working screen still works, not that a broken one was fixed -- and the image
-half is worth running on the website editor's dialog as well as the To-do form,
-because row 2's prefix only appears on the HTML-response path.
+derive it. The Live rerun was #243's, and this Iteration refined that row by
+comment rather than leaving it to guess: the document half has a different
+expectation -- a check that a working screen still works, not that a broken one
+was fixed -- and the image half is worth running on the website editor's dialog as
+well as the To-do form, because row 2's prefix only appears on the HTML-response
+path.
+
+**It ran on 2026-10-02, Release 0.4.10 (#243), and one of the three lines was
+measured.** The image line on the To-do description passes: Ingress preselects the
+attachment with the element's `src` prefixed, Public does the same with it
+root-relative. That run also asked the page whether the rule had arrived and got
+`rule_in_served_method: true` under Ingress and **`false`** on the Public origin --
+a direct measurement that the rewrite lives only in the Ingress asset location,
+which is the same thing #237's check 3 says from the other side.
+
+The other two lines are unmeasured, each for its own reason, and neither can move
+#239's severity because nothing it measures is stored. **The document line has no
+control that reopens the dialog** on the current editor: Replace is a toolbar item
+in the `image` namespace and a document is an `<a class="o_image">`. Its premise
+was measured instead and it holds -- the element's `href` arrives prefixed and so
+does the served `fetchAttachments` literal (372 bytes against 309 on the Public
+origin), so the comparison is prefixed-against-prefixed, which is why no `OUT` was
+shipped for that read. **The `data-original-src` line was reached but not
+exercised**: the only visible image on the website home page is a record-field
+image whose `data-original-src` is absent, so row 2's branch never executes, and
+both surfaces preselected none -- no divergence, and nothing measured. Both are
+#266.
+
+One shape worth keeping, because it is how a false negative looks here: a static
+module asset and a URL-type library attachment *both* preselected none, correctly,
+on both surfaces. `isInitialMedia` only matches an attachment the dialog listed, so
+"none selected" is a finding only when the other surface selected one for the same
+element. The fixture that measures anything is an attachment scoped to the record.
+Evidence: `docs/testing/evidence/2026-10-02-issue-243/`.
 
 ## Postscript (2026-10-01, the code view round trip)
 
@@ -1305,10 +1376,28 @@ not assumed.
 
 No new global, no new helper, Group B still uncovered, the Public origin
 untouched, `U-A6`'s probe list not extended, and the Rewrite scan unaffected --
-record content is not in a bundle. **The Live rerun belongs to #243**, which
-carries this family's reruns and which this Iteration refined by comment rather
-than leaving it to guess: the screen is a user's signature in Preferences with
-debug mode on, the check is that toggling the code view off leaves the picture
-loading under the Ingress prefix, and the second half is that `res.users.signature`
-is still root-relative afterwards. With this closed, every item on the
+record content is not in a bundle. With this closed, every item on the
 2026-09-30 open list has an answer.
+
+**The Live rerun is done: 2026-10-02, Release 0.4.10, #243, both halves `PARITY`
+on both surfaces** -- the code view toggled off leaves the picture loading under
+the Ingress prefix at `route_escape=0`/`http_4xx_5xx=0`/`console_error=0`, and the
+saved value reads back root-relative. The toggle was the real toolbar command
+(`codeview_buttons: 1`, `code_view_shown: true`), so the OFF click is the one that
+reaches the assignment these two rules patch.
+
+**The screen is not the one this postscript names.** It picked a user's signature
+in Preferences precisely *because* `html_mail` was the thing to avoid -- a mail
+body being the value most likely to be full HTML. On this build the signature is
+served by that widget anyway (`o_field_html_mail`) and its editor comes up
+**empty**, showing the `o-we-hint` placeholder with a fragment value present in
+the record; an empty editable has no text to select, so the floating toolbar is
+never raised and the `codeview` group never renders. The check was taken on
+`ir.actions.act_window.help` -- the other view that sets the option, a plain `html`
+field on the current editor, `sanitize_tags=True` so it cannot become a sandboxed
+preview. And one thing no reading of the source would have given: **`?debug=1` is
+not sticky across a navigation on this host.** After `/odoo?debug=1` the next page
+reported `odoo.debug === ""`, the command was never registered, and the toolbar
+came up with seven groups and no code view -- which reads exactly like a missing
+button. The flag belongs on the form navigation itself. Evidence:
+`docs/testing/evidence/2026-10-02-issue-243/`.
