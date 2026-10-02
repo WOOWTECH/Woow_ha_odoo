@@ -127,12 +127,33 @@ set in the image). Run headless; `--headed` needs a display nobody has.
 
 **Two sessions on one record** (`e2e_collab_peer_snapshot_live.py`, #234) is the
 one run that is not one browser session. `probe` opens both, says whether the
-collaboration transport delivered and **writes nothing**; `run` saves on the
-receiving session and reads the field back. Run `probe` first: the browser steps
-have never been executed against this host, so it is also how a failure is
-attributed. `--pair ingress-public` drives one session on each surface, which is
-the pair that can carry a foreign Ingress prefix. Its record is a
-`woow.peer-snapshot.v1` and does not feed `conservation` (parity plan §12).
+collaboration transport delivered, and **writes nothing** — it clicks the form's
+own **Discard** on both sessions before it leaves, and then reads `description`
+back and reports `wrote_nothing`. Read that field rather than this sentence:
+until #263 this step wrote its marker into the to-do on *every* run while its
+docstring, this file and the parity plan all said it did not, because a form
+controller saves on `beforeunload` and navigating away from a dirty To-do form
+therefore persists the editor's content. A `probe` that did write exits non-zero.
+`run` saves on the receiving session and reads the field back, and discards the
+sending session's leftover for the same reason.
+
+**The read-back is the guarantee here, not the discard.** Odoo also saves a form
+on `visibilitychange`, and that path is not gated on the record being dirty — so a
+backgrounded page with a dirty form writes with no navigation at all, and the
+sending session is necessarily dirty while the receiving one opens. The driver
+cannot remove that and does not pretend to; it measures the field afterwards and
+names the write. If a run reports `wrote_nothing: false`, treat it as #243's run
+treated the real thing: export the value, strip the marker, and say so in the
+evidence.
+
+Run `probe` first — it is how a failure is attributed. Both subcommands take
+`--run-id`, and `probe` mints one (`WOOW-PEER-PROBE-<UTC timestamp>`) when it is
+not given: a marker unique to the run is what makes `delivered` falsifiable at
+all, and **a `delivered` whose `waited_seconds` is `0.0` is a shape to distrust**
+— §12 of the parity plan says what that reading cost #243's run. `--pair
+ingress-public` drives one session on each surface, which is the pair that can
+carry a foreign Ingress prefix. Its record is a `woow.peer-snapshot.v1` and does
+not feed `conservation` (parity plan §12).
 
 ## Deploying
 

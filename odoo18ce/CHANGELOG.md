@@ -40,6 +40,83 @@
   #256's accounting has a hole (#264); and two of #239's three lines are still
   unmeasured, one of them needing a fixture carrying `data-original-src` (#266).
 
+### Fixed
+- The peer snapshot's `probe` no longer writes the field it reports it does not,
+  and no longer reports a delivery that never happened (#263, both found by
+  #243's run). It wrote on **every** run: it typed a marker into
+  `project.task.description` and navigated away without saving, and a dirty To-do
+  form persists the editor's content on that navigation -- so "only a save writes
+  the field", which the step's own comment gave as the reason it was safe, is not
+  true of this form. It now clicks the form's own **Discard** on both sessions
+  before it leaves and then reads `description` back and reports `wrote_nothing`,
+  so the claim is measured rather than asserted; a `probe` that did write exits
+  non-zero. `run` discards the sending session's leftover for the same reason,
+  leaving the stored value exactly what the receiving session saved. The
+  mechanism is read from the pinned package rather than guessed: every form
+  controller registers `beforeunload` unconditionally, the handler calls
+  `record.urgentSave()`, the html field answers `WILL_SAVE_URGENTLY` by
+  committing the editor's uncommitted content, and the urgent path writes with
+  `navigator.sendBeacon` -- which no request interception sees and nothing
+  cancels. Waiting for the form to report itself clean before leaving is
+  load-bearing for the same reason: `discard()` is async and `click()` returns
+  long before it resolves.
+- **The read-back is the guarantee, and the discard is only the means.** Odoo
+  saves a form on `visibilitychange` as well, that handler is **not** gated on the
+  record being dirty, and the sending session is necessarily dirty while the
+  receiving one opens -- so a backgrounded page can write with no navigation at
+  all. This measurement cannot remove that and no longer claims to: the field is
+  read back on every `probe`, so a write that happens anyway is detected and
+  named instead of assumed away. Recorded in the module, in
+  `docs/agents/live-tier.md`, and pinned.
+- The second defect compounded the first and is the one that produced a wrong
+  reading. `probe` staged the **constant** `WOOW-PEER-PROBE`, so once it had
+  stored that string the next probe found it in the receiving editable on its
+  first poll and recorded `{"delivered": true, "waited_seconds": 0.0}` on
+  `ingress-public` -- while the same-surface pair had just waited the full 30 s
+  and correctly failed. A constant marker makes `delivered` unfalsifiable once
+  the field has ever held it, which is exactly the step's own argument ("nothing
+  has stored that marker, so its presence is the transport") turned off. Two
+  halves, both pinned: every marker now comes from one `marker(run_id, label)`
+  helper that `probe` and `run` share, with `probe` minting a
+  `WOOW-PEER-PROBE-<UTC timestamp>` when `--run-id` is not given; and the wait
+  takes a **baseline** -- the sending session's editable read *before* it typed --
+  and refuses to read a match already in it as a delivery
+  (`marker_pre_existing: true`), without waiting. A `waited_seconds` of 0.0 stays
+  a legitimate reading, because the receiver joins after the sender typed and its
+  snapshot can carry the marker on the first poll; it is recorded as the shape to
+  distrust rather than reduced to a boolean (parity plan §12). A record's `notes`
+  now carries *which* way the transport failed instead of one fixed sentence: the
+  old wording said the receiver "never saw the sender's unsaved marker" either
+  way, which would have been a false account of a pre-existing marker -- that
+  case says the run id collided, which makes the whole record suspect rather than
+  only its transport half.
+- Four things the review caught, each one a way the fix could still mislead a
+  reader. A form the driver **could not** discard now fails the probe even when
+  the field reads back clean, because the read-back only sees writes that already
+  happened and a still-dirty session gets written afterwards -- `wrote_nothing:
+  true` with an armed write was the one outcome left that said "safe" and meant
+  "not yet". Discarding goes through a wrapper that cannot throw, so one session's
+  failed cleanup no longer costs the other its discard or the run its whole
+  report, and `run` appends and prints its record **before** cleaning up, so a
+  cleanup timeout cannot throw away a measurement that needed a deploy and a host.
+  `probe` reports the labels of the prefixes in the field and deliberately **no**
+  verdict: `classify` is relative to the session that saved, nothing saved here,
+  and asking it anyway read every prefix as `FOREIGN-PREFIX-STORED` on
+  `ingress-ingress` -- the verdict that escalates #234 to `blocker` -- because that
+  pair's two sessions share one prefix and so one label. And the discard button is
+  matched with `>> visible=true`, this repository's existing idiom for it, rather
+  than `.first`, which takes the first DOM match whatever its state and would
+  silently skip the real button behind a hidden earlier one.
+- The three documents that stated the old behaviour are corrected and pinned to
+  the code, since a reader acted on them: the module and `do_probe` docstrings,
+  `docs/agents/live-tier.md`, and the parity plan's §12 and #234 row. The pure
+  parts -- the marker helper, the wait's refusal and the probe's verdict -- are
+  driven at the Static tier, and the steps a host is needed to watch are held
+  there by shape, including that the navigation which did the writing is gone.
+  `docs/testing/evidence/2026-10-02-issue-243/README.md` is **annotated** rather
+  than rewritten: its Writes row is what that run left, and what changes is the
+  attribution.
+
 ## 0.4.10 — 2026-10-01
 
 ### Added

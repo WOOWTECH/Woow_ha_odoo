@@ -8,14 +8,26 @@
         --run-id WOOW-PEER-<UTC timestamp> --out peer.jsonl
     python odoo18ce/tests/e2e_collab_peer_snapshot_live.py report peer.jsonl
 
-**Nothing has run this script.** It is left behind for #243, which owns the
-Live-tier row it measures: the Iteration that wrote it was told not to deploy
-and not to take the measurement (#234's own comment). The pure functions below
--- the prefix shape, the labelling, the redaction and the verdict -- are driven
-by `test_e2e_collab_peer_snapshot.py` at the Static tier; the browser steps are
-written from the adapter this repository already uses on this host and have not
-been executed against it. Read a failure in the browser steps as this script
-being wrong before reading it as the host being wrong.
+`probe` takes `--run-id` too and mints one when it is not given
+(`WOOW-PEER-PROBE-<UTC timestamp>`, printed with its report): the marker it
+types must be unique to the run, for the reason under **What it measures**.
+
+**#243 has run this script**, on 2026-10-02 against Release 0.4.10, and its two
+records are in `docs/testing/evidence/2026-10-02-issue-243/peer.jsonl`: `CLEAN`
+on both pairs, and the transport delivered on neither, so those verdicts are
+about the save path and not about a delivered peer snapshot (#265 owns that).
+That run was also every browser step's first execution, and it found two defects
+here, both fixed under #263 and both worth knowing before trusting a reading from
+this file: `probe` wrote the field it reported it did not, and its marker was a
+constant, which made `delivered` unfalsifiable once the field had ever held it.
+
+The pure functions below -- the prefix shape, the labelling, the redaction, the
+wait's judgement, the probe's verdict and the report -- are driven by
+`test_e2e_collab_peer_snapshot.py` at the Static tier. The browser steps are not,
+and the two defects above are what that costs: both were mistakes about what a
+*step* does, which no Static tier can see. So the steps are pinned there by
+shape instead, and a failure in them should still be read as this script being
+wrong before it is read as the host being wrong.
 
 ## What it measures
 
@@ -26,11 +38,16 @@ document as a snapshot. Under Ingress that document's URLs carry the sending
 page's prefix, which is `/api/hassio_ingress/<the add-on's ingress token>`. The
 receiving session's save is what would write it to the record.
 
-So: session A opens the to-do and types a marker **without saving**. Session B
-joins the same to-do, and the run waits for A's unsaved marker to appear in B's
-editable -- which is the transport's own evidence, since nothing has stored it.
-B then types its own marker and saves, and the run reads `description` back
-over ORM and classifies every Ingress prefix left in it.
+So: session A opens the to-do, the run reads A's editable **before anything is
+typed** -- the baseline, which is the document both sessions load -- and A then
+types a marker **without saving**. Session B joins the same to-do, and the run
+waits for A's unsaved marker to appear in B's editable. That arrival is the
+transport's own evidence only because the marker carries the run id and was not
+in the baseline: a marker some earlier run stored would otherwise be read out of
+the *loaded* value on the first poll and reported as an instant delivery, which
+is the false positive #263 found on a `delivered` of 0.0 seconds. B then types
+its own marker and saves, and the run reads `description` back over ORM and
+classifies every Ingress prefix left in it.
 
 Two pairs, because they answer different questions:
 
@@ -50,11 +67,34 @@ Two pairs, because they answer different questions:
 
 ## What it writes
 
-The to-do's `description` on the database named by `--db`, and nothing else: no
-record is created and none is deleted. Both markers carry the run id, so the
-record says which run last edited it. `probe` writes nothing at all -- it opens
-both sessions, reports their prefixes and whether the transport delivered, and
-stops before the save.
+`run` writes the to-do's `description` on the database named by `--db`, and
+nothing else: no record is created and none is deleted. Both markers carry the
+run id, so the record says which run last edited it, and A's form is discarded
+once B has saved, so the stored value is exactly what B saved.
+
+`probe` writes nothing -- and **discarding is what makes that true**, not
+declining to save. Navigating away from a dirty To-do form persists the
+editable's content: two `probe` runs left their marker in the stored description
+twice (#263, found by #243's run on 0.4.10). So `probe` clicks the form's own
+Discard on both sessions before it leaves, which reloads the record from the
+database, and then reads `description` back over ORM and reports
+`wrote_nothing`. The claim is measured and carried in the output rather than
+asserted here, and a `probe` that did write exits non-zero. `discard_form` holds
+the mechanism and why each of its two waits is load-bearing.
+
+**The read-back is the guarantee, and the discard is only the means** -- which is
+deliberate, because this measurement cannot remove every way the form writes
+itself. Odoo saves a form on `visibilitychange` as well as on unload
+(`web/static/src/views/form/form_controller.js:483`), that handler is **not**
+gated on the record being dirty, and it calls a full `save()`. A session whose
+page is backgrounded while its form is dirty therefore writes with no navigation
+at all -- and session A is *necessarily* dirty while session B opens, since A's
+unsaved marker is the thing B is waiting for. The two sessions get their own
+browser contexts, which is the arrangement least likely to hide either page, but
+"least likely" is not a guarantee and this module will not claim one. So the
+field is read back on every `probe` and the result reported: a write that happens
+anyway is **detected and named** rather than assumed away, and the record then
+needs the marker stripped the way #243's run stripped two.
 
 **No token ever reaches the output.** Every value is passed through `redact`,
 which replaces each Ingress prefix with the label of the session it belongs to
@@ -83,7 +123,8 @@ import json
 import os
 import re
 import sys
-from typing import Any, Iterable, Mapping, Sequence
+from datetime import datetime, timezone
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from e2e_menu_action_adapter import parse_env_file, sanitize_diagnostic
 from e2e_parity_shared_layers_live import TIMEOUT, Env, IngressSide, PublicSide
@@ -111,9 +152,46 @@ NOT_RUN = "NOT-RUN"
 
 PAIRS = ("ingress-ingress", "ingress-public")
 
-# The html field's editable, and the form's save button.
+# `probe`'s run id when the command line does not give one. It is a *run* id and
+# not a constant marker: #263.
+PROBE_RUN_PREFIX = "WOOW-PEER-PROBE"
+
+# The html field's editable, the form's save button, its discard button, and the
+# indicator that says the form is dirty. The discard button is in the DOM on a
+# clean form too, hidden behind `o_form_status_indicator_buttons.invisible`, so
+# it is clicked only when it is visible -- #238's run lost a measurement to
+# exactly that (clicking the hidden save button).
 EDITABLE = ".o_field_html .odoo-editor-editable"
 SAVE_BUTTON = ".o_form_button_save"
+DISCARD_BUTTON = ".o_form_button_cancel"
+UNSAVED = ".o_form_status_indicator_buttons:not(.invisible)"
+
+
+# --- What a run calls its markers ----------------------------------------------
+
+
+def marker(run_id: str, label: str) -> str:
+    """The marker session `label` types, which **both** commands get from here.
+
+    A marker has to be unique to the run, because the whole argument for reading
+    its arrival as a delivery is that nothing has stored it. `probe` used to type
+    the constant `WOOW-PEER-PROBE`; once a probe had written that string into the
+    field -- which probes did, see the module docstring -- the next probe found it
+    in the receiving editable on the first poll and reported `delivered: true` at
+    0.0 seconds while nothing had been delivered (#263). One helper, so the two
+    commands cannot drift apart on it again.
+    """
+    return "%s-%s" % (run_id, label)
+
+
+def mint_run_id(now: datetime, prefix: str = PROBE_RUN_PREFIX) -> str:
+    """A run id in the shape `run` takes on the command line, for `probe`.
+
+    `probe` is the step a reader runs by hand first, so it must not need a run id
+    typed to be safe. `now` is passed in rather than read here, which is what
+    lets the Static tier pin the shape.
+    """
+    return "%s-%sZ" % (prefix, now.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S"))
 
 
 # --- What a value says, without saying a token ---------------------------------
@@ -148,6 +226,24 @@ def redact(value: Any, labels: Mapping[str, str]) -> Any:
     return value
 
 
+def stored_prefix_labels(stored: str, labels: Mapping[str, str]) -> list[str]:
+    """Which sessions' prefixes are in a value, in order, without judging them.
+
+    Separate from `classify` because a reading and a verdict are not the same
+    thing, and one caller has no verdict to give: `probe` saves nothing, so there
+    is no saver for a saver-relative verdict to be relative *to*. It reports this
+    instead (#263).
+
+    Note what `labels` does on the `ingress-ingress` pair: both sessions are
+    served the add-on's one `ingress_token`, so the two prefixes are equal and
+    `labels_for` collapses to a single entry -- whichever session it wrote last.
+    A label from here is therefore "a session whose prefix this is", not reliably
+    *which* one, on the pair where the two are indistinguishable by construction.
+    That is exactly why `prefixes_equal` is recorded separately.
+    """
+    return [labels.get(prefix, "unknown") for prefix in ingress_prefixes(stored)]
+
+
 def classify(stored: str, labels: Mapping[str, str], saver: str) -> tuple[str, list[str]]:
     """The verdict for one stored value, and the labels of the prefixes in it.
 
@@ -158,7 +254,7 @@ def classify(stored: str, labels: Mapping[str, str], saver: str) -> tuple[str, l
     is read the same way as a foreign one -- a prefix in a record is the harm
     whoever put it there.
     """
-    present = [labels.get(prefix, "unknown") for prefix in ingress_prefixes(stored)]
+    present = stored_prefix_labels(stored, labels)
     if not present:
         return CLEAN, []
     if any(label == "unknown" for label in present):
@@ -242,6 +338,132 @@ def report(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
+# --- What a wait and a probe conclude ------------------------------------------
+#
+# Pure, and pinned at the Static tier with the rest: these two are where #263's
+# two false readings were decided, and neither needs a browser to be wrong.
+
+PRE_EXISTING_DETAIL = (
+    "the marker was already in the editable before the other session typed it, so a "
+    "match here would be a value something had stored and not a delivery"
+)
+NEVER_ARRIVED_DETAIL = (
+    "the other session's unsaved marker never arrived; the two sessions did not become "
+    "collaboration peers"
+)
+
+
+def await_marker(
+    read: Callable[[], str],
+    marker_text: str,
+    *,
+    baseline: str | None,
+    sleep: Callable[[int], Any],
+    seconds: int = 30,
+) -> dict[str, Any]:
+    """Poll `read` for `marker_text`, refusing a match that was already there.
+
+    `baseline` is the editable as it read **before** the other session typed --
+    the loaded document, which is what both sessions start from. A marker already
+    in it cannot have been delivered, so this does not wait for one: it says so
+    and stops. That is the guard #263 asked for, and the run id in the marker is
+    the other half of it -- the guard catches a collision, the run id makes one
+    almost impossible.
+
+    `waited_seconds` of 0.0 with `delivered` true is a legitimate reading and not
+    a contradiction of any of this: the receiving session joins *after* the sender
+    typed, so the snapshot it is handed can carry the marker on the first poll.
+    It is still the shape to look at twice, which is why the number is recorded
+    rather than reduced to a boolean (parity plan section 12).
+    """
+    if marker_text in (baseline or ""):
+        return {
+            "delivered": False,
+            "waited_seconds": 0.0,
+            "marker_pre_existing": True,
+            "detail": PRE_EXISTING_DETAIL,
+        }
+    for attempt in range(seconds * 2):
+        if marker_text in (read() or ""):
+            return {
+                "delivered": True,
+                "waited_seconds": attempt / 2.0,
+                "marker_pre_existing": False,
+            }
+        sleep(500)
+    return {
+        "delivered": False,
+        "waited_seconds": float(seconds),
+        "marker_pre_existing": False,
+        "detail": NEVER_ARRIVED_DETAIL,
+    }
+
+
+def transport_note(transport: Mapping[str, Any]) -> str:
+    """What a record has to say about its own value when nothing was delivered.
+
+    A delivered transport needs no note. An undelivered one does, and *which*
+    way it failed changes the sentence: "the marker never arrived" and "the
+    marker was already there" are different findings, and the second one says the
+    run id collided, which makes the whole record suspect rather than just its
+    transport half. So the wait's own detail is carried through instead of one
+    fixed sentence -- the old note said "never saw the sender's marker" either
+    way, which would have been a false account of the second case.
+    """
+    if transport.get("delivered"):
+        return ""
+    detail = transport.get("detail") or "the marker did not arrive"
+    return "%s -- so the stored value is not evidence about the peer transport" % detail
+
+
+def probe_verdict(
+    *,
+    transport: Mapping[str, Any],
+    stored: str,
+    run_id: str,
+    discarded: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Whether `probe`'s claims held: it delivered, it wrote nothing, and it can say so.
+
+    `wrote_nothing` is read back off the record rather than asserted, because
+    asserting it is exactly what went wrong: the docstring, `docs/agents/
+    live-tier.md` and the `finally` block all said the field was untouched while
+    two runs' markers sat in it (#263). The marker carries the run id, so this
+    looks for *this* probe's write and not for a previous one's leftovers.
+
+    **A form left dirty fails the probe even when the read-back is clean**, and
+    that is not belt-and-braces. The read-back can only see writes that have
+    already happened; a session still holding unsaved content can be written
+    afterwards, by the `visibilitychange` save or by the unload, both of which
+    outlive this function. On that path a clean read-back means "not yet", not
+    "not at all" -- so the one thing the probe must not do is report
+    `wrote_nothing` and exit 0 while leaving the write armed.
+    """
+    wrote_nothing = run_id not in (stored or "")
+    left_dirty = sorted(
+        label for label, outcome in discarded.items()
+        if outcome.get("dirty") and not outcome.get("discarded")
+    )
+    if not wrote_nothing:
+        detail = ("this probe's own run id is in the stored value, so the probe wrote the "
+                  "field it reports it did not: the record needs the marker removed, and "
+                  "the discard step did not hold")
+    elif left_dirty:
+        detail = ("the field read back clean, but session(s) %s were left with unsaved "
+                  "content: a dirty form is still written on the way out, so this says "
+                  "'not yet' and not 'not at all' -- read the field again on the host"
+                  % ", ".join(left_dirty))
+    else:
+        detail = ""
+    return {
+        "wrote_nothing": wrote_nothing,
+        "forms_left_dirty": left_dirty,
+        "detail": detail,
+        "exit_code": 0 if (transport.get("delivered") and wrote_nothing and not left_dirty)
+                     else 1,
+    }
+
+
 # --- The two sessions ----------------------------------------------------------
 
 
@@ -304,37 +526,33 @@ def open_todo(side, task_id: int) -> None:
     side.root.locator(EDITABLE).first.wait_for(timeout=TIMEOUT)
 
 
-def type_marker(side, marker: str) -> None:
+def type_marker(side, marker_text: str) -> None:
     """Type into the editable, which is what makes a collaboration step."""
     editable = side.root.locator(EDITABLE).first
     editable.click()
     side.page.keyboard.press("Control+End")
-    side.page.keyboard.type(" " + marker)
+    side.page.keyboard.type(" " + marker_text)
 
 
 def editable_html(side) -> str:
     return side.root.locator(EDITABLE).first.evaluate("node => node.innerHTML")
 
 
-def wait_for_transport(side, marker: str, *, seconds: int = 30) -> dict[str, Any]:
+def wait_for_transport(side, marker_text: str, *, baseline: str | None,
+                       seconds: int = 30) -> dict[str, Any]:
     """Wait for the *other* session's unsaved marker to arrive in this one.
 
-    Nothing has stored that marker, so its presence here is the collaboration
-    transport and not a reload. Its absence is a finding of its own and not a
-    failure of the run: it says the two sessions never became peers, which is
-    the reading that rewrites the rest of #234.
+    The waiting and the judgement are `await_marker`'s, which the Static tier
+    drives; this is only the two browser verbs it needs. `baseline` must be the
+    editable as it read before the sending session typed -- see `stage`.
     """
-    for attempt in range(seconds * 2):
-        html = editable_html(side)
-        if marker in html:
-            return {"delivered": True, "waited_seconds": attempt / 2.0}
-        side.page.wait_for_timeout(500)
-    return {
-        "delivered": False,
-        "waited_seconds": seconds,
-        "detail": "the other session's unsaved marker never arrived; the two sessions "
-                  "did not become collaboration peers",
-    }
+    return await_marker(
+        lambda: editable_html(side),
+        marker_text,
+        baseline=baseline,
+        sleep=side.page.wait_for_timeout,
+        seconds=seconds,
+    )
 
 
 def save_form(side) -> None:
@@ -343,6 +561,88 @@ def save_form(side) -> None:
     button.click()
     side.root.locator(SAVE_BUTTON).first.wait_for(state="hidden", timeout=TIMEOUT)
     side.settle()
+
+
+def discard_form(side) -> dict[str, Any]:
+    """Throw this session's unsaved editor content away, and say what happened.
+
+    **This is what makes `probe` write nothing**, and declining to save is not.
+    Two `probe` runs left their marker in `project.task.description`, 32
+    characters of it, while every docstring involved said the record was
+    untouched (#263, found by #243's run). The mechanism, read from the pinned
+    package (`ODOO_DEB_VERSION`, 18.0.20260930) rather than guessed:
+
+    - `useSetupAction` registers a `beforeunload` listener for every form
+      controller, which always passes the handler
+      (`web/static/src/search/action_hook.js:76`,
+      `web/static/src/views/form/form_controller.js:289`), and a real document
+      navigation -- which `page.goto` is -- fires it;
+    - the handler calls `record.urgentSave()`
+      (`web/static/src/views/form/form_controller.js:508`), which raises
+      `WILL_SAVE_URGENTLY`; the html field answers it by committing the editor's
+      content into the record (`html_editor/static/src/fields/html_field.js:77`),
+      which is the typed marker that had never been committed;
+    - the urgent path then **writes with `navigator.sendBeacon`**
+      (`web/static/src/model/relational_model/record.js:1033`), which no request
+      interception sees and nothing can cancel.
+
+    So "only a save writes the field", the reason the old `finally` gave for being
+    safe, was never true of this form. Discard is the form's own undo -- it resets
+    the record's changes and remounts the editor from the stored value -- and
+    after it the field reports itself clean, so the same `beforeunload` harvests
+    nothing and the save short-circuits with no RPC at all.
+
+    Two details are load-bearing, not defensive:
+
+    - **The wait.** `FormController.discard()` is asynchronous, and Playwright's
+      `click()` returns long before it resolves. Navigating in that window leaves
+      the field still dirty and the beacon still fires, so this blocks on the
+      indicator going clean rather than clicking and moving on.
+    - **The visibility check.** The button is in the DOM on a clean form too,
+      behind `o_form_status_indicator_buttons.invisible`
+      (`.../form_status_indicator/form_status_indicator.xml:6`), and `click()`
+      waits for visibility rather than failing fast -- a clean form would spend
+      the whole timeout here. On a readonly form the button is absent entirely,
+      which is why presence is checked as well as visibility.
+
+    `dirty` is reported because it is a reading in its own right: a `probe` whose
+    forms were never dirty exercised nothing.
+    """
+    # The indicator is the earliest faithful signal there is -- the html field
+    # raises `FIELD_IS_DIRTY` on the first keystroke, before `record.dirty` is
+    # set (`html_field.js:225`, `form_status_indicator.js:16`).
+    dirty = side.root.locator(UNSAVED).count() > 0
+    # `>> visible=true` rather than `.first`, which is this repository's idiom for
+    # the same button (`e2e_parity_shared_layers_live.py:1805`). `.first` picks the
+    # first match in the DOM whatever its state, so one hidden earlier indicator --
+    # a dialog's, a sub-form's -- would make `is_visible()` false and silently skip
+    # the real button, which is the failure this function exists to prevent.
+    button = side.root.locator(DISCARD_BUTTON + " >> visible=true").first
+    if not dirty or not button.count():
+        return {"dirty": dirty, "discarded": False}
+    button.click()
+    # The indicator carries `invisible` again once the record is clean, so this
+    # selector stops matching; a locator with no element counts as hidden.
+    side.root.locator(UNSAVED).first.wait_for(state="hidden", timeout=TIMEOUT)
+    side.settle()
+    return {"dirty": True, "discarded": True}
+
+
+def discard_quietly(side) -> dict[str, Any]:
+    """`discard_form`, but a failure here never costs the run its report.
+
+    Discarding is cleanup, and the readings it protects are expensive: a Live run
+    needed a deploy and a host, and the transport wait alone takes 30 seconds. A
+    `wait_for` that times out because the form will not go clean -- an invalid
+    record keeps the indicator up, so it never does -- must not throw away the
+    measurement that was already taken. So the outcome is recorded and returned,
+    and `probe` treats a form it could not discard as a failure *in the report*
+    rather than as an exception that prevents one.
+    """
+    try:
+        return discard_form(side)
+    except Exception as error:  # noqa: BLE001 -- the reading matters more
+        return {"dirty": True, "discarded": False, "error": type(error).__name__}
 
 
 def read_description(side, task_id: int) -> str:
@@ -361,31 +661,59 @@ def labels_for(first, second) -> dict[str, str]:
 # --- Commands -----------------------------------------------------------------
 
 
-def stage(env: Env, browser, pair: str, task_id: int | None, marker: str):
+def stage(env: Env, browser, pair: str, task_id: int | None, marker_text: str):
     """Both commands' common half, up to the point where only `run` saves.
 
-    Session A opens the to-do and types `marker` **without saving**; session B
-    joins the same record; the run waits for that marker to reach B. Everything
-    after this differs: `probe` prints and stops, `run` types B's own marker,
-    saves and reads the field back. A failure in here leaves the two contexts
-    to `browser.close()` in `main`, which is the last thing either command does.
+    Session A opens the to-do and types `marker_text` **without saving**; session
+    B joins the same record; the run waits for that marker to reach B. Everything
+    after this differs: `probe` discards both forms and stops, `run` types B's own
+    marker, saves and reads the field back. A failure in here leaves the two
+    contexts to `browser.close()` in `main`, which is the last thing either
+    command does.
+
+    **A's editable is read before A types**, and that reading is what the wait is
+    judged against. It is the loaded document, so a marker found in it was stored
+    by something and cannot have been delivered -- the distinction #263 asked for.
+    It is read from A rather than from B because B has not joined yet at that
+    point, and both sessions load the same stored value.
     """
     first, second = open_pair(env, browser, pair)
     labels = labels_for(first, second)
     task_id = task_id or find_todo(first)
     open_todo(first, task_id)
-    type_marker(first, marker)
+    baseline = editable_html(first)
+    type_marker(first, marker_text)
     open_todo(second, task_id)
-    return first, second, labels, task_id, wait_for_transport(second, marker)
+    transport = wait_for_transport(second, marker_text, baseline=baseline)
+    return first, second, labels, task_id, transport
 
 
-def do_probe(env: Env, browser, pair: str, task_id: int | None) -> int:
-    """Open both sessions, report what they were served, and stop before saving."""
+def do_probe(env: Env, browser, pair: str, task_id: int | None, run_id: str) -> int:
+    """Open both sessions, report what they were served, and leave the record alone.
+
+    It does not merely decline to save -- it clicks the form's own **Discard** on
+    both sessions and then reads `description` back to say so. `wrote_nothing` in
+    the output is that reading, and a false one exits non-zero: the whole of #263
+    is that this step's claim was never checked.
+    """
+    probe_marker = marker(run_id, "A")
     first, second, labels, task_id, transport = stage(
-        env, browser, pair, task_id, "WOOW-PEER-PROBE")
+        env, browser, pair, task_id, probe_marker)
     try:
+        # Read B's editable before discarding: after a discard it holds the stored
+        # value, and what a reader needs from it is what the transport delivered.
+        second_editable = redact(editable_html(second), labels)[:2000]
+        # Both sessions, each independently: A's discard failing must not leave B
+        # dirty *and* unreported. `discard_quietly` says why a failure here is a
+        # line in the report rather than an exception instead of one.
+        discarded = {label: discard_quietly(side)
+                     for label, side in (("A", first), ("B", second))}
+        stored = read_description(first, task_id)
+        verdict = probe_verdict(transport=transport, stored=stored, run_id=run_id,
+                                discarded=discarded)
         print(json.dumps({
             "pair": pair,
+            "run_id": run_id,
             "task_id": task_id,
             "prefixes": {label: redact(side.env.prefix, labels)
                          for label, side in (("A", first), ("B", second))},
@@ -393,27 +721,32 @@ def do_probe(env: Env, browser, pair: str, task_id: int | None) -> int:
                 {"A": first.env.prefix, "B": second.env.prefix}
             ),
             "transport": transport,
-            "second_session_editable": redact(editable_html(second), labels)[:2000],
+            "second_session_editable": second_editable,
             "saved": False,
+            "discarded": discarded,
+            "wrote_nothing": verdict["wrote_nothing"],
+            "forms_left_dirty": verdict["forms_left_dirty"],
+            # The labels of the prefixes in the field, and deliberately **no**
+            # verdict: `classify` is relative to the session that saved, and no
+            # session saved here. Asking it anyway read every prefix as
+            # `FOREIGN-PREFIX-STORED` on the `ingress-ingress` pair -- the pair
+            # where both sessions share one prefix, so `labels` has one entry and
+            # any `saver` passed to it mismatches. That is the verdict the parity
+            # plan escalates #234 to `blocker` on, for a value `probe` never wrote.
+            "stored_prefixes": stored_prefix_labels(stored, labels),
+            "notes": verdict["detail"],
         }, indent=2, ensure_ascii=False))
-        return 0 if transport["delivered"] else 1
+        return verdict["exit_code"]
     finally:
-        # Nothing is saved. Leaving a dirty form may make Odoo ask to discard;
-        # Playwright dismisses that dialog, and the record is as it was found
-        # either way, because only a save writes the field.
         for side in (first, second):
-            try:
-                side.goto("/odoo")
-            except Exception:  # noqa: BLE001 -- the report is already printed
-                pass
             side.close()
 
 
 def do_run(env: Env, browser, pair: str, task_id: int | None, run_id: str, out_path: str) -> int:
     first, second, labels, task_id, transport = stage(
-        env, browser, pair, task_id, "%s-A" % run_id)
+        env, browser, pair, task_id, marker(run_id, "A"))
     try:
-        type_marker(second, "%s-B" % run_id)
+        type_marker(second, marker(run_id, "B"))
         save_form(second)
         stored = read_description(second, task_id)
         record = evidence_record(
@@ -427,13 +760,18 @@ def do_run(env: Env, browser, pair: str, task_id: int | None, run_id: str, out_p
             stored=stored,
             labels=labels,
             saver="B",
-            notes="" if transport["delivered"] else
-                  "the receiving session never saw the sender's unsaved marker, so the "
-                  "stored value is not evidence about the peer transport",
+            notes=transport_note(transport),
         )
         with open(out_path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
         print(json.dumps(record, indent=2, ensure_ascii=False))
+        # Only now: A's form is still dirty with A's own marker, and leaving it
+        # that way writes it on the way out (#263). What this command is documented
+        # to store is what B saved, so A's leftover is discarded -- but *after* the
+        # record is on disk and printed. A cleanup step must never be what loses a
+        # measurement that needed a deploy and a host to take. B's form is clean;
+        # the save is what made it clean.
+        discard_quietly(first)
         return 0 if record["verdict"] == CLEAN else 1
     finally:
         for side in (first, second):
@@ -451,9 +789,14 @@ def main(argv: Iterable[str] | None = None) -> int:
         sub.add_argument("--task-id", type=int, help="the project.task to edit; default: the "
                                                     "test user's own onboarding to-do")
         sub.add_argument("--headed", action="store_true")
+        # Both commands take a run id, because both type a marker and a marker
+        # has to be unique to the run (#263). Only `run` requires one: `probe` is
+        # the step a reader runs first and by hand, so it mints its own.
+        sub.add_argument("--run-id", required=(name == "run"),
+                         help="the run both markers carry, e.g. WOOW-PEER-<UTC timestamp>"
+                              + ("" if name == "run" else
+                                 "; default: a minted %s-<UTC timestamp>" % PROBE_RUN_PREFIX))
         if name == "run":
-            sub.add_argument("--run-id", required=True,
-                             help="the marker both sessions type, e.g. WOOW-PEER-<UTC timestamp>")
             sub.add_argument("--out", required=True, help="JSONL file; the record is appended")
     report_command = commands.add_parser("report")
     report_command.add_argument("records")
@@ -482,7 +825,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         )
         try:
             if args.command == "probe":
-                return do_probe(env, browser, args.pair, args.task_id)
+                run_id = args.run_id or mint_run_id(datetime.now(timezone.utc))
+                return do_probe(env, browser, args.pair, args.task_id, run_id)
             return do_run(env, browser, args.pair, args.task_id, args.run_id, args.out)
         finally:
             browser.close()
