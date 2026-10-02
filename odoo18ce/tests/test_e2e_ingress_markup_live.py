@@ -526,3 +526,33 @@ def test_both_seeded_values_name_the_run_that_wrote_them():
     assert 'src="/' in markup.signature_value(run_id)
     assert markup.stored_verdict(markup.signature_value(run_id)) == (markup.CLEAN, 0)
     assert markup.stored_verdict(markup.mailing_body_value(run_id)) == (markup.CLEAN, 0)
+
+
+def test_a_retried_check_is_counted_once_by_its_last_record():
+    """A run that re-ran a check after fixing a fixture must not be tallied twice.
+
+    #243's own run retried five of the eight checks -- a selector, a missing
+    editable wait, a fixture that was not an attachment -- and every attempt is
+    kept in the records, because a past reading is what it recorded. But the
+    *verdict* is the last attempt, so the tally has to dedupe by check and
+    surface or it reports a fixed check as a failure forever.
+    """
+    records = [
+        {"check": "media-image-todo", "issue": 239, "surface": "ha_ingress", "verdict": markup.ABSENT},
+        {"check": "media-image-todo", "issue": 239, "surface": "ha_ingress", "verdict": markup.UNDER_PREFIX},
+        {"check": "media-image-todo", "issue": 239, "surface": "public", "verdict": markup.AT_ORIGIN_ROOT},
+    ]
+    summary = markup.summarise(records)
+    assert summary["passed"] == 2
+    assert summary["failed"] == 0
+    assert summary["failures"] == []
+    assert summary["attempts"] == 3
+
+
+def test_the_two_surfaces_of_one_check_are_counted_separately():
+    records = [
+        {"check": "codeview", "issue": 240, "surface": "ha_ingress", "verdict": markup.UNDER_PREFIX},
+        {"check": "codeview", "issue": 240, "surface": "public", "verdict": markup.ESCAPED},
+    ]
+    summary = markup.summarise(records)
+    assert summary["passed"] == 1 and summary["failed"] == 1

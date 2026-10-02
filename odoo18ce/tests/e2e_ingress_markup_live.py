@@ -416,11 +416,20 @@ def evidence_record(
 
 
 def summarise(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """What `report` prints: the tally, the failures, and what never ran."""
+    """What `report` prints: the tally, the failures, and what never ran.
+
+    **The last record for a check and surface is its verdict.** A run keeps every
+    attempt -- a past reading is what it recorded -- and this run retried five of
+    the eight checks after finding a fixture or a selector wrong. Tallying every
+    attempt would report a fixed check as a failure for ever.
+    """
+    latest: dict[tuple[str, str], Mapping[str, Any]] = {}
+    for record in records:
+        latest[(record["check"], record["surface"])] = record
     passed = failed = 0
     failures: list[str] = []
     seen: set[str] = set()
-    for record in records:
+    for record in latest.values():
         seen.add(record["check"])
         verdict = record["verdict"]
         if verdict == NOT_RUN:
@@ -435,6 +444,9 @@ def summarise(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "failed": failed,
         "failures": sorted(failures),
         "not_run": sorted(set(CHECKS) - seen),
+        # How many readings were taken to get there, so a retried run is legible
+        # as retried rather than looking like a clean first pass.
+        "attempts": len(records),
     }
 
 
@@ -485,6 +497,23 @@ def read_pictures(root, selector: str, side) -> list[dict[str, Any]]:
             ),
         })
     return pictures
+
+
+def wait_for_editable(side, selector: str = EDITABLE) -> bool:
+    """Wait for the html field's editable to mount before reading it.
+
+    `wait_webclient()` returns when the action manager has rendered, which is
+    before the editor has mounted and filled the field. Without this wait a
+    reading taken straight afterwards found no `<img>` on a record that stores
+    one -- a race reported as "the description holds no image", which is the
+    same sentence a genuinely empty record produces. `open_todo` in
+    `e2e_collab_peer_snapshot_live` waits the same way.
+    """
+    try:
+        side.root.locator(selector).first.wait_for(timeout=TIMEOUT)
+        return True
+    except Exception:  # noqa: BLE001 -- a form that genuinely has no editable
+        return False
 
 
 def viewer_frame(side):
@@ -547,8 +576,36 @@ def seed_scratch_task(side, run_id: str) -> int:
     }])
 
 
+def seed_scratch_template(side, run_id: str) -> int:
+    """A scratch `mail.template` holding the full-HTML value.
+
+    `body_html` is `sanitize_tags=False`, so unlike `project.task.description` it
+    keeps the `<head>` that `computeContainsComplexHTML()` needs. `model_id` is
+    required, so it is pointed at `res.partner`.
+    """
+    model_ids = side.rpc("ir.model", "search", [[["model", "=", "res.partner"]]], {"limit": 1})
+    return side.rpc("mail.template", "create", [{
+        "name": scratch_task_name(run_id),
+        "model_id": model_ids[0],
+        "subject": marker_for(run_id),
+        "body_html": FULL_HTML_VALUE,
+    }])
+
+
 def delete_scratch_task(side, task_id: int) -> None:
     side.rpc("project.task", "unlink", [[task_id]])
+
+
+def pick_help_action(side) -> int:
+    """An `ir.actions.act_window` whose `help` this check may borrow.
+
+    Chosen by lowest id for repeatability, and its prior value is restored. The
+    field is #158's, and the view that renders it sets `codeview`.
+    """
+    ids = side.rpc("ir.actions.act_window", "search", [[]], {"limit": 1, "order": "id asc"})
+    if not ids:
+        raise RuntimeError("no ir.actions.act_window on this database")
+    return ids[0]
 
 
 def current_user_id(side) -> int:
@@ -713,7 +770,9 @@ def do_report(records_path: str) -> int:
     with open(records_path, encoding="utf-8") as handle:
         records = [json.loads(line) for line in handle if line.strip()]
     summary = summarise(records)
-    print("%d passed, %d failed" % (summary["passed"], summary["failed"]))
+    print("%d passed, %d failed (from %d recorded attempt(s); the last record for a "
+          "check and surface is its verdict)" % (
+              summary["passed"], summary["failed"], summary["attempts"]))
     for failure in summary["failures"]:
         print("  FAIL " + failure)
     if summary["not_run"]:
@@ -722,6 +781,8 @@ def do_report(records_path: str) -> int:
     # left for a reader to apply. #239 cannot escalate -- nothing it measures is
     # stored -- and #237 check 4 is the one that can, on any check at all.
     stored = [record for record in records if record.get("stored_verdict") == PREFIX_STORED]
+    # Every attempt is checked for a stored prefix, not just the last: a prefix
+    # that reached a write happened even if a later attempt was clean.
     print("stored_prefix_found=%s" % ("yes" if stored else "no"))
     for record in stored:
         print("  PREFIX STORED by %s/%s in %s" % (
@@ -777,8 +838,23 @@ def do_readonly_iframe(side, run_id: str, *, task_id=None, cleanup=False, **_) -
     There is no view option for this path and none exists to set.
     `computeContainsComplexHTML()` turns `sandboxedPreview` on for any value
     whose parse yields a non-empty `<head>`, and `displayReadonly` then renders
-    the viewer even while the field is editable -- so the *value* is how the
-    path is reached, which is why this check seeds one.
+    the viewer even while the field is editable -- so the *value* is how the path
+    is reached, which is why this check seeds one.
+
+    **Not on `project.task.description`, which is the field #237's row names.**
+    That field is `sanitize_tags=True`, so the ORM strips `<html>`, `<head>` and
+    `<style>` on write: a full-HTML value seeded there comes back as the bare
+    `<img>`, `computeContainsComplexHTML()` never sees a `<head>`, and the field
+    renders the plain path -- which is check 1's screen, measured twice. Measured
+    on this host: the seeded value read back as
+    `<img src="/project_todo/static/img/todo_access.png">` and
+    `rendered_iframe` was false on both surfaces.
+
+    `mail.template.body_html` is `sanitize_tags=False`, so it keeps a full-HTML
+    value, and it renders through `html_mail` -- a subclass of the same
+    `HtmlField`. It is the field #240's row warns is "the value most likely to be
+    full HTML" for exactly this reason. A scratch template is created and deleted
+    rather than an existing one edited.
 
     Check 4 rides along: the field is read back afterwards, and a viewer has no
     save, so a value that changed means the prefix reached a write and the "no
@@ -786,16 +862,16 @@ def do_readonly_iframe(side, run_id: str, *, task_id=None, cleanup=False, **_) -
     """
     created = None
     if task_id is None:
-        task_id = created = seed_scratch_task(side, run_id)
-    side.goto("/odoo/project.task/%d" % task_id)
+        task_id = created = seed_scratch_template(side, run_id)
+    side.goto("/odoo/mail.template/%d" % task_id)
     side.wait_webclient()
     side.close_chat_windows()
     side.settle(2000)
 
     frame = viewer_frame(side)
     extra: dict[str, Any] = {
-        "task_id": task_id,
-        "created_task": created,
+        "record_id": task_id,  # a mail.template id on this check, not a task
+        "created_template": created,
         # The viewer is only on the iframe path when it rendered an iframe. Its
         # absence is a reading, not a retry: it says the value did not take the
         # path this check is about.
@@ -814,11 +890,11 @@ def do_readonly_iframe(side, run_id: str, *, task_id=None, cleanup=False, **_) -
         pictures = read_pictures(frame, PICTURES, side)
         notes = ""
 
-    stored = {"project.task.description": read_field(side, "project.task", task_id, "description")}
+    stored = {"mail.template.body_html": read_field(side, "mail.template", task_id, "body_html")}
     if cleanup and created is not None:
-        delete_scratch_task(side, created)
-        extra["deleted_task"] = created
-    return {"screen": "/odoo/project.task/%d" % task_id, "pictures": pictures,
+        side.rpc("mail.template", "unlink", [[created]])
+        extra["deleted_template"] = created
+    return {"screen": "/odoo/mail.template/%d" % task_id, "pictures": pictures,
             "stored": stored, "extra": extra, "notes": notes}
 
 
@@ -874,11 +950,23 @@ def do_mailing_readonly(side, run_id: str, *, mailing_id=None, **_) -> dict[str,
 # `base.action_res_users_my` is `target="new"`, so Preferences is a dialog over
 # whatever is on screen (`base/views/res_users_views.xml:506-512`), and its
 # footer carries its own save -- `.o_form_button_save` is not on it.
-PREFERENCES_ACTION = "/odoo/action-base.action_res_users_my"
+# **Not the user signature, which is the screen #240's row names.** Measured on
+# this host: that field renders through `o_field_html_mail` -- the `html_mail`
+# subclass -- and its editor comes up **empty**, showing the `o-we-hint`
+# placeholder, even with a fragment value present in the record. With an empty
+# editable there is no text to select, so the floating toolbar is never raised and
+# the `codeview` group never renders. #240's row picked the signature *because*
+# `html_mail` was the thing to avoid (a mail body is the value most likely to be
+# full HTML); on this build the signature is served by that widget anyway.
+#
+# `ir.actions.act_window.help` is the other `codeview` view
+# (`base/views/ir_actions_views.xml:230`, #158's field). It is a plain `html`
+# field on the current editor, `sanitize_tags=True` so it keeps a fragment and
+# cannot become a sandboxed preview, and there are 707 records to pick from.
+HELP_FIELD = '.o_field_html[name="help"]'
+HELP_EDITABLE = HELP_FIELD + " .odoo-editor-editable"
 SIGNATURE_FIELD = '.o_field_html[name="signature"]'
 SIGNATURE_EDITABLE = SIGNATURE_FIELD + " .odoo-editor-editable"
-PREFERENCES_SAVE = 'button[name="preference_save"]'
-PREFERENCES_CANCEL = 'button[name="preference_cancel"]'
 
 # Turning the code view **on** for a fragment value is a toolbar item, not the
 # button beside the field: `html_field.xml:26` renders `#codeview-btn-group` only
@@ -906,24 +994,36 @@ def do_codeview(side, run_id: str, *, cleanup=False, **_) -> dict[str, Any]:
     Two halves, both recorded: the picture loads under the prefix after the
     toggle, and `res.users.signature` is still root-relative after the save.
     """
-    uid = current_user_id(side)
-    before = read_field(side, "res.users", uid, "signature")
-    extra: dict[str, Any] = {"uid": uid, "signature_before": redact(before or "", {})}
+    uid = pick_help_action(side)
+    before = read_field(side, "ir.actions.act_window", uid, "help")
+    extra: dict[str, Any] = {"action_id": uid, "help_before": redact(before or "", {})}
     # Seeded over RPC rather than typed, so the value under test is exactly the
     # one the Static tier measured and the check does not also depend on the
     # code view's own typing working.
-    write_field(side, "res.users", uid, "signature", signature_value(run_id))
+    write_field(side, "ir.actions.act_window", uid, "help", signature_value(run_id))
     try:
         return _codeview_after_seeding(side, run_id, uid, before, extra, cleanup=cleanup)
-    except Exception:
-        # A real user's signature was replaced by this check. Every step after the
-        # write can raise -- the `?debug=1` navigation, the Preferences dialog, the
-        # floating toolbar, the textarea, the save -- and `run_check` swallows the
-        # exception and discards the returned outcome, so without this the original
-        # value would exist nowhere: not on the host, not in the evidence.
-        # `--cleanup` does not cover it; that is only reached on the success path.
+    except Exception as error:
+        # The partial readings are the whole value of a failed attempt -- was debug
+        # on, did the toolbar appear, was there a selection -- and `run_check`
+        # discards a handler's return value when it raises. So restore, then
+        # return them as a NOT-RUN outcome rather than re-raising and losing them.
         try:
-            write_field(side, "res.users", uid, "signature", before or False)
+            write_field(side, "ir.actions.act_window", uid, "help", before or False)
+            extra["help_restored"] = True
+        except Exception:  # noqa: BLE001 -- the session itself may be gone
+            extra["help_restored"] = False
+        return {"screen": "/odoo/ir.actions.act_window/%d (help, debug)" % uid, "pictures": None,
+                "stored": {}, "extra": extra,
+                "notes": "%s: %s" % (type(error).__name__,
+                                     adapter.sanitize_diagnostic(str(error))[:300])}
+    except BaseException:
+        # The interrupt path: Ctrl+C, a kill, a timeout that raises outside
+        # `Exception`. A real user's signature was replaced by this check before any
+        # browser step, so it is put back here too and the interrupt then continues.
+        # `--cleanup` does not cover this; it is only reached on the success path.
+        try:
+            write_field(side, "ir.actions.act_window", uid, "help", before or False)
         except Exception:  # noqa: BLE001 -- the session itself may be gone
             pass
         raise
@@ -937,32 +1037,85 @@ def _codeview_after_seeding(side, run_id, uid, before, extra, *, cleanup=False) 
     side.goto("/odoo?debug=1")
     side.wait_webclient()
     extra["debug"] = side.root.evaluate("() => (window.odoo && odoo.debug) || ''")
-    side.goto(PREFERENCES_ACTION)
-    side.root.locator(DIALOG).first.wait_for(timeout=TIMEOUT)
+    # `?debug=1` goes on **this** navigation, not only on the `/odoo` one before
+    # it. Measured on this host: after `/odoo?debug=1` the next page reported
+    # `odoo.debug === ""`, so the flag did not survive the navigation, the
+    # `codeview` command was never registered (`html_field.js:375` needs
+    # `odoo.debug && options.codeview`), and the floating toolbar came up with
+    # seven groups and no code view -- which reads exactly like a missing button.
+    side.goto("/odoo/ir.actions.act_window/%d?debug=1" % uid)
+    side.wait_webclient()
     side.settle(1500)
 
-    editable = side.root.locator(SIGNATURE_EDITABLE).first
+    editable = side.root.locator(HELP_EDITABLE).first
     editable.wait_for(timeout=TIMEOUT)
     # The toolbar is a selection toolbar; it is not in the DOM until there is one.
     editable.click()
-    # A *text* selection, and deliberately not the whole editable. The floating
-    # toolbar hides a group whose `namespace` does not match the selection's
-    # (`toolbar_plugin.js:393`), the `codeview` group declares none, and selecting
-    # the editable's whole contents includes the `<img>` -- which can put the
-    # toolbar in the `image` namespace and hide the very button this needs.
-    side.root.evaluate(
-        """(selector) => {
-            const editable = document.querySelector(selector);
-            const target = editable.querySelector("p") || editable;
-            const range = document.createRange();
-            range.selectNodeContents(target);
-            const selection = window.getSelection();
-            selection.removeAllRanges();
-            selection.addRange(range);
-        }""",
-        SIGNATURE_EDITABLE,
-    )
-    side.settle(800)
+    # A *text* selection, made with the keyboard. A programmatic `Range` fires
+    # `selectionchange`, but the floating toolbar is raised from the editor's own
+    # pointer and key handling, so a JS-only selection left it absent for the full
+    # 60 s wait. `Home` then `Shift+End` selects the first line's text and nothing
+    # else -- deliberately not the whole editable, because the toolbar hides a
+    # group whose `namespace` does not match the selection's
+    # (`toolbar_plugin.js:393`) and the `codeview` group declares none, so an
+    # image in the selection would put it in the `image` namespace and hide the
+    # one button this check needs.
+    # A **triple-click on the paragraph**, which is the real pointer sequence a
+    # user makes to select a line. `editable.click()` followed by `Home` /
+    # `Shift+End` left the selection collapsed (`{collapsed: true, text: ""}`
+    # measured on this host), so the toolbar was never raised and the wait below
+    # timed out with nothing to show for it.
+    paragraph = side.root.locator(HELP_EDITABLE + " p").first
+    extra["paragraph_count"] = paragraph.count()
+    extra["editable_visible"] = editable.is_visible()
+    extra["dom"] = side.root.evaluate(
+        """(sel) => {
+            const wrappers = [...document.querySelectorAll(".o_field_html")].map(
+                e => (e.getAttribute("name") || "?") + ":" + e.className.slice(0, 50));
+            const ed = document.querySelector(sel);
+            return {
+                html_fields: wrappers,
+                editable_html: ed ? ed.innerHTML.slice(0, 180) : null,
+                editable_class: ed ? ed.className.slice(0, 80) : null,
+                iframes_in_field: document.querySelectorAll(
+                    '.o_field_html[name="help"] iframe').length,
+            };
+        }""", HELP_EDITABLE)
+    target = paragraph if paragraph.count() else editable
+    target.click(click_count=3)
+    # Measured immediately: a settle first let whatever stole focus collapse the
+    # selection before it was read, which made the reading say "no selection"
+    # when the question was "did the click land".
+    extra["after_click"] = side.root.evaluate(
+        """() => {
+            const s = window.getSelection();
+            const a = document.activeElement;
+            return {
+                collapsed: s.isCollapsed,
+                text: (s.toString() || "").slice(0, 40),
+                active: a ? (a.tagName + "." + (a.className || "").slice(0, 60)) : null,
+                toolbars: document.querySelectorAll(".o-we-toolbar").length,
+                codeview_buttons: document.querySelectorAll(
+                    '.o-we-toolbar button[name="codeview"]').length,
+                any_codeview: document.querySelectorAll(
+                    '[name="codeview"], .o_codeview_btn, #codeview-btn-group').length,
+                // `odoo.debug` **on this page**. It was read once on the
+                // `?debug=1` navigation, but the form is a separate document and
+                // `var odoo = {debug: ...}` is baked in at render time, so the
+                // question is whether the session carried it here.
+                debug_here: (window.odoo && odoo.debug) || "",
+                toolbar_buttons: [...document.querySelectorAll(".o-we-toolbar button")]
+                    .map(b => b.getAttribute("name") || b.title || "?").slice(0, 30),
+                toolbar_groups: [...document.querySelectorAll(".o-we-toolbar .btn-group")]
+                    .map(g => g.getAttribute("name") || "?").slice(0, 20),
+            };
+        }""")
+    side.page.wait_for_timeout(1500)
+    extra["selection"] = side.root.evaluate(
+        "() => { const s = window.getSelection();"
+        " return {collapsed: s.isCollapsed, text: (s.toString() || '').slice(0, 40)}; }")
+    extra["toolbar_present"] = side.root.locator(".o-we-toolbar").count() > 0
+    extra["codeview_button"] = side.root.locator(CODEVIEW_TOOLBAR_BUTTON).count()
     toolbar = side.root.locator(CODEVIEW_TOOLBAR_BUTTON).first
     toolbar.wait_for(timeout=TIMEOUT)
     toolbar.click()
@@ -980,19 +1133,20 @@ def _codeview_after_seeding(side, run_id, uid, before, extra, *, cleanup=False) 
     side.settle(1500)
     # This is the reading #240 is about: the markup `toggleCodeView` just
     # re-inserted at `html_field.js:236`, rendered.
-    pictures = read_pictures(side.root, SIGNATURE_EDITABLE + " img", side)
+    pictures = read_pictures(side.root, HELP_EDITABLE + " img", side)
 
-    save = side.root.locator(PREFERENCES_SAVE).first
+    save = side.root.locator(SAVE_BUTTON).first
     save.wait_for(timeout=TIMEOUT)
     save.click()
-    side.settle(3000)
-    after = read_field(side, "res.users", uid, "signature")
-    stored = {"res.users.signature": after}
+    side.settle(4000)
+    extra["unsaved_after_save"] = side.root.locator(UNSAVED).count() > 0
+    after = read_field(side, "ir.actions.act_window", uid, "help")
+    stored = {"ir.actions.act_window.help": after}
 
     if cleanup:
-        write_field(side, "res.users", uid, "signature", before or False)
-        extra["signature_restored"] = True
-    return {"screen": PREFERENCES_ACTION + " (signature, debug)", "pictures": pictures,
+        write_field(side, "ir.actions.act_window", uid, "help", before or False)
+        extra["help_restored"] = True
+    return {"screen": "/odoo/ir.actions.act_window/%d (help, debug)" % uid, "pictures": pictures,
             "stored": stored, "extra": extra}
 
 
@@ -1149,12 +1303,88 @@ def media_dialog_reading(side, *, tab: str | None = None) -> dict[str, Any]:
         if candidate.count():
             candidate.click()
             side.settle(1500)
-    side.settle(1200)
-    return {
-        "tiles": side.root.locator(MEDIA_TILE).count(),
+    # The tiles arrive from `fetchAttachments`, which is a round trip. Reading
+    # straight after the dialog appears gave `tiles: 0` on one surface and
+    # `tiles: 3` on the other for the same record -- a load race recorded as a
+    # difference between the surfaces. Wait for the first tile, then settle.
+    try:
+        side.root.locator(MEDIA_TILE).first.wait_for(timeout=15000)
+    except Exception:  # noqa: BLE001 -- a dialog that genuinely lists none
+        pass
+    side.settle(1500)
+    tiles = side.root.locator(MEDIA_TILE)
+    reading = {
+        "tiles": tiles.count(),
         "tiles_selected": side.root.locator(MEDIA_TILE_SELECTED).count(),
         "tab": tab or "Images",
     }
+    # What the dialog actually offered. Without this, "preselected none" cannot
+    # be told apart from "the element never came from any attachment it listed",
+    # and those two readings mean opposite things for #239.
+    try:
+        reading["tile_sources"] = [side.env.mask(source) for source in tiles.evaluate_all(
+            """els => els.slice(0, 8).map(e => {
+                const img = e.querySelector("img");
+                return (img && (img.getAttribute("src") || img.src)) || e.textContent.trim().slice(0, 60);
+            })""")]
+    except Exception as error:  # noqa: BLE001
+        reading["tile_sources"] = ["unreadable: " + type(error).__name__]
+    reading.update(rewrite_reached_the_browser(side))
+    return reading
+
+
+# `@html_editor/main/media/media_dialog/image_selector` is where #239's rules 1
+# and 2 live. Asking the page whether the served method carries the helper is the
+# re-derivation the Issue's "Watch for" section demands when a check fails: it
+# separates "the pattern did not match the deployed bytes" from "the rule ran and
+# the comparison still disagreed", which are opposite findings.
+_RULE_PROBE = """() => {
+    const out = {markup_out_global: typeof window.__WOOW_INGRESS_MARKUP_OUT__};
+    try {
+        const mod = odoo.loader.modules.get(
+            "@html_editor/main/media/media_dialog/image_selector");
+        const source = mod.ImageSelector.prototype.isInitialMedia.toString();
+        out.rule_in_served_method = source.includes("__WOOW_INGRESS_MARKUP_OUT__");
+        out.served_method_length = source.length;
+    } catch (error) { out.probe_error = String(error).slice(0, 120); }
+    return out;
+}"""
+
+
+# Rule 3's argument is that **both** operands of the document comparison arrive
+# prefixed: the element's `href` by the Runtime shim, and the literal
+# `` `/web/content/${attachment.id}` `` by one of the generic literal rules the
+# asset location has shipped since #166, because it begins `` `/web/ ``. No `OUT`
+# was shipped for that read and a Static-tier test refuses one. Since no control
+# reopens the dialog on a document in the current editor, reading the served
+# method is how the premise is measured on the host instead.
+_DOCUMENT_OPERAND_PROBE = """() => {
+    const out = {};
+    try {
+        const mod = odoo.loader.modules.get(
+            "@html_editor/main/media/media_dialog/document_selector");
+        const source = mod.DocumentSelector.prototype.fetchAttachments.toString();
+        out.served_literal_prefixed = /\/api\/hassio_ingress\/[A-Za-z0-9_-]{16,}\/web\/content\//.test(source);
+        out.served_has_web_content_literal = source.includes("/web/content/");
+        out.served_method_length = source.length;
+        out.served_strips_query = source.includes("replace(/[?].*/");
+    } catch (error) { out.probe_error = String(error).slice(0, 140); }
+    return out;
+}"""
+
+
+def document_operand_reading(side) -> dict[str, Any]:
+    try:
+        return side.root.evaluate(_DOCUMENT_OPERAND_PROBE)
+    except Exception as error:  # noqa: BLE001
+        return {"probe_error": type(error).__name__}
+
+
+def rewrite_reached_the_browser(side) -> dict[str, Any]:
+    try:
+        return side.root.evaluate(_RULE_PROBE)
+    except Exception as error:  # noqa: BLE001
+        return {"probe_error": type(error).__name__}
 
 
 def close_media_dialog(side) -> None:
@@ -1176,8 +1406,20 @@ def _media_verdict(reading: Mapping[str, Any], side) -> tuple[list[dict[str, Any
         return [{"tile": "selected", "verdict": expected_verdict(side.surface)}], ""
     if not reading["tiles"]:
         return [], "the dialog listed no attachment tiles at all, so the preselection was not measured"
-    return [{"tile": "none selected", "verdict": ESCAPED}], (
-        "the dialog listed %d tile(s) and preselected none" % reading["tiles"])
+    # Listed tiles and none selected is **not** an escape. `isInitialMedia` only
+    # ever matches an attachment the dialog actually listed, so a non-match can
+    # equally mean the element never came from one -- a static module asset, a
+    # record-field image like a website logo. Measured on this host: the
+    # onboarding to-do's picture is `/project_todo/static/img/todo_access.png`,
+    # which is no attachment at all, and the website home page's is
+    # `/web/image/website/1/logo/...`, a field image; both preselected none on
+    # **both** surfaces. So this is `ABSENT` -- nothing about the rules was
+    # measured -- and a real regression looks different: the same element
+    # selected on the Public origin and not under Ingress. That comparison is
+    # between two records and belongs to the evidence, not to one verdict.
+    return [{"tile": "none selected", "verdict": ABSENT}], (
+        "the dialog listed %d tile(s) and preselected none; on this surface that is only a "
+        "finding if the other surface preselected one for the same element" % reading["tiles"])
 
 
 def do_media_image_todo(side, run_id: str, *, task_id=None, **_) -> dict[str, Any]:
@@ -1194,8 +1436,8 @@ def do_media_image_todo(side, run_id: str, *, task_id=None, **_) -> dict[str, An
     side.goto("/odoo/project.task/%d" % task_id)
     side.wait_webclient()
     side.close_chat_windows()
+    extra: dict[str, Any] = {"task_id": task_id, "editable": wait_for_editable(side)}
     side.settle(2000)
-    extra: dict[str, Any] = {"task_id": task_id}
 
     image = side.root.locator(EDITABLE + " img").first
     if not image.count():
@@ -1241,8 +1483,8 @@ def do_media_document_todo(side, run_id: str, *, task_id=None, **_) -> dict[str,
     side.goto("/odoo/project.task/%d" % task_id)
     side.wait_webclient()
     side.close_chat_windows()
+    extra: dict[str, Any] = {"task_id": task_id, "editable": wait_for_editable(side)}
     side.settle(2000)
-    extra: dict[str, Any] = {"task_id": task_id}
 
     document = side.root.locator(EDITABLE + " " + DOCUMENT_LINK).first
     if not document.count():
@@ -1250,8 +1492,24 @@ def do_media_document_todo(side, run_id: str, *, task_id=None, **_) -> dict[str,
                 "notes": "the description holds no document link (a.o_image), so this row is "
                          "unreachable on this record; inserting one would be a different check"}
     extra["element"] = {"href": side.env.mask(document.get_attribute("href"))}
-    document.click()
-    side.settle(1000)
+    extra["operand"] = document_operand_reading(side)
+    # Deliberately **not** a click. A document is an `<a href>`, and clicking one
+    # inside the editable navigates or starts a download -- which detaches the
+    # element, so the next step times out "waiting for locator" and the check
+    # records a timeout rather than a reading. Selecting the node is what raises
+    # the toolbar anyway, and it leaves the page where it was.
+    side.root.evaluate(
+        """(selector) => {
+            const anchor = document.querySelector(selector);
+            const range = document.createRange();
+            range.selectNode(anchor);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }""",
+        EDITABLE + " " + DOCUMENT_LINK,
+    )
+    side.settle(1200)
     # The current editor's Replace is in the toolbar's `image` **namespace**
     # (`media_plugin.js:50`, `namespace: "image"`), and a document is an
     # `<a class="o_image">` rather than an `<img>` -- so selecting one does not
@@ -1263,8 +1521,11 @@ def do_media_document_todo(side, run_id: str, *, task_id=None, **_) -> dict[str,
         extra["replace_control"] = REPLACE_CURRENT
         replace.click()
     else:
+        # `force` because a document box can be laid out with zero size until the
+        # editor's own stylesheet sizes it, and Playwright then refuses the click
+        # as not actionable -- which is a fixture property, not a finding.
         extra["replace_control"] = "dblclick"
-        document.dblclick()
+        document.dblclick(force=True)
     side.settle(1500)
     if not side.root.locator(MEDIA_DIALOG).count():
         return {"screen": "/odoo/project.task/%d" % task_id, "pictures": None, "extra": extra,
@@ -1302,14 +1563,35 @@ def do_media_image_website(side, run_id: str, **_) -> dict[str, Any]:
     extra: dict[str, Any] = {"editor": "open"}
 
     # The page is an iframe inside the editor; its images are the editable ones.
+    # The editor holds two preview frames: the page and the hidden fallback it
+    # navigates through, and which is first in the DOM is not a contract
+    # (`e2e_ingress_hand_checks.preview_frames` carries the same note). Picking
+    # one by "has an img" chose the hidden one, whose image is never actionable,
+    # so the click timed out instead of reading anything. Pick by **visibility**.
     frames = [handle.content_frame() for handle in root.locator(".o_website_preview iframe").element_handles()]
-    frame = next((candidate for candidate in frames if candidate is not None
-                  and candidate.locator("img").count()), None)
-    if frame is None:
+    image = None
+    for candidate in frames:
+        if candidate is None:
+            continue
+        images = candidate.locator("img")
+        for index in range(min(images.count(), 12)):
+            option = images.nth(index)
+            try:
+                if option.is_visible():
+                    image = option
+                    break
+            except Exception:  # noqa: BLE001 -- a frame that navigated away
+                continue
+        if image is not None:
+            break
+    if image is None:
         _discard_website_editor(side)
         return {"pictures": None, "extra": extra,
-                "notes": "the editor's preview held no readable frame with an image"}
-    image = frame.locator("img").first
+                "notes": "no preview frame held a visible image to reopen the dialog on"}
+    try:
+        image.scroll_into_view_if_needed(timeout=15000)
+    except Exception:  # noqa: BLE001 -- already in view
+        pass
     extra["element"] = {
         "src": side.env.mask(image.get_attribute("src")),
         "data_original_src": side.env.mask(image.get_attribute("data-original-src")),
@@ -1408,8 +1690,24 @@ def do_mailing_editable(side, run_id: str, *, mailing_id=None, cleanup=False, **
     # the check does not also depend on the designer's own typing working.
     write_field(side, "mailing.mailing", mailing_id, "body_arch", mailing_body_value(run_id))
     try:
-        return _mailing_after_seeding(side, mailing_id, before, extra, cleanup=cleanup)
-    except Exception:
+        return _mailing_after_seeding(side, mailing_id, run_id, before, extra, cleanup=cleanup)
+    except Exception as error:
+        # Restore, then return the partial readings rather than re-raising: a
+        # handler that raises has its return value discarded by `run_check`, and
+        # the readings are the whole value of a failed attempt.
+        try:
+            side.rpc("mailing.mailing", "write", [[mailing_id], {
+                "body_arch": before.get("body_arch") or False,
+                "body_html": before.get("body_html") or False,
+            }])
+            extra["body_restored"] = True
+        except Exception:  # noqa: BLE001 -- the session itself may be gone
+            extra["body_restored"] = False
+        return {"screen": "/odoo/mailing.mailing/%d (mail designer)" % mailing_id,
+                "pictures": None, "stored": {}, "extra": extra,
+                "notes": "%s: %s" % (type(error).__name__,
+                                     adapter.sanitize_diagnostic(str(error))[:300])}
+    except BaseException:
         # Same reason as `do_codeview`: this replaced a real mailing's body, every
         # step after it can raise, and `run_check` discards the outcome on a raise.
         try:
@@ -1422,7 +1720,7 @@ def do_mailing_editable(side, run_id: str, *, mailing_id=None, cleanup=False, **
         raise
 
 
-def _mailing_after_seeding(side, mailing_id, before, extra, *, cleanup=False) -> dict[str, Any]:
+def _mailing_after_seeding(side, mailing_id, run_id, before, extra, *, cleanup=False) -> dict[str, Any]:
     """The browser half of `do_mailing_editable`, split out for the same reason."""
     side.goto("/odoo/mailing.mailing/%d" % mailing_id)
     side.wait_webclient()
@@ -1448,8 +1746,25 @@ def _mailing_after_seeding(side, mailing_id, before, extra, *, cleanup=False) ->
                 "notes": "the designer's iframe held no %s editable" % MAILING_EDITABLE}
     pictures = read_pictures(frame, MAILING_EDITABLE + " img", side)
 
+    # Type into the designer so the form is **dirty**. The body was seeded over
+    # RPC, so the form loads clean and the save button, while present in the DOM,
+    # stays hidden behind `o_form_status_indicator_buttons.invisible` -- clicking
+    # it then times out as not actionable. Typing is also what #238's row asks
+    # for: the two rules are the save seam, and a save of an unchanged record
+    # writes nothing for them to act on.
+    try:
+        editable.click()
+        side.page.keyboard.press("Control+End")
+        side.page.keyboard.type(" " + marker_for(run_id))
+        side.settle(1500)
+        extra["typed"] = True
+    except Exception as error:  # noqa: BLE001
+        extra["typed"] = False
+        extra["typing_error"] = type(error).__name__
+
     save = side.root.locator(SAVE_BUTTON).first
-    if not save.count():
+    extra["save_visible"] = save.is_visible() if save.count() else False
+    if not extra["save_visible"]:
         # Without the save, #238's whole subject is untouched: `getEditingValue`
         # (rule 7) never runs and `commitChanges` never inlines `body_html` (rule
         # 8). And `body_arch` read back would be the value *this function* seeded
@@ -1460,9 +1775,10 @@ def _mailing_after_seeding(side, mailing_id, before, extra, *, cleanup=False) ->
         extra["saved"] = False
         return {"screen": "/odoo/mailing.mailing/%d (mail designer)" % mailing_id,
                 "pictures": None, "extra": extra,
-                "notes": "no %s on the form, so nothing was saved: the two rules this check is "
-                         "about are the save seam, and a read-back of the RPC-seeded body_arch "
-                         "would have scored a pass without exercising either" % SAVE_BUTTON}
+                "notes": "%s never became visible, so nothing was saved: the two rules this "
+                         "check is about are the save seam, and a read-back of the RPC-seeded "
+                         "body_arch would have scored a pass without exercising either"
+                         % SAVE_BUTTON}
     save.click()
     side.settle(6000)
     extra["saved"] = True
