@@ -189,6 +189,16 @@ in `project.task.description` — the Public origin stores what it is handed —
 the next Ingress save removes it. Registered as `G-08`; evidence in
 `docs/testing/evidence/2026-10-02-issue-265/`.
 
+**So `run --pair ingress-public` and `report` exit non-zero on this host, and that
+is the expected reading rather than a broken run.** #234's rule escalates on a
+*confirmed* stored foreign prefix, and that pair confirms one every time it
+delivers. Read `escalate_issue_234_to_blocker` with `foreign_prefix_healed` and
+`foreign_prefix_still_stored` beside it before writing anything down — a run that
+confirmed the write and healed it is not the same reading as one that left it in
+the field. An unattended Iteration must not treat that exit code as a harness
+failure, and must not "fix" it by weakening the rule: that is exactly what a
+review caught #265 doing in its first pass.
+
 ## Deploying
 
 Three ways, in order of preference:
