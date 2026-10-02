@@ -87,7 +87,7 @@
   #239's severity does not move for it -- the preselection is correct on both
   surfaces and a search domain travels in a request body, so nothing is stored.
 - This is also the markup family's first `.ambient.json`, which is what #243's
-  evidence said the next run of this family owed: 14 lines beside 14 records,
+  evidence said the next run of this family owed: 22 lines beside 22 records,
   `website.track` and `website.visitor` deltas **0** on every line including the
   website editor's five navigations per surface, absolute counts 198 and 59 on
   either side of every window.

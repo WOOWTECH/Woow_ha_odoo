@@ -225,10 +225,21 @@ def test_the_stored_shape_is_the_peer_snapshot_s_and_not_a_second_regex():
     anything noticing.
     """
     assert markup.ingress_prefixes is peer.ingress_prefixes
-    assert not any(
-        isinstance(value, re.Pattern) and "hassio_ingress" in value.pattern
-        for value in vars(markup).values()
-    )
+    for value in vars(markup).values():
+        if isinstance(value, re.Pattern) and "hassio_ingress" in value.pattern:
+            assert value is peer.INGRESS_PREFIX_SHAPE, (
+                "this module may hold the peer snapshot's own shape and nothing else "
+                "that matches an Ingress prefix")
+    # And not in a string either (#266). The document-operand probe reads the
+    # served method for a *prefixed* literal, and it spelled the shape out in
+    # JavaScript -- twice -- until the shape was handed in instead. A copy there
+    # is as free to drift as a second `re.Pattern` and is invisible to the loop
+    # above, so both probes are checked as text.
+    for name in ("_DOCUMENT_OPERAND_PROBE", "_RULE_PROBE"):
+        assert "hassio_ingress" not in getattr(markup, name), name
+    assert "spec.prefix_shape" in markup._DOCUMENT_OPERAND_PROBE
+    assert "prefix_shape" in inspect.getsource(markup.document_operand_reading)
+    assert "INGRESS_PREFIX_SHAPE" in inspect.getsource(markup.document_operand_reading)
 
 
 def test_a_token_too_short_for_the_gateway_is_not_a_prefix():
@@ -658,9 +669,11 @@ IMAGE_ATTACHMENT = {"id": 8, "name": "woow-image-fixture-woow-x.png",
                     "image_src": "/web/image/8-def456/woow-image-fixture-woow-x.png"}
 
 MEDIA_FLOWS = {
-    "media-image-todo": (markup.do_media_image_todo,),
+    "media-image-todo": (markup.do_media_image_todo,
+                         markup._media_image_todo_after_seeding),
     "media-image-website": (markup.do_media_image_website, markup._website_after_seeding),
-    "media-document-todo": (markup.do_media_document_todo,),
+    "media-document-todo": (markup.do_media_document_todo,
+                            markup._media_document_todo_after_seeding),
     "media-document-mailing": (markup.do_media_document_mailing,
                                markup._document_mailing_after_seeding),
 }
@@ -809,6 +822,75 @@ def test_the_document_check_reads_the_two_mailing_fields_back_into_stored():
     assert "return {" in source and '"stored": stored' in source
 
 
+# Anything that undoes part of a fixture. A handler's error path has to name at
+# least one of these; which one depends on what that check made.
+CLEANUP_NAMES = (
+    "remove_media_task", "_remove_media_todo_quietly", "_leave_media_todo",
+    "remove_website_fixture_page", "_leave_website_media",
+    "_remove_fixture_attachment", "_restore_mailing_body",
+)
+
+SEEDING_FLOWS = {
+    "media-image-todo": (markup.do_media_image_todo,
+                         markup._media_image_todo_after_seeding,
+                         markup._leave_media_todo),
+    "media-document-todo": (markup.do_media_document_todo,
+                            markup._media_document_todo_after_seeding,
+                            markup._leave_media_todo),
+    "media-image-website": (markup.do_media_image_website,
+                            markup._website_after_seeding,
+                            markup._leave_website_media),
+    "media-document-mailing": (markup.do_media_document_mailing,
+                               markup._document_mailing_after_seeding,
+                               markup._document_mailing_leaving),
+}
+
+
+@pytest.mark.parametrize("check", sorted(SEEDING_FLOWS))
+def test_a_fixture_building_check_cannot_leave_its_fixture_behind(check):
+    """Every exit from a seeding check goes through its one leaving function.
+
+    This is the trap and not a tidiness rule. All four create their fixture
+    *before* the first navigation, and `run_check` **discards a handler's return
+    value when it raises** -- so a step failing between the seed and the verdict
+    leaves a public `ir.attachment`, and a scratch to-do or a `website.page`
+    beside it, on the host with nothing in the evidence naming them. Two of the
+    four were written exactly that way and a review caught it.
+    """
+    handler, browser_half, leaving = SEEDING_FLOWS[check]
+
+    # The browser half runs entirely after the seed, so every one of its exits
+    # -- and three of the four are give-up paths -- goes through one door.
+    returns = [line for line in inspect.getsource(browser_half).splitlines()
+               if line.strip().startswith("return ")]
+    assert returns, browser_half.__name__
+    assert all(leaving.__name__ + "(" in line for line in returns), (
+        "%s has a return that does not go through %s"
+        % (browser_half.__name__, leaving.__name__))
+
+    # The handler holds the seed and the browser half inside **two** guards, so
+    # a `KeyboardInterrupt` or a `SystemExit` removes the fixture too and not
+    # only an ordinary failure.
+    source = inspect.getsource(handler)
+    assert "except Exception" in source and "except BaseException:" in source, handler.__name__
+    ordinary, interrupted = source.split("except BaseException:")
+    ordinary = ordinary.split("except Exception")[-1]
+    for where, body in (("except Exception", ordinary), ("except BaseException", interrupted)):
+        assert any(name in body for name in CLEANUP_NAMES), (
+            "%s's %s path removes nothing it created" % (handler.__name__, where))
+
+
+@pytest.mark.parametrize("seeder", [markup.seed_media_task, markup.seed_website_fixture_page])
+def test_a_seeder_that_raises_half_way_removes_what_it_already_made(seeder):
+    """Both seeders raise *after* a `create`: `seed_media_task` when the image
+    attachment has no `image_src`, `seed_website_fixture_page` when
+    `website.new_page` returns no url. The row already exists at that point."""
+    source = inspect.getsource(seeder)
+    assert "except BaseException:" in source
+    assert source.index("create_fixture_attachment(") < source.index("except BaseException:")
+    assert "raise" in source.split("except BaseException:")[1]
+
+
 def test_every_exit_from_the_document_check_cleans_up_and_reads_back():
     """One exit point, because a check that gave up early must still discard,
     still read the record back and still remove its fixture -- and there are four
@@ -904,9 +986,12 @@ def test_the_fixture_removal_says_what_went_rather_than_swallowing_it():
     afterwards raises on a record that is correctly gone. A silent `except` would
     read as "removed" for a fixture still on the host."""
     source = inspect.getsource(markup.remove_website_fixture_page)
-    assert 'removed["page"]' not in source  # it is keyed by the loop's label
+    assert source.count("except Exception") == 2, (
+        "the page/view unlink and the attachment unlink are guarded separately, "
+        "so one failing does not hide the other's outcome")
     assert "removed[label] = False" in source
     assert 'removed["attachment"] = False' in source
+    assert "return removed" in source
 
 
 def test_both_media_dialogs_are_probed_for_the_rule():

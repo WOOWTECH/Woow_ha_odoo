@@ -137,7 +137,11 @@ from urllib.parse import quote, urlsplit
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import e2e_menu_action_adapter as adapter  # noqa: E402
-from e2e_collab_peer_snapshot_live import ingress_prefixes, redact  # noqa: E402
+from e2e_collab_peer_snapshot_live import (  # noqa: E402
+    INGRESS_PREFIX_SHAPE,
+    ingress_prefixes,
+    redact,
+)
 from e2e_menu_action_adapter import parse_env_file  # noqa: E402
 from e2e_parity_shared_layers_live import TIMEOUT, Env, IngressSide, PublicSide  # noqa: E402
 
@@ -473,7 +477,11 @@ DOCUMENT_LINK_TEMPLATE = (
     ' href="/web/content/%(id)d?unique=%(unique)s&amp;download=true"></a>'
 )
 
-MAILING_DOCUMENT_BODY_TEMPLATE = '<div class="o_layout"><p>%(marker)s</p><p>%(link)s</p></div>'
+# The body around whichever element a fixture is built from -- a mailing's
+# `body_arch` or a scratch to-do's `description`, and an `<a class="o_image">`
+# or an `<img>`. One shape, so the two surfaces and the two element kinds are
+# comparable and the marker always sits beside the thing under test.
+MEDIA_BODY_TEMPLATE = '<div class="o_layout"><p>%(marker)s</p><p>%(element)s</p></div>'
 
 
 def document_link_markup(attachment: Mapping[str, Any]) -> str:
@@ -488,9 +496,9 @@ def document_link_markup(attachment: Mapping[str, Any]) -> str:
 
 def mailing_document_body_value(run_id: str, attachment: Mapping[str, Any]) -> str:
     """The seeded mailing body for the document check, naming its run."""
-    return MAILING_DOCUMENT_BODY_TEMPLATE % {
+    return MEDIA_BODY_TEMPLATE % {
         "marker": marker_for(run_id),
-        "link": document_link_markup(attachment),
+        "element": document_link_markup(attachment),
     }
 
 
@@ -836,25 +844,37 @@ def seed_media_task(side, run_id: str, *, document: bool) -> dict[str, Any]:
     one on which the attribute arrives prefixed at all.
     """
     attachment = create_fixture_attachment(side, run_id, document=document)
-    if document:
-        element = document_link_markup(attachment)
-        wanted = "/web/content/%d" % attachment["id"]
-    else:
-        if not attachment["image_src"]:
-            raise RuntimeError("the fixture attachment has no image_src, so there is "
-                               "no right-hand operand to compare against")
-        element = '<img src="%s" alt="%s">' % (attachment["image_src"], FIXTURE_IMAGE_ALT)
-        wanted = attachment["image_src"]
-    description = MAILING_DOCUMENT_BODY_TEMPLATE % {
-        "marker": marker_for(run_id),
-        "link": element,
-    }
-    task_id = side.rpc("project.task", "create", [{
-        "name": scratch_task_name(run_id),
-        "description": description,
-        "project_id": False,
-    }])
-    stored = str(read_field(side, "project.task", task_id, "description") or "")
+    # Everything after the `create` is inside the guard, because a seeder that
+    # raises half-way has already made a row: `run_check` discards a handler's
+    # return value on a raise, so the leftover would be on the host with
+    # nothing in the evidence naming it.
+    try:
+        if document:
+            element = document_link_markup(attachment)
+            wanted = "/web/content/%d" % attachment["id"]
+        else:
+            if not attachment["image_src"]:
+                raise RuntimeError("the fixture attachment has no image_src, so there is "
+                                   "no right-hand operand to compare against")
+            element = '<img src="%s" alt="%s">' % (attachment["image_src"], FIXTURE_IMAGE_ALT)
+            wanted = attachment["image_src"]
+        description = MEDIA_BODY_TEMPLATE % {
+            "marker": marker_for(run_id),
+            "element": element,
+        }
+        task_id = side.rpc("project.task", "create", [{
+            "name": scratch_task_name(run_id),
+            "description": description,
+            "project_id": False,
+        }])
+    except BaseException:
+        _remove_fixture_attachment(side, attachment)
+        raise
+    try:
+        stored = str(read_field(side, "project.task", task_id, "description") or "")
+    except BaseException:
+        remove_media_task(side, {"task_id": task_id, "attachment": attachment})
+        raise
     return {
         "task_id": task_id,
         "attachment": attachment,
@@ -870,7 +890,7 @@ def remove_media_task(side, created: Mapping[str, Any]) -> dict[str, bool]:
         removed["task"] = True
     except Exception:  # noqa: BLE001
         removed["task"] = False
-    removed.update(_remove_document_fixture(side, created["attachment"]))
+    removed.update(_remove_fixture_attachment(side, created["attachment"]))
     return removed
 
 
@@ -884,19 +904,27 @@ def seed_website_fixture_page(side, run_id: str) -> dict[str, Any]:
     the one the *New page* flow produces.
     """
     attachment = create_fixture_attachment(side, run_id, document=False)
-    if not attachment["image_src"]:
-        raise RuntimeError("the fixture attachment has no image_src, so there is "
-                           "no right-hand operand to compare against")
-    created = side.rpc("website", "new_page", [], {
-        "name": fixture_page_name(run_id, side.surface),
-        "add_menu": False,
-        "sections_arch": website_fixture_section(run_id, attachment),
-    })
-    fixture = dict(attachment=attachment)
-    fixture.update({key: created.get(key) for key in ("url", "view_id", "page_id")})
-    if not fixture.get("url"):
-        raise RuntimeError("website.new_page returned no url, so the editor has "
-                           "no page to open")
+    # As in `seed_media_task`: every step after the first `create` is guarded,
+    # because each of them can raise with a row already made. The guard removes
+    # what exists at that point -- the attachment alone, or the page and its
+    # view beside it.
+    fixture: dict[str, Any] = {"attachment": attachment}
+    try:
+        if not attachment["image_src"]:
+            raise RuntimeError("the fixture attachment has no image_src, so there is "
+                               "no right-hand operand to compare against")
+        created = side.rpc("website", "new_page", [], {
+            "name": fixture_page_name(run_id, side.surface),
+            "add_menu": False,
+            "sections_arch": website_fixture_section(run_id, attachment),
+        })
+        fixture.update({key: created.get(key) for key in ("url", "view_id", "page_id")})
+        if not fixture.get("url"):
+            raise RuntimeError("website.new_page returned no url, so the editor has "
+                               "no page to open")
+    except BaseException:
+        remove_website_fixture_page(side, fixture)
+        raise
     return fixture
 
 
@@ -1782,7 +1810,8 @@ _DOCUMENT_OPERAND_PROBE = r"""(spec) => {
     try {
         const mod = odoo.loader.modules.get(spec.module);
         const source = mod.DocumentSelector.prototype.fetchAttachments.toString();
-        out.served_literal_prefixed = /\/api\/hassio_ingress\/[A-Za-z0-9_-]{16,}\/web\/content\//.test(source);
+        const prefixed = (path) => new RegExp(spec.prefix_shape + path);
+        out.served_literal_prefixed = prefixed("/web/content/").test(source);
         out.served_has_web_content_literal = source.includes("/web/content/");
         out.served_method_length = source.length;
         out.served_strips_query = source.includes("replace(/[?].*/");
@@ -1791,8 +1820,7 @@ _DOCUMENT_OPERAND_PROBE = r"""(spec) => {
         const domain = described && described.get ? described.get.toString() : "";
         out.served_domain_length = domain.length;
         out.served_domain_has_web_assets_literal = domain.includes("/web/assets/");
-        out.served_domain_asset_exclusion_prefixed =
-            /\/api\/hassio_ingress\/[A-Za-z0-9_-]{16,}\/web\/assets\//.test(domain);
+        out.served_domain_asset_exclusion_prefixed = prefixed("/web/assets/").test(domain);
     } catch (error) { out.probe_error = String(error).slice(0, 140); }
     return out;
 }"""
@@ -1803,9 +1831,22 @@ LEGACY_DOCUMENT_SELECTOR = "@web_editor/components/media_dialog/document_selecto
 
 def document_operand_reading(side, *, module: str = CURRENT_DOCUMENT_SELECTOR,
                              dialog: str = "current") -> dict[str, Any]:
+    """Both served reads, with the prefix shape handed in rather than written twice.
+
+    The shape is `INGRESS_PREFIX_SHAPE`, the gateway's own, derived from the
+    `$safe_ingress_path` map and pinned against the template by
+    `test_e2e_collab_peer_snapshot.py`. The probe used to spell it out in
+    JavaScript, once per read -- two copies that could drift from the add-on
+    with nothing noticing, which is the third of the three judgements this
+    module's docstring refuses to reimplement. It is a `str` here only because
+    JavaScript needs one; the authority is still the one `re.Pattern`.
+    """
     try:
-        return side.root.evaluate(_DOCUMENT_OPERAND_PROBE,
-                                  {"module": module, "dialog": dialog})
+        return side.root.evaluate(_DOCUMENT_OPERAND_PROBE, {
+            "module": module,
+            "dialog": dialog,
+            "prefix_shape": INGRESS_PREFIX_SHAPE.pattern,
+        })
     except Exception as error:  # noqa: BLE001
         return {"dialog": dialog, "probe_error": type(error).__name__}
 
@@ -1852,6 +1893,58 @@ def _media_verdict(reading: Mapping[str, Any], side) -> tuple[list[dict[str, Any
         "finding if the other surface preselected one for the same element" % reading["tiles"])
 
 
+# --- The two to-do media checks' shared seam (#266) ---------------------------
+#
+# Both create a scratch `project.task` and a public `ir.attachment` *before*
+# their first navigation, and `run_check` discards a handler's return value when
+# it raises -- so a step that failed between the seed and the verdict would leave
+# both on the host with nothing in the evidence naming them. These three
+# functions are the seam that cannot happen through: one place that seeds, one
+# that every exit goes through, and one for the paths where returning a record
+# is no longer possible.
+
+
+def _seed_media_todo(side, run_id: str, task_id, *,
+                     document: bool) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Seed the fixture unless `--task-id` named a record, and start the `extra`."""
+    created: dict[str, Any] | None = None
+    if task_id is None:
+        created = seed_media_task(side, run_id, document=document)
+        task_id = created["task_id"]
+    extra: dict[str, Any] = {"task_id": task_id}
+    if created is not None:
+        fixture = {
+            "attachment_id": created["attachment"]["id"],
+            "attachment_name": created["attachment"]["name"],
+            "task_id": created["task_id"],
+            "element_survived": created["element_survived"],
+        }
+        if document:
+            fixture["href"] = "/web/content/%d" % created["attachment"]["id"]
+        else:
+            fixture["image_src"] = created["attachment"]["image_src"]
+        extra["fixture"] = fixture
+    return created, extra
+
+
+def _leave_media_todo(side, created, extra, screen, *, cleanup, pictures,
+                      notes) -> dict[str, Any]:
+    """Every exit from either to-do media check, so none of them leaks a fixture."""
+    if cleanup and created is not None:
+        extra["fixture_removed"] = remove_media_task(side, created)
+    return {"screen": screen, "pictures": pictures, "stored": {}, "extra": extra,
+            "notes": notes}
+
+
+def _remove_media_todo_quietly(side, created, *, cleanup) -> None:
+    """The `BaseException` path: there is no record to put the outcome in."""
+    if cleanup and created is not None:
+        try:
+            remove_media_task(side, created)
+        except Exception:  # noqa: BLE001 -- the session itself may be gone
+            pass
+
+
 def do_media_image_todo(side, run_id: str, *, task_id=None, cleanup=False,
                         **_) -> dict[str, Any]:
     """#239 line 1: the dialog reopened on an image in a To-do description.
@@ -1870,22 +1963,28 @@ def do_media_image_todo(side, run_id: str, *, task_id=None, cleanup=False,
     record and never the onboarding one, for #243's reason: #235's checks read
     that record's stored `src`.
     """
-    created: dict[str, Any] | None = None
-    if task_id is None:
-        created = seed_media_task(side, run_id, document=False)
-        task_id = created["task_id"]
-    side.goto("/odoo/project.task/%d" % task_id)
+    created, extra = _seed_media_todo(side, run_id, task_id, document=False)
+    task_id = extra["task_id"]
+    screen = "/odoo/project.task/%d" % task_id
+    try:
+        return _media_image_todo_after_seeding(
+            side, task_id, created, extra, screen, cleanup=cleanup)
+    except Exception as error:
+        return _leave_media_todo(side, created, extra, screen, cleanup=cleanup, pictures=None,
+                                 notes="%s: %s" % (type(error).__name__,
+                                                   adapter.sanitize_diagnostic(str(error))[:300]))
+    except BaseException:
+        _remove_media_todo_quietly(side, created, cleanup=cleanup)
+        raise
+
+
+def _media_image_todo_after_seeding(side, task_id, created, extra, screen,
+                                    *, cleanup=False) -> dict[str, Any]:
+    """The browser half of `do_media_image_todo`."""
+    side.goto(screen)
     side.wait_webclient()
     side.close_chat_windows()
-    extra: dict[str, Any] = {"task_id": task_id, "editable": wait_for_editable(side)}
-    if created is not None:
-        extra["fixture"] = {
-            "attachment_id": created["attachment"]["id"],
-            "attachment_name": created["attachment"]["name"],
-            "image_src": created["attachment"]["image_src"],
-            "task_id": created["task_id"],
-            "element_survived": created["element_survived"],
-        }
+    extra["editable"] = wait_for_editable(side)
     side.settle(2000)
 
     # The fixture's own image, by its `alt`, so that another image on the record
@@ -1894,12 +1993,10 @@ def do_media_image_todo(side, run_id: str, *, task_id=None, cleanup=False,
         ' img[alt="%s"]' % FIXTURE_IMAGE_ALT if created is not None else " img")
     image = side.root.locator(selector).first
     if not image.count():
-        if cleanup and created is not None:
-            extra["fixture_removed"] = remove_media_task(side, created)
-        return {"screen": "/odoo/project.task/%d" % task_id, "pictures": None, "extra": extra,
-                "notes": "the description holds no image (%s); read `element_survived` before "
-                         "suspecting the screen, because the field is sanitize_tags=True"
-                         % selector}
+        return _leave_media_todo(side, created, extra, screen, cleanup=cleanup, pictures=None,
+                                 notes="the description holds no image (%s); read "
+                                       "`element_survived` before suspecting the screen, "
+                                       "because the field is sanitize_tags=True" % selector)
     # The element the dialog is asked about, recorded first: #239's comparison is
     # between this `src` and the attachment's `image_src`, and rule 2's branch is
     # about `data-original-src` on the same element.
@@ -1911,19 +2008,15 @@ def do_media_image_todo(side, run_id: str, *, task_id=None, cleanup=False,
     side.settle(1000)
     replace = side.root.locator(REPLACE_CURRENT).first
     if not replace.count():
-        if cleanup and created is not None:
-            extra["fixture_removed"] = remove_media_task(side, created)
-        return {"screen": "/odoo/project.task/%d" % task_id, "pictures": None, "extra": extra,
-                "notes": "the image toolbar showed no Replace item"}
+        return _leave_media_todo(side, created, extra, screen, cleanup=cleanup, pictures=None,
+                                 notes="the image toolbar showed no Replace item")
     replace.click()
     reading = media_dialog_reading(side)
     extra["dialog"] = reading
     pictures, notes = _media_verdict(reading, side)
     close_media_dialog(side)
-    if cleanup and created is not None:
-        extra["fixture_removed"] = remove_media_task(side, created)
-    return {"screen": "/odoo/project.task/%d (media dialog, image)" % task_id,
-            "pictures": pictures, "stored": {}, "extra": extra, "notes": notes}
+    return _leave_media_todo(side, created, extra, screen + " (media dialog, image)",
+                             cleanup=cleanup, pictures=pictures, notes=notes)
 
 
 def do_media_document_todo(side, run_id: str, *, task_id=None, cleanup=False,
@@ -1948,32 +2041,36 @@ def do_media_document_todo(side, run_id: str, *, task_id=None, cleanup=False,
     reason: #235's checks read that record's stored `src`, and a write here
     would be read as their result.
     """
-    created: dict[str, Any] | None = None
-    if task_id is None:
-        created = seed_media_task(side, run_id, document=True)
-        task_id = created["task_id"]
-    side.goto("/odoo/project.task/%d" % task_id)
+    created, extra = _seed_media_todo(side, run_id, task_id, document=True)
+    task_id = extra["task_id"]
+    screen = "/odoo/project.task/%d" % task_id
+    try:
+        return _media_document_todo_after_seeding(
+            side, task_id, created, extra, screen, cleanup=cleanup)
+    except Exception as error:
+        return _leave_media_todo(side, created, extra, screen, cleanup=cleanup, pictures=None,
+                                 notes="%s: %s" % (type(error).__name__,
+                                                   adapter.sanitize_diagnostic(str(error))[:300]))
+    except BaseException:
+        _remove_media_todo_quietly(side, created, cleanup=cleanup)
+        raise
+
+
+def _media_document_todo_after_seeding(side, task_id, created, extra, screen,
+                                       *, cleanup=False) -> dict[str, Any]:
+    """The browser half of `do_media_document_todo`."""
+    side.goto(screen)
     side.wait_webclient()
     side.close_chat_windows()
-    extra: dict[str, Any] = {"task_id": task_id, "editable": wait_for_editable(side)}
-    if created is not None:
-        extra["fixture"] = {
-            "attachment_id": created["attachment"]["id"],
-            "attachment_name": created["attachment"]["name"],
-            "href": "/web/content/%d" % created["attachment"]["id"],
-            "task_id": created["task_id"],
-            "element_survived": created["element_survived"],
-        }
+    extra["editable"] = wait_for_editable(side)
     side.settle(2000)
 
     document = side.root.locator(EDITABLE + " " + DOCUMENT_LINK).first
     if not document.count():
-        if cleanup and created is not None:
-            extra["fixture_removed"] = remove_media_task(side, created)
-        return {"screen": "/odoo/project.task/%d" % task_id, "pictures": None, "extra": extra,
-                "notes": "the description holds no document link (a.o_image): "
-                         "`project.task.description` is sanitize_tags=True, so read "
-                         "`element_survived` before suspecting the screen"}
+        return _leave_media_todo(side, created, extra, screen, cleanup=cleanup, pictures=None,
+                                 notes="the description holds no document link (a.o_image): "
+                                       "`project.task.description` is sanitize_tags=True, so "
+                                       "read `element_survived` before suspecting the screen")
     # `data_original_src` is recorded on every media check, including the two
     # document ones where it is structurally absent (#266): an `<a>` has no
     # `src` for the image tools to have optimised, so `None` here is the
@@ -2020,22 +2117,19 @@ def do_media_document_todo(side, run_id: str, *, task_id=None, cleanup=False,
         document.dblclick(force=True)
     side.settle(1500)
     if not side.root.locator(MEDIA_DIALOG).count():
-        if cleanup and created is not None:
-            extra["fixture_removed"] = remove_media_task(side, created)
-        return {"screen": "/odoo/project.task/%d" % task_id, "pictures": None, "extra": extra,
-                "notes": "no control reopened the media dialog on the document link: the current "
-                         "editor's Replace item is namespaced to `image` and a document is an "
-                         "a.o_image, and its own file plugin suppresses the toolbar inside a "
-                         "file box, so this row is unreachable here by construction. The tile "
-                         "is read by `media-document-mailing`, on the legacy dialog"}
+        return _leave_media_todo(
+            side, created, extra, screen, cleanup=cleanup, pictures=None,
+            notes="no control reopened the media dialog on the document link: the current "
+                  "editor's Replace item is namespaced to `image` and a document is an "
+                  "a.o_image, and its own file plugin suppresses the toolbar inside a "
+                  "file box, so this row is unreachable here by construction. The tile "
+                  "is read by `media-document-mailing`, on the legacy dialog")
     reading = media_dialog_reading(side, tab="Documents")
     extra["dialog"] = reading
     pictures, notes = _media_verdict(reading, side)
     close_media_dialog(side)
-    if cleanup and created is not None:
-        extra["fixture_removed"] = remove_media_task(side, created)
-    return {"screen": "/odoo/project.task/%d (media dialog, document)" % task_id,
-            "pictures": pictures, "stored": {}, "extra": extra, "notes": notes}
+    return _leave_media_todo(side, created, extra, screen + " (media dialog, document)",
+                             cleanup=cleanup, pictures=pictures, notes=notes)
 
 
 def do_media_image_website(side, run_id: str, *, cleanup=False, **_) -> dict[str, Any]:
@@ -2078,15 +2172,15 @@ def do_media_image_website(side, run_id: str, *, cleanup=False, **_) -> dict[str
     except Exception as error:
         # Same shape as `do_mailing_editable`: a handler that raises has its
         # return value discarded by `run_check`, and the readings taken before
-        # the failure are the whole value of a failed attempt. The fixture is
-        # removed here too, so a failed attempt does not leave a page behind for
-        # the next one to find and measure instead of its own.
-        if cleanup:
-            extra["fixture_removed"] = remove_website_fixture_page(side, fixture)
-        return {"screen": "/odoo/action-website.website_preview (Edit, Replace media)",
-                "pictures": None, "stored": {}, "extra": extra,
-                "notes": "%s: %s" % (type(error).__name__,
-                                     adapter.sanitize_diagnostic(str(error))[:300])}
+        # the failure are the whole value of a failed attempt. It leaves through
+        # the same door as every other exit, so a failed attempt does not leave
+        # a page behind for the next one to find and measure instead of its own.
+        return _leave_website_media(
+            side, fixture, extra,
+            "/odoo/action-website.website_preview (Edit, Replace media)",
+            cleanup=cleanup, pictures=None,
+            notes="%s: %s" % (type(error).__name__,
+                              adapter.sanitize_diagnostic(str(error))[:300]))
     except BaseException:
         if cleanup:
             try:
@@ -2114,10 +2208,10 @@ def _website_after_seeding(side, fixture, extra, *, cleanup=False) -> dict[str, 
         control = root.locator(
             ".o_edit_website_container button, .o_edit_website_container a").first
         if not control.count():
-            _discard_website_editor(side)
-            return {"screen": screen, "pictures": None, "extra": extra,
-                    "notes": "the editor did not open on the fixture page and no Edit control "
-                             "was present"}
+            return _leave_website_media(
+                side, fixture, extra, screen, cleanup=cleanup, pictures=None,
+                notes="the editor did not open on the fixture page and no Edit control "
+                      "was present")
         control.click()
         root.locator(".o-snippets-menu, #oe_snippets, .o_we_website_top_actions").first.wait_for(
             timeout=TIMEOUT)
@@ -2145,12 +2239,10 @@ def _website_after_seeding(side, fixture, extra, *, cleanup=False) -> dict[str, 
         except Exception:  # noqa: BLE001 -- a frame that navigated away
             continue
     if image is None:
-        _discard_website_editor(side)
-        if cleanup:
-            extra["fixture_removed"] = remove_website_fixture_page(side, fixture)
-        return {"screen": screen, "pictures": None, "extra": extra,
-                "notes": "no preview frame held the fixture image (img[alt=%r]); the page was "
-                         "created but the editor did not render it" % FIXTURE_IMAGE_ALT}
+        return _leave_website_media(
+            side, fixture, extra, screen, cleanup=cleanup, pictures=None,
+            notes="no preview frame held the fixture image (img[alt=%r]); the page was "
+                  "created but the editor did not render it" % FIXTURE_IMAGE_ALT)
     try:
         image.scroll_into_view_if_needed(timeout=15000)
     except Exception:  # noqa: BLE001 -- already in view
@@ -2185,21 +2277,33 @@ def _website_after_seeding(side, fixture, extra, *, cleanup=False) -> dict[str, 
         replace = root.locator(REPLACE_LEGACY).first
         extra["replace_control"] = REPLACE_LEGACY
     if not replace.count():
-        _discard_website_editor(side)
-        if cleanup:
-            extra["fixture_removed"] = remove_website_fixture_page(side, fixture)
-        return {"screen": screen, "pictures": None, "extra": extra,
-                "notes": "neither the ReplaceMedia snippet option nor #media-replace was present "
-                         "for the selected image"}
+        return _leave_website_media(
+            side, fixture, extra, screen, cleanup=cleanup, pictures=None,
+            notes="neither the ReplaceMedia snippet option nor #media-replace was present "
+                  "for the selected image")
     replace.click()
     reading = media_dialog_reading(side)
     extra["dialog"] = reading
     pictures, notes = _media_verdict(reading, side)
     close_media_dialog(side)
+    return _leave_website_media(side, fixture, extra, screen, cleanup=cleanup,
+                                pictures=pictures, notes=notes)
+
+
+def _leave_website_media(side, fixture, extra, screen, *, cleanup, pictures,
+                         notes) -> dict[str, Any]:
+    """Every exit from `media-image-website`: discard the editor, then clean up.
+
+    Same reason as `_leave_media_todo`. This check creates an `ir.attachment`,
+    a `website.page` and an `ir.ui.view` before its first navigation, and three
+    of its four exits are give-up paths -- so the discard and the removal belong
+    in one place rather than repeated at each of them.
+    """
     _discard_website_editor(side)
     if cleanup:
         extra["fixture_removed"] = remove_website_fixture_page(side, fixture)
-    return {"screen": screen, "pictures": pictures, "stored": {}, "extra": extra, "notes": notes}
+    return {"screen": screen, "pictures": pictures, "stored": {}, "extra": extra,
+            "notes": notes}
 
 
 def _discard_website_editor(side) -> None:
@@ -2421,15 +2525,20 @@ def do_media_document_mailing(side, run_id: str, *, mailing_id=None, cleanup=Fal
     information, and is reported against #239 rather than recorded as a partial
     fix.
 
-    **Nothing is meant to be saved, and the read-back is the guarantee rather
-    than that sentence.** Clicking inside the designer's editable can leave the
-    form dirty, and an Odoo form persists a dirty editor on `beforeunload` and
-    on `visibilitychange` without the record being dirty at all (#263 is the
-    same mechanism on the To-do form). So this check reads `body_arch` and
-    `body_html` back and puts them in `stored`, where `stored_verdict` judges
-    them: if a prefixed `href` reached the record, the record says so and the
-    check fails, which is the correct reading. `--cleanup` restores both fields
-    and removes the attachment.
+    **Nothing is meant to be saved, and three different things carry that
+    rather than the sentence.** Clicking inside the designer's editable can
+    leave the form dirty, and an Odoo form persists a dirty editor on
+    `beforeunload` and on `visibilitychange` without the record being dirty at
+    all (#263 is the same mechanism on the To-do form). So: the form is
+    **discarded** whenever it shows unsaved changes, which is what stops the
+    save; `body_arch` and `body_html` are **read back** into `stored`, where
+    `stored_verdict` judges them, so a prefixed `href` that reached the record
+    *during* the check fails it; and because this read-back happens before
+    `run_check` closes the session, a save that a `beforeunload` on that close
+    would make is outside it and is covered by the host reading the evidence
+    takes afterwards. Saying which of the three answers which window is the
+    point -- a read-back alone would not have covered the close.
+    `--cleanup` restores both fields and removes the attachment.
     """
     if mailing_id is None:
         mailing_id = editable_mailing_id(side)
@@ -2462,7 +2571,7 @@ def do_media_document_mailing(side, run_id: str, *, mailing_id=None, cleanup=Fal
         except Exception:  # noqa: BLE001 -- the session itself may be gone
             extra["body_restored"] = False
         if cleanup:
-            extra["fixture_removed"] = _remove_document_fixture(side, attachment)
+            extra["fixture_removed"] = _remove_fixture_attachment(side, attachment)
         return {"screen": "/odoo/mailing.mailing/%d (mail designer, document)" % mailing_id,
                 "pictures": None, "stored": {}, "extra": extra,
                 "notes": "%s: %s" % (type(error).__name__,
@@ -2470,7 +2579,8 @@ def do_media_document_mailing(side, run_id: str, *, mailing_id=None, cleanup=Fal
     except BaseException:
         try:
             _restore_mailing_body(side, mailing_id, before)
-        except Exception:  # noqa: BLE001
+            _remove_fixture_attachment(side, attachment)
+        except Exception:  # noqa: BLE001 -- the session itself may be gone
             pass
         raise
 
@@ -2482,7 +2592,7 @@ def _restore_mailing_body(side, mailing_id: int, before: Mapping[str, Any]) -> N
     }])
 
 
-def _remove_document_fixture(side, attachment: Mapping[str, Any]) -> dict[str, bool]:
+def _remove_fixture_attachment(side, attachment: Mapping[str, Any]) -> dict[str, bool]:
     try:
         side.rpc("ir.attachment", "unlink", [[attachment["id"]]])
         return {"attachment": True}
@@ -2587,7 +2697,9 @@ def _document_mailing_leaving(side, mailing_id, attachment, before, extra, scree
     still discards, still reads the record back and still cleans up. The
     read-back is in `stored` on purpose: the only way a prefix could reach the
     database from this check is the dirty-form save, and `stored_verdict` is
-    what names it.
+    what names it. It bounds the check and not the session -- a save made by a
+    `beforeunload` on `run_check`'s own `side.close()` falls after this reading,
+    and the evidence's host check is what covers that window.
     """
     try:
         if side.root.locator(UNSAVED).count():
@@ -2614,7 +2726,7 @@ def _document_mailing_leaving(side, mailing_id, attachment, before, extra, scree
             extra["body_restored"] = True
         except Exception:  # noqa: BLE001
             extra["body_restored"] = False
-        extra["fixture_removed"] = _remove_document_fixture(side, attachment)
+        extra["fixture_removed"] = _remove_fixture_attachment(side, attachment)
     return {"screen": screen, "pictures": pictures, "stored": stored,
             "extra": extra, "notes": notes}
 

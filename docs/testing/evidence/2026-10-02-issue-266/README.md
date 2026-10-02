@@ -35,8 +35,8 @@ Driver:
 
 | File | What it is |
 | --- | --- |
-| `markup.jsonl` | 14 records, `woow.ingress-markup/v1`, run `WOOW-MARKUP-20261002T074704Z` |
-| `markup.ambient.json` | the ambient figure, one line per surface per invocation — 14 lines, matching the records |
+| `markup.jsonl` | 22 records, `woow.ingress-markup/v1`, run `WOOW-MARKUP-20261002T074704Z` |
+| `markup.ambient.json` | the ambient figure, one line per surface per invocation — 22 lines, matching the records |
 
 `conservation.json` and `reconciled.jsonl` are absent for #243's and #265's
 reason: this run drove the markup driver and not
@@ -45,10 +45,12 @@ reconcile against. §10.6 of the parity plan records why the 76-item conservatio
 figure does not move for it, and §12 why this schema does not feed
 `conservation`.
 
-**`markup.jsonl` holds every attempt, not only the verdicts.** Two checks were
-run twice, and the first attempt of each is a reading that mattered — see **The
-first two attempts**. **The last record for a check and surface is its verdict**;
-`report` dedupes that way and prints the attempt count beside the tally.
+**`markup.jsonl` holds every attempt, not only the verdicts.** Three of the four
+checks were run three times and the fourth twice, and every earlier attempt is a
+reading that mattered — see **The attempts**. **The last record for a check and
+surface is its verdict**; `report` dedupes that way and prints the attempt count
+beside the tally, and over all 22 records it prints `6 passed, 0 failed (from 22
+recorded attempt(s))` and `stored_prefix_found=no`.
 
 ## P-Check
 
@@ -66,15 +68,33 @@ surfaces comparable at all, and P-5 is what the head links are built from.
 
 ## #239 — the three lines, all measured
 
+The verdict column is the preselection — **which tile is highlighted**, which is
+the whole of what #239's rules decide and the whole of what this row measures.
+
 | Line | Screen | Ingress | Public | Verdict |
 |---|---|---|---|---|
-| 1, image | a scratch to-do holding an image, current editor | element `<INGRESS_PREFIX>/web/image/1401-…png`, **4 tiles, 1 selected** | root-relative element, **1 tile, 1 selected** | **`PARITY`** |
+| 1, image | a scratch to-do holding an image, current editor | element `<INGRESS_PREFIX>/web/image/1411-…png`, **4 tiles, 1 selected** | root-relative element, **1 tile, 1 selected** | **`PARITY`** |
 | 2, website | the website editor's Replace Media, on a page this run built | `data-original-src` **prefixed**, **4 tiles, 1 selected** | `data-original-src` root-relative, **1 tile, 1 selected** | **`PARITY`** |
-| 3, document | the mail designer's **legacy** dialog, on a document this run built | element `href` prefixed, Documents tab, **30 tiles, 1 selected** | root-relative `href`, **1 tile, 1 selected** | **`PARITY`** |
+| 3, document | the mail designer's **legacy** dialog, on a document this run built | element `href` prefixed, Documents tab, **30 tiles, 1 selected** | root-relative `href`, **1 tile, 1 selected** | **`PARITY`** on the tile; the **tile count** differs, which is `G-09` / #271 below |
 | 3, document | the same, on the **current** editor | unreachable: no control opens the dialog | unreachable, the same way | `NOT-RUN`, with its reason |
 
+**The 30-against-1 in line 3's row is a measured divergence and is registered as
+one** — `G-09` in the parity plan, filed as #271 — rather than folded into that
+row's verdict. Folding it in would blur two different things: the tile that is
+*highlighted* is the same on both surfaces, which is what #239's rules decide,
+while the list of tiles *offered* differs, which another rule causes. See **What
+found a divergence** below.
+
 `route_escape=0`, `http_4xx_5xx=0`, `console_error=0`, `pageerror=0`,
-`failed_requests=0` on every one of the 14 records. `stored_prefix_found=no`.
+`failed_requests=0` on every one of the 22 records.
+
+**On `stored_prefix_found=no`, which `report` prints and which is weaker than it
+reads.** It means no record has `stored_verdict: PREFIX-STORED`. Only
+`media-document-mailing` reads a stored field at all here — the other three media
+checks are display state and store nothing, so their `stored_verdict` is
+`NOT-RUN` and there was nothing in them for a prefix to be found in. The two
+records that *do* carry a reading are `CLEAN`. What covers the rest is the host
+read in **Writes** below, which is a different instrument and is named as one.
 
 ### Line 2, the one that had never been exercised
 
@@ -89,8 +109,8 @@ arrive prefixed on — a page delivered as an **HTML response**:
 
 | | Ingress | Public |
 |---|---|---|
-| element `src` | `<INGRESS_PREFIX>/web/image/1409-58a8ca82/woow-image-fixture-….png` | `/web/image/1410-58a8ca82/…` |
-| element `data-original-src` | **`<INGRESS_PREFIX>`**`/web/image/1409-…png` | `/web/image/1410-…png` |
+| element `src` | `<INGRESS_PREFIX>/web/image/1417-58a8ca82/woow-image-fixture-….png` | `/web/image/1418-58a8ca82/…` |
+| element `data-original-src` | **`<INGRESS_PREFIX>`**`/web/image/1417-…png` | `/web/image/1418-…png` |
 | the same attribute **after** the image was selected | unchanged, still prefixed | unchanged, still root-relative |
 | `data-mimetype-before-conversion` | `image/png` | `image/png` |
 | tiles / selected | 4 / **1** | 1 / **1** |
@@ -134,7 +154,7 @@ Rule 3's premise is re-measured beside it, on the legacy dialog this time:
 
 | | Ingress | Public |
 |---|---|---|
-| element `href` | `<INGRESS_PREFIX>/web/content/1405?<redacted>` | `/web/content/1406?<redacted>` |
+| element `href` | `<INGRESS_PREFIX>/web/content/1415?<redacted>` | `/web/content/1416?<redacted>` |
 | served `fetchAttachments` literal prefixed | **true** | **false** |
 | `.replace(/[?].*/)` present | true | true |
 | served method length | 372 | 309 |
@@ -197,27 +217,35 @@ rewrites. The run read the served getter:
 `NOT (url =like '<INGRESS_PREFIX>/web/assets/%')`, which matches no stored `url`,
 so it excludes nothing.
 
-**Filed as #271, not against #239, and #239's severity does not move.** The
-preselection #239 is about is correct on both surfaces; what differs is which
-attachments the dialog *lists*, and the rule responsible is one of #166's generic
-literal rules rather than any of #239's three. Nothing is stored — a domain
-travels in a request body — and `stored_verdict` is `CLEAN` on both surfaces.
-#271 carries the real finding, which is the class: a generic literal rewrite
-reaches **ORM domain literals**, not only URLs, and three more such literals in
-the image selector are candidates it owes a measurement for.
+**Registered as `G-09`, filed for fixing as #271, and reported on #239 as well —
+and #239's severity does not move.** #266's own criterion says a divergence found
+here "is reported against #239 and the row annotated", so it is: a comment on
+#239 carries the measurement, the parity plan's §9 row is annotated, and §11 has
+`G-09` with severity `minor`. The **fix** is #271's, because the rule responsible
+is one of #166's generic literal rules rather than any of #239's three, and
+because the finding worth acting on is the class rather than this one literal: a
+generic literal rewrite reaches **ORM domain literals**, not only URLs. Three more
+such literals in the image selector (`'/html_editor/shape/%'`,
+`'/web_editor/shape/%'`, `'/%/static/%'`) are candidates #271 owes a measurement
+for. `G-09` is a gap-register entry and not a plan item, so §10.6's `0 GAP` does
+not move for it either. Nothing is stored — a search domain travels in a request
+body — and `stored_verdict` is `CLEAN` on both surfaces of that check.
 
-## The first two attempts
+## The attempts
 
-Both are kept, because each is a reading that decided what this run did next.
+Every attempt is kept, and each earlier one is a reading that decided something.
+Eleven invocations, 22 records.
 
-| # | Check | Reading | What it decided |
+| Attempt | Check | Reading | What it decided |
 |---|---|---|---|
-| 1, 2 | `media-document-todo`, before the fixture | `NOT-RUN`: "the description holds no document link (`a.o_image`)" on both surfaces | #243's line-3 finding was **not repeatable**. Its document link and attachment were made by hand and cleaned up, so the next run could only report an absence. The check now builds both. |
-| 3, 4 | `media-image-todo`, before the fixture | `ABSENT` on both surfaces: Ingress 3 tiles / 0 selected, Public 0 tiles / 0 selected, element `src` = the static module asset `/project_todo/static/img/todo_access.png` | #243's line-1 **pass** was not repeatable either, for the same reason: it came from an attachment scoped to the onboarding to-do by hand. The onboarding to-do's own picture is a static module asset with no `ir.attachment` behind it, so `isInitialMedia` can match nothing and "none selected" measures nothing. The check now builds a scratch to-do and its image, and line 1 passes again. |
+| 1 | `media-document-todo`, before the fixture | `NOT-RUN`: "the description holds no document link (`a.o_image`)" on both surfaces | #243's line-3 finding was **not repeatable**. Its document link and attachment were made by hand and cleaned up, so the next run could only report an absence. The check now builds both. |
+| 1 | `media-image-todo`, before the fixture | `ABSENT` on both surfaces: Ingress 3 tiles / 0 selected, Public 0 tiles / 0 selected, element `src` = the static module asset `/project_todo/static/img/todo_access.png` | #243's line-1 **pass** was not repeatable either, for the same reason: it came from an attachment scoped to the onboarding to-do by hand. The onboarding to-do's own picture is a static module asset with no `ir.attachment` behind it, so `isInitialMedia` can match nothing and "none selected" measures nothing. The check now builds a scratch to-do and its image, and line 1 passes again. |
+| 2 | `media-document-mailing` | the same verdicts as attempt 3, but without `operand.served_domain_*` | The 30-against-1 tile count had just been read and its cause was a guess. The probe was extended to read the served `attachmentsDomain` getter, which turned the guess into the measurement `G-09` / #271 rests on. The earlier record is what the run could say before it had that instrument. |
+| last | all four | the verdicts in the tables above | Taken with the code that is committed. The driver was restructured after a review found that two of the four checks could leave their fixture on the host if a step raised between the seed and the verdict — `run_check` discards a handler's return value on a raise, so there would have been nothing in the evidence naming the leftover. Every exit of every seeding check now goes through one leaving function, and a Static-tier test holds that. **Changing the driver invalidates records taken with the old one**, so all four were re-run; every reading reproduced identically, which is the only reason the earlier attempts can be left in place as history rather than withdrawn. |
 
-That is why **all four** media checks build what they measure, and not only the
-two #266 names. The two the Issue named could not be measured because the host
-carries nothing for their branches to execute on; the two it did not could no
+That is also why **all four** media checks build what they measure, and not only
+the two #266 names. The two the Issue named could not be measured because the
+host carries nothing for their branches to execute on; the two it did not could no
 longer be measured because the fixtures that made #243's readings were, correctly,
 removed. `--cleanup` removes all four, so every row here can be taken again.
 
@@ -225,14 +253,14 @@ removed. `--cleanup` removes all four, so every row here can be taken again.
 
 This run carries its own figure, which #243's could not: #264 has since given this
 driver the accounting, and `markup.ambient.json` is the first one this family has
-written. One line per surface per invocation — 14 lines beside 14 records.
+written. One line per surface per invocation — 22 lines beside 22 records.
 
-| Check | Navigations per surface | `website.track` delta | `website.visitor` delta |
+| Check | Navigations per surface, per attempt | `website.track` delta | `website.visitor` delta |
 |---|---|---|---|
-| `media-document-todo` (attempt 1 / 2) | 1 / 2 | 0 | 0 |
-| `media-image-todo` (attempt 1 / 2) | 1 / 1 | 0 | 0 |
-| `media-document-mailing` (attempt 1 / 2) | 1 / 1 | 0 | 0 |
-| `media-image-website` | 5 | 0 | 0 |
+| `media-document-todo` | 1 / 2 / 2 | 0 on every line | 0 on every line |
+| `media-image-todo` | 1 / 1 / 1 | 0 on every line | 0 on every line |
+| `media-document-mailing` | 1 / 1 / 1 | 0 on every line | 0 on every line |
+| `media-image-website` | 5 / 5 | 0 on every line | 0 on every line |
 
 Absolute counts on either side of every window: `website.track` **198**,
 `website.visitor` **59** — the same figures #243's run read on the host after it
@@ -261,15 +289,25 @@ Every one of the four checks writes, and every one cleans up after itself.
 
 | Record | What changed | Why | Put back |
 |---|---|---|---|
-| `ir.attachment` 1401–1410 | ten public fixture attachments created — one image or document per surface per invocation | the right-hand operand of the comparison each line measures; `public=True` is what lists it whatever record the dialog was opened from, and `order: 'id desc'` with a limit of 30 is what makes it the first tile | yes — all ten unlinked, `fixture_removed.attachment: true` on every record |
-| `project.task` 14, 15, 16, 17 | four scratch to-dos created, each holding one fixture element in `description` | lines 1 and 3 on the current editor; a **scratch** record and never the onboarding to-do, because #235's checks read that record's stored `src` | yes — all four unlinked, `fixture_removed.task: true` |
-| `website.page` 11, 12 and `ir.ui.view` 3775, 3776 | two fixture pages created, one per surface, through `website.new_page`'s own `sections_arch` | line 2 needs stored arch delivered as an HTML response, and this host ships no website page carrying `data-original-src` | yes — both pages and both views unlinked, `fixture_removed.page: true`, `.view: true` |
-| `mailing.mailing` 3 `body_arch`, `body_html` | seeded with the document fixture, twice (two attempts) | line 3's legacy screen is the mail designer, and its body is the field the designer loads | yes — restored both times; read back afterwards at `arch_len 0 / html_len 166`, which is where the four fixture mailings started |
+| `ir.attachment` 1401–1418 | eighteen public fixture attachments created — one image or document per surface per invocation | the right-hand operand of the comparison each line measures; `public=True` is what lists it whatever record the dialog was opened from, and `order: 'id desc'` with a limit of 30 is what makes it the first tile | yes — all eighteen unlinked, `fixture_removed.attachment: true` on every record |
+| `project.task` 14–21 | eight scratch to-dos created, each holding one fixture element in `description` | lines 1 and 3 on the current editor; a **scratch** record and never the onboarding to-do, because #235's checks read that record's stored `src` | yes — all eight unlinked, `fixture_removed.task: true` |
+| `website.page` 11–14 and `ir.ui.view` 3775–3778 | four fixture pages created, one per surface per invocation, through `website.new_page`'s own `sections_arch` | line 2 needs stored arch delivered as an HTML response, and this host ships no website page carrying `data-original-src` | yes — every page and every view unlinked, `fixture_removed.page: true`, `.view: true` |
+| `mailing.mailing` 3 `body_arch`, `body_html` | seeded with the document fixture, three times (three attempts) | line 3's legacy screen is the mail designer, and its body is the field the designer loads | yes — restored every time; read back afterwards at `arch_len 0 / html_len 166`, which is where the four fixture mailings started |
 
 No module, group, setting or add-on option was changed. No mailing was sent. No
 payment was made. Nothing was confirmed. Nothing was saved in either editor — the
 website editor was discarded and the mail designer's form was discarded when it
-showed unsaved changes.
+showed unsaved changes (`discarded: true` on both surfaces).
+
+**Three readings carry "nothing was saved", and each covers a different window —
+no one of them covers all three.** The **discard** is what stops the save, since
+an Odoo form persists a dirty editor on `beforeunload` and on `visibilitychange`
+whether or not the record is dirty (#263 is the same mechanism on the To-do
+form). The **read-back** into `stored` is what would have caught a save made
+*during* the check, and `stored_verdict` is `CLEAN` on both surfaces. Neither
+covers the session's own close, because the driver's read-back necessarily
+happens before `run_check` closes it — the **host check below** is what covers
+that window, and it reads all four mailings back at `arch 0 / html 166`.
 
 **Verified on the host after the run**, read over `psql` in the add-on's own
 container: `ATTACHMENTS_LEFT []`, `SCRATCH_TASKS_LEFT []`, `FIXTURE_PAGES_LEFT []`,

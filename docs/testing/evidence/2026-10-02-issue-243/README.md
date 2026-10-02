@@ -373,7 +373,7 @@ point of reading it is that a zero which is read is a reading.
 
 *Annotated 2026-10-02: **that next run has happened** — #266, and
 `docs/testing/evidence/2026-10-02-issue-266/markup.ambient.json` is this family's
-first such file, 14 lines beside 14 records. Its `website.track` and
+first such file, 22 lines beside 22 records. Its `website.track` and
 `website.visitor` deltas are **0** on every line, the website-editor check
 included, across five navigations per surface; the absolute counts on either side
 of every window are 198 and 59, the same two numbers read here. So the sentence

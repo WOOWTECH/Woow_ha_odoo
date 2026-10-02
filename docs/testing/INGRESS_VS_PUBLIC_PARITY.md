@@ -571,8 +571,9 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 在 Public 為 false，直接證明改寫只住在 Ingress asset location），另外兩行當時沒量到——document 那一行
 > 在現行編輯器**無法到達**（Replace 在 `image` namespace，document 是 `a.o_image`），website 那一行
 > **到達但沒驗到** rule 2（首頁唯一可見圖片沒有 `data-original-src`）；**#266 把那兩行都量到了，兩行都
-> 過**（細節見本列最後的「Live 補跑」）。**這一列改記 `PARITY`，而且不因 Live 結果改嚴重度——它什麼都不
-> 存。** 這是 ADR 0004 開放清單裡最後兩項，而且是這一族
+> 過**（細節見本列最後的「Live 補跑」）。**這一列改記 `PARITY`——範圍是三行的 preselection 比較——而且不因
+> Live 結果改嚴重度，它什麼都不存。同一個畫面另外量到的**列表**分歧另案登記為 `G-09`（#271），不屬於
+> #239 的三條規則。** 這是 ADR 0004 開放清單裡最後兩項，而且是這一族
 > 唯一「反向」的三項：不是插入 markup，而是**比較**——一邊期待 root-relative、另一邊拿到帶前綴的值。
 > 本輪的結論是**三項裡兩項真的壞掉、第三項本來就是對的，而對第三項照 issue 說的做會把它弄壞**：
 >
@@ -632,16 +633,23 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 開啟某張圖片／某個文件連結的媒體對話框，對應附件被 highlight，兩面行為一致。image 那半值得**在網站
 > 編輯器的對話框上也跑一次**而不只是待辦表單：第 2 列的前綴只出現在 HTML 回應那條路上。
 >
-> **Live 補跑（#266，2026-10-02，同一個 Release 0.4.10，不需要重新發版也沒有重新部署）：三行全部量到，
-> 這一列改記 `PARITY`。** 證據在 `docs/testing/evidence/2026-10-02-issue-266/`（`markup.jsonl` 14 筆、
-> `markup.ambient.json` 14 行，run `WOOW-MARKUP-20261002T074704Z`）。
+> **Live 補跑（#266，2026-10-02，同一個 Release 0.4.10，不需要重新發版也沒有重新部署）：三行的**比較**
+> 全部量到、而且三行兩面一致，所以這一列改記 `PARITY`。** 判定的範圍就是這一列的範圍——**哪一格被
+> highlight**。同一個畫面另外量到一個**列表**分歧（Documents 分頁列出的附件兩面不同），那不屬於 #239 的
+> 三條規則，另案登記為 `G-09`（第 11 節）並由 **#271** 承接，見本列最後一段。證據在
+> `docs/testing/evidence/2026-10-02-issue-266/`（`markup.jsonl` 22 筆、`markup.ambient.json` 22 行，
+> run `WOOW-MARKUP-20261002T074704Z`）。
 >
-> | 行 | 畫面 | Ingress | Public | 判定 |
+> | 行 | 畫面 | Ingress | Public | 判定（preselection） |
 > | --- | --- | --- | --- | --- |
 > | 1 image | driver 自建的 scratch 待辦＋圖片，現行編輯器 | 元素 `src` 帶前綴，4 格選中 1 | root-relative，1 格選中 1 | **`PARITY`** |
 > | 2 website | driver 自建的 website 頁面，網站編輯器的 Replace Media | `data-original-src` **帶前綴**，4 格選中 1 | root-relative，1 格選中 1 | **`PARITY`** |
-> | 3 document | driver 自建的文件，**舊編輯器**（郵件設計器）的對話框 | 元素 `href` 帶前綴，Documents 分頁 30 格選中 1 | root-relative，1 格選中 1 | **`PARITY`** |
+> | 3 document | driver 自建的文件，**舊編輯器**（郵件設計器）的對話框 | 元素 `href` 帶前綴，Documents 分頁 30 格**選中 1** | root-relative，1 格**選中 1** | **`PARITY`**；**列出的格數兩面不同（30 對 1）→ `G-09`／#271** |
 > | 3 document | 同一份文件，**現行**編輯器 | 沒有任何控制項能重新開啟對話框 | 同樣沒有 | `NOT-RUN`（附理由） |
+>
+> 第三列那個 30 對 1 **是**量到的分歧，所以它登記在第 11 節而不是只寫在散文裡；把它併進這一列的判定
+> 會把兩件不同的事混成一件——被 highlight 的那一格兩面相同（這一列要的），而清單的內容兩面不同（另一條
+> 規則造成的）。`G-09` 的嚴重度是 `minor`，而且**不改這一列的嚴重度**，理由還是同一個：#239 什麼都不存。
 >
 > **第 2 列是本輪第一次真的被執行到。** #243 到得了那個畫面但量不到東西：首頁唯一可見的圖是
 > `/web/image/website/1/logo/...`，record-field image，`data-original-src` 是 `None`，所以
@@ -948,14 +956,16 @@ Release 0.4.10**、同一台主機上重跑 #234 那一列，兩個 pair 都送�
 **構造上到不了**並附理由。#239 那一列因此改記 `PARITY`。**這一輪的 76 項守恆數字同樣不動**，理由與本段
 上面兩次相同：那是第 9 節 #239 那一列的 Live 欄，`woow.ingress-markup/v1` 也**不**進 `conservation`，
 所以仍維持 **60 `PARITY` + 0 `GAP` + 2 `APPROVED-DIVERGENCE` + 6 `STRUCTURAL` + 8 `NOT-RUN`**。
-本輪另外找到一個分歧並**另案**登記為 **#271**（Ingress 下 Documents 分頁列出所有 asset bundle，因為通用
-字面改寫把 `attachmentsDomain` 裡的 `'/web/assets/%'` **ORM domain 字面值**也加了前綴，getter 長度
-383 對 320）——那不是 #239 的規則，也不改 #239 的嚴重度，什麼都不存。
+本輪另外找到一個分歧，登記為第 11 節的 **`G-09`** 並由 **#271** 承接（Ingress 下 Documents 分頁列出所有
+asset bundle，因為通用字面改寫把 `attachmentsDomain` 裡的 `'/web/assets/%'` **ORM domain 字面值**也加了
+前綴，getter 長度 383 對 320）——那不是 #239 的規則，也不改 #239 的嚴重度，什麼都不存。`G-09` 的嚴重度
+是 `minor`，而且與 `G-08` 一樣是第 11 節的落差登記、不是 plan item，所以上面那個 **0 `GAP`** 的數字也不
+為它而動。依 #266 的驗收條件，這個分歧同時以 comment 回報在 **#239** 上。
 **這也是這一族第一次留下 `.ambient.json`**，就是上面那句「要帶著那幾行的是下一次跑」所指的那一次：
-14 行對 14 筆記錄，`website.track` 與 `website.visitor` 的 delta 每一行都是 **0**（含網站編輯器那個
+22 行對 22 筆記錄，`website.track` 與 `website.visitor` 的 delta 每一行都是 **0**（含網站編輯器那個
 check 的每面 5 次 navigation），兩側絕對值 198／59 與 #243 跑完在主機上讀到的同兩個數字相同。
 這是**記帳不是判定**：`diff` 不讀它，76 項的守恆數字不為它而動。證據在
-`docs/testing/evidence/2026-10-02-issue-266/`（`markup.jsonl` 14 筆、`markup.ambient.json` 14 行；
+`docs/testing/evidence/2026-10-02-issue-266/`（`markup.jsonl` 22 筆、`markup.ambient.json` 22 行；
 同一個 check 與 surface 以**最後一筆**為判定，前兩次嘗試一併保留，因為那兩筆正是「#243 的 fixture 是手
 建而且已清掉，所以它那兩個讀數不可重現」的證據——四個 media check 現在都自己建它要量的東西，
 `--cleanup` 全部移除）。#243 的證據目錄只加附記，不改寫。
@@ -1018,6 +1028,7 @@ E 群組的判定**不只比較兩邊**：產出物裡只要有 HA 位址、相�
 | `G-06` | ~~add-on 啟動**之後**才安裝 `website`（例如從 Apps 畫面裝），預設網站的 `domain` 一直是空的，直到下一次重啟；Ingress 下首頁的 `canonical`／`og:url`／`og:image`／`twitter:image` 與 `sitemap.xml` 因此以 HA 位址為基底~~ **已修正並在測試主機驗證（2026-09-25，`docs/testing/evidence/2026-09-25-issue-164/`）** | ~~**Important**~~ | RC-9 | `odoo-maintenance.py` 只在 add-on 啟動當下 `website` 已在 registry 時才寫 `website.domain`（「website module not installed」）；#143 跑 `odoo_parity` 時 `P-5` FAIL、`U-D8` GAP | Rewrite scan service 每輪多一步 **Canonical URL catch-up**（`odoo-canonical-catchup`）：以 `psql` 讀每個資料庫的預設網站 `domain`，空值或與 Canonical URL 不同時，才用同一支 maintenance library 經 `odoo shell` 補寫；穩態每輪不載入 registry。add-on log 出現 `maintenance db=<name>: … website.domain=<Canonical URL>`。追蹤 #164；Ingress 下 `sitemap.xml` 仍跟著請求位址走，已由 `AD-8` 收錄為核准分歧（#172） |
 | `G-07` | Odoo 自己在瀏覽器開出的新分頁（問卷的 Test 按鈕、任何開新分頁的連結、「在新分頁開啟」），在 ingress 下位址必然是 `<HA_BASE><INGRESS_PREFIX>/…`，帶著 Supervisor 的 ingress token（是 add-on 的那一份；per-user 的 session 走 cookie，見 `RC-15`） | **`STRUCTURAL`**（原始發現記為 Important；依第 1.4 節，證據記錄的 severity 為 `none`） | RC-15 | `docs/testing/evidence/2026-09-28-issue-183/checks.jsonl` 的 `check:U-C23\|shared\|generic`（run `WOOW-PARITY-20260928T070408Z`，2026-09-28，#183）：verdict `STRUCTURAL`、severity `none`、`public_path` `<PUBLIC_BASE>/survey/<token>`；ingress 分頁在 `<HA_BASE><INGRESS_PREFIX>/survey/<token>`，public 分頁在 `<PUBLIC_BASE>/survey/<token>`，兩邊開的是同一頁。原始發現見 `docs/testing/evidence/2026-09-25-issue-143/checks.jsonl`（run `WOOW-PARITY-20260925T043539Z`）：同樣的形態，但記於決定之前，verdict 仍是 `GAP`／`important` | **Public origin 承接**：ingress 的每一個頂層頁面都在 Supervisor 路徑之下，新分頁因此只有兩種結果——帶 token，或離開 Ingress 去別的 origin。Runtime shim 只夠得到 `window.open`，`target="_blank"` 錨點、中鍵與「在新分頁開啟」走的是 `href`，而 `href` 必須保持前綴才能在頁內導覽；分頁落到別的 origin 還要求第二次登入，LAN fallback 下離開內網就打不開，通道斷線時也打不開。ADR 0006 對 Ingress 內位址的判斷相同，故不改 shim、不改 Literal rewrite；要給別人開的同一個畫面，從 Public origin 取位址分享。使用者文件見 `odoo18ce/DOCS.md`「What only the Public origin can do」。決定本身見 #168（已關閉）；依新規則的補跑已於 2026-09-28 完成（#183） |
 | `G-08` | 協作中的 Public origin peer 會把 Ingress 前綴存進 `project.task.description`：To-do 的 description 是 `'collaborative': true`，後加入的 peer 會拿到先加入那個 peer 的整份文件當 snapshot，而 Public 那一面沒有 shim 也沒有 rewrite（ADR 0003 的對照組），收到什麼就存什麼。記錄裡那串是 add-on 的 `ingress_token`（不是 session secret，見 `RC-15`） | **Important**（§1.3 的「**ingress token 外洩**」本身是 Blocker；2026-10-02 由 **#234 裁定維持 `important`**：寫入已確認，而下一次 Ingress 存檔會把它清掉，所以真正未解的只有「再也沒有 Ingress 存檔的那一筆記錄」，見「建議處置」）。**不是 `STRUCTURAL`**：§1.4 要求結構性落差指定「由 public surface 承接」的替代路徑，而這一列的 public surface 正是寫入的來源，沒有承接可指，所以不走那條路 | RC-15 | `docs/testing/evidence/2026-10-02-issue-265/peer.jsonl` 的 `ingress-public` 一列（run `WOOW-PEER-20261002T064500Z`，2026-10-02，#265，Release 0.4.10）：`transport.delivered: true`、peer 存檔後 `verdict` 為 `FOREIGN-PREFIX-STORED`、`stored_prefixes: ["A"]`，兩張圖的 `src` 都在 `/api/hassio_ingress/<ingress:A>/project_todo/static/img/…`；接著 `healing.verdict` 為 `CLEAN`、`loaded_prefixes: ["A"]`，兩個 `src` 回到根相對路徑。同一輪的 `ingress-ingress` 在送到的前提下仍 `CLEAN`。第一次嘗試（`peer-first-attempt.jsonl`）的傳輸讀數因 marker 撞號而**作廢**，一併保留 | **下一次 Ingress 存檔治好，擋不住**：Ingress 這邊的 strip 掛在欄位唯一的寫入點（`HtmlField.updateValue`，#210／#238），能做的是把載入值裡任何符合 `$safe_ingress_path` 形狀的前綴去掉（#234），而 Public origin 的那次寫入在另一個 surface 上，ADR 0003 不改它。所以殘留風險是**一筆再也沒有 Ingress session 存過的記錄**：在下一次 Ingress 存檔之前，token 就在那一列裡。量測由 `e2e_collab_peer_snapshot_live.py run --pair ingress-public` 的兩段式讀取維持，`report` 以 `foreign_prefix_healed` 單獨列出、不併進 clean 數。#234 的 severity 要不要因此改（它自己的驗收條件說「確認存到 foreign token 就升 `blocker`」，而現狀是「確認存到、而且被治好」）留給 #234 自己決定；本列只登記量到的東西。見 #265 |
+| `G-09` | Ingress 下媒體對話框的 Documents 分頁把**所有產生出來的 asset bundle** 都列成文件：`DocumentSelector.attachmentsDomain` 以 `!['url', '=like', '/web/assets/%']` 排除它們，而那是 **ORM domain 裡的字串字面值**、和被改寫的 URL 字面值住在同一包 bundle 裡，所以也被加了前綴；加了前綴的排除條件比不中任何一筆 `url`，於是什麼都沒排除。值得處理的是那個**類別**——通用字面改寫碰得到 ORM domain 的字面值而不只是 URL | **Minor**：什麼都不存（domain 走 request body，記錄裡沒有前綴、沒有 token，該 check 兩面 `stored_verdict` 都是 `CLEAN`），也沒有離開前綴；影響是選取器裡的一份錯清單——第一頁 30 格被 bundle 佔滿，使用者真正的文件被推到 *Load more* 之後，在 bundle 超過 30 筆的資料庫上不搜尋就找不到。**不是 `STRUCTURAL`**：這不是原理上做不到，而是一條規則命中了不該命中的字面值 | RC-1（#166 的通用字面改寫） | `docs/testing/evidence/2026-10-02-issue-266/markup.jsonl` 的 `media-document-mailing` 兩筆（run `WOOW-MARKUP-20261002T074704Z`，2026-10-02，#266，Release 0.4.10）：Ingress `dialog.tiles` 30、Public 1，兩面 `dialog.tiles_selected` 都是 1；`operand.served_domain_asset_exclusion_prefixed` Ingress `true`／Public `false`，`operand.served_domain_length` 383 對 320（正好一個前綴 63 bytes） | **由 #271 承接**：四個看起來像 URL 路徑而其實是搜尋樣式的字面值（`'/web/assets/%'`、`'/html_editor/shape/%'`、`'/web_editor/shape/%'`、`'/%/static/%'`）各自在出貨 bundle 裡量一次並記進 `odoo18ce/tests/fixtures/bundles/README.md`，用真正的 nginx 跑一個靜態層測試釘住每一個變成什麼，然後在 ADR 0004 記下一般原則：**搜尋樣式不得被加前綴**，修法是收窄通用規則還是逐處加反向規則，要說是哪一個與為什麼。這一列**不改 #239 的嚴重度**（#239 什麼都不存，見第 9 節該列），也不是 plan item，不進第 10.6 節的分母 |
 
 ---
 
