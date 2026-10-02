@@ -15,11 +15,24 @@ types must be unique to the run, for the reason under **What it measures**.
 **#243 has run this script**, on 2026-10-02 against Release 0.4.10, and its two
 records are in `docs/testing/evidence/2026-10-02-issue-243/peer.jsonl`: `CLEAN`
 on both pairs, and the transport delivered on neither, so those verdicts are
-about the save path and not about a delivered peer snapshot (#265 owns that).
-That run was also every browser step's first execution, and it found two defects
-here, both fixed under #263 and both worth knowing before trusting a reading from
-this file: `probe` wrote the field it reported it did not, and its marker was a
-constant, which made `delivered` unfalsifiable once the field had ever held it.
+about the save path and not about a delivered peer snapshot. That run was also
+every browser step's first execution, and it found three defects here. Two were
+fixed under #263 and are worth knowing before trusting a reading from this file:
+`probe` wrote the field it reported it did not, and its marker was a constant,
+which made `delivered` unfalsifiable once the field had ever held it.
+
+**The third is why nothing was ever delivered, and it was this script's (#265).**
+The receiving session was never focused, and with no view setting
+`collaborative_trigger` the collaboration plugin joins the peer network on the
+editable's `focus` event and nowhere else -- while a session that has not joined
+silently discards every signalling notification it is sent, the other session's
+`ptp_join` included. So the sending session joined by accident, because typing
+needs focus, and the receiving one never did; both pairs were predicted to time
+out by the source before the host was involved. `focus_editable` is the step that
+was missing, `transport_diagnosis` is what now attributes the outcome instead of
+leaving it to be inferred from a timeout, and `heal_under_ingress` is the second
+reading on the `ingress-public` pair that #243's run could not take because
+nothing had been delivered to heal.
 
 The pure functions below -- the prefix shape, the labelling, the redaction, the
 wait's judgement, the probe's verdict and the report -- are driven by
@@ -40,14 +53,28 @@ receiving session's save is what would write it to the record.
 
 So: session A opens the to-do, the run reads A's editable **before anything is
 typed** -- the baseline, which is the document both sessions load -- and A then
-types a marker **without saving**. Session B joins the same to-do, and the run
-waits for A's unsaved marker to appear in B's editable. That arrival is the
-transport's own evidence only because the marker carries the run id and was not
-in the baseline: a marker some earlier run stored would otherwise be read out of
-the *loaded* value on the first poll and reported as an instant delivery, which
-is the false positive #263 found on a `delivered` of 0.0 seconds. B then types
-its own marker and saves, and the run reads `description` back over ORM and
-classifies every Ingress prefix left in it.
+types a marker **without saving**. Session B joins the same to-do, **focuses its
+editable** -- which is what joins it to the peer network, and the step whose
+absence made #243's run deliver nothing -- and the run waits for A's unsaved
+marker to appear in B's editable. That arrival is the transport's own evidence
+only because the marker is unique to the run and the pair and was not in the
+baseline: a marker
+some earlier run stored would otherwise be read out of the *loaded* value on the
+first poll and reported as an instant delivery, which is the false positive #263
+found on a `delivered` of 0.0 seconds. B then types its own marker and saves, and
+the run reads `description` back over ORM and classifies every Ingress prefix left
+in it.
+
+**And the run says why the transport did what it did.** `delivered: false` with
+nothing beside it is what #243's run left, and the account that went into three
+documents afterwards -- "the two sessions never became collaboration peers" --
+was an inference from a timeout. So both commands now read each session's own
+state (`collaboration_reading`) and count the signalling it posted
+(`SignallingCount`), and `transport_diagnosis` names the first rung that holds:
+the field is not collaborative, the bus is not connected on that surface, the two
+sessions are on different channels, a session never joined the peer network, or
+they joined and no data channel opened. Those are the three questions #265 asks,
+answered by the run rather than by the next reader.
 
 Two pairs, because they answer different questions:
 
@@ -63,14 +90,25 @@ Two pairs, because they answer different questions:
   group), so a prefix it receives is a prefix it stores. This is the pair that
   can put the add-on's token in the record today, and the Ingress strip's part
   in it is healing the record on the next Ingress save, not preventing the
-  write.
+  write. So this pair is measured **twice**: once after B saves, which may carry
+  the prefix, and once after A has loaded that value and saved it under Ingress,
+  which must be clean (`heal_under_ingress`). `verdict` is the first reading and
+  `healing.verdict` the second; `final_verdict` is the one #234's escalation rule
+  is applied to, because the harm that Issue is about is a token left **in** the
+  record. A prefix stored and then healed inside one run is not lost for that --
+  `report` names it as `foreign_prefix_healed`, which is the fix doing the only
+  thing it can do here.
 
 ## What it writes
 
 `run` writes the to-do's `description` on the database named by `--db`, and
-nothing else: no record is created and none is deleted. Both markers carry the
-run id, so the record says which run last edited it, and A's form is discarded
-once B has saved, so the stored value is exactly what B saved.
+nothing else: no record is created and none is deleted. Every marker carries the
+run id and the pair (`marker`), so the record says which run last edited it and
+the two pairs of one run cannot type the same string. On `ingress-ingress` A's form
+is discarded once B has saved, so the stored value is exactly what B saved. On
+`ingress-public` A discards that leftover and then **saves once on purpose**: that
+save is the healing half of the measurement, so the value the record ends with is
+the one an Ingress session stored after loading what the Public peer wrote.
 
 `probe` writes nothing -- and **discarding is what makes that true**, not
 declining to save. Navigating away from a dirty To-do form persists the
@@ -81,6 +119,16 @@ database, and then reads `description` back over ORM and reports
 `wrote_nothing`. The claim is measured and carried in the output rather than
 asserted here, and a `probe` that did write exits non-zero. `discard_form` holds
 the mechanism and why each of its two waits is load-bearing.
+
+**What a delivering `probe` measured about B's form** (#265): B holds the sending
+session's whole document, marker included, and its form reports itself **clean**
+-- `discarded: {"B": {"dirty": false}}` on both pairs of the first run that
+delivered. A collaboration reset is not a user edit, so the html field raises no
+`FIELD_IS_DIRTY` for it, and B's discard goes on having nothing to do even now
+that something arrives. It stays, because "nothing to discard" is a reading taken
+on each run and not a property to rely on: `probe` reports `dirty` per session
+precisely so that a change here shows up as a changed reading rather than as a
+write.
 
 **The read-back is the guarantee, and the discard is only the means** -- which is
 deliberate, because this measurement cannot remove every way the form writes
@@ -169,7 +217,11 @@ OWN_PREFIX_STORED = "OWN-PREFIX-STORED"
 UNKNOWN_PREFIX_STORED = "UNKNOWN-PREFIX-STORED"
 NOT_RUN = "NOT-RUN"
 
-PAIRS = ("ingress-ingress", "ingress-public")
+# The pair `run` measures twice: the Public peer stores what it is handed and the
+# Ingress strip can only heal the record on the next Ingress save, so one reading
+# of that pair is half a measurement (`heal_under_ingress`).
+HEALING_PAIR = "ingress-public"
+PAIRS = ("ingress-ingress", HEALING_PAIR)
 
 # `probe`'s run id when the command line does not give one. It is a *run* id and
 # not a constant marker: #263.
@@ -185,11 +237,69 @@ SAVE_BUTTON = ".o_form_button_save"
 DISCARD_BUTTON = ".o_form_button_cancel"
 UNSAVED = ".o_form_status_indicator_buttons:not(.invisible)"
 
+# The signalling route the collaboration plugin's `broadcastAll` posts to
+# (`html_editor/controllers/main.py:578`). Counted per session, because it is the
+# one piece of this measurement that does not depend on the client telling the
+# truth about itself: a session that joined the peer network posted a `ptp_join`
+# here, and a session that never joined posted nothing at all.
+BUS_BROADCAST_ROUTE = "/html_editor/bus_broadcast"
+
+# What a session says about its own collaboration, read out of the live
+# component tree. `odoo.__WOWL_DEBUG__.root` is set for every web client and not
+# only in debug mode (`web/static/src/env.js:195`), the html field keeps its
+# editor in `this.editor` (`html_editor/static/src/fields/html_field.js:225`),
+# and the plugin's id is static (`collaboration_odoo_plugin.js:47`).
+#
+# Only counts and flags come back -- no peer id, no URL, no document. The channel
+# name is `editor_collaboration:<model>:<field>:<id>`
+# (`collaboration_odoo_plugin.js:134`), which carries the record's id and nothing
+# secret; it is in the reading because "do the two sessions share the
+# collaboration channel at all" is one of the questions #265 asks.
+COLLABORATION_STATE_JS = """() => {
+  const fields = (node, found = []) => {
+    if (node.component?.constructor?.name === "HtmlField") found.push(node.component);
+    for (const key in node.children) fields(node.children[key], found);
+    return found;
+  };
+  const root = window.odoo?.__WOWL_DEBUG__?.root;
+  if (!root) return {unread: "no __WOWL_DEBUG__ root on this page"};
+  const field = fields(root.__owl__)[0];
+  if (!field) return {unread: "no HtmlField is mounted"};
+  const plugin = field.editor?.plugins?.find(
+    (one) => one.constructor.id === "collaborationOdoo");
+  const bus = root.env.services?.bus_service;
+  return {
+    is_collaborative: Boolean(field.props.isCollaborative),
+    display_readonly: Boolean(field.displayReadonly),
+    res_id: field.props.record?.resId ?? null,
+    plugin_present: Boolean(plugin),
+    channel: plugin?.collaborationChannelName ?? null,
+    ptp_joined: plugin ? Boolean(plugin.ptpJoined) : null,
+    ptp_created: plugin ? Boolean(plugin.ptp) : null,
+    peers: plugin?.ptp ? Object.keys(plugin.ptp.peersInfos).length : null,
+    connected_peers: plugin?.ptp?.getConnectedPeerIds?.()?.length ?? null,
+    bus_worker_state: bus?.workerState ?? null,
+    bus_connection_lost:
+      root.env.services?.["bus.monitoring_service"]?.isConnectionLost ?? null,
+  };
+}"""
+
+# What the ladder in `transport_diagnosis` can conclude, named rather than
+# spelled out at each `return`: a slug is what an Issue or a plan row quotes.
+DELIVERED = "delivered"
+MARKER_COLLISION = "marker-collision"
+NOT_COLLABORATIVE = "field-not-collaborative"
+BUS_NOT_CONNECTED = "bus-not-connected"
+DIFFERENT_CHANNEL = "different-collaboration-channel"
+NOT_JOINED = "peer-network-not-joined"
+NO_DATA_CHANNEL = "no-peer-data-channel"
+UNATTRIBUTED = "unattributed"
+
 
 # --- What a run calls its markers ----------------------------------------------
 
 
-def marker(run_id: str, label: str) -> str:
+def marker(run_id: str, label: str, pair: str) -> str:
     """The marker session `label` types, which **both** commands get from here.
 
     A marker has to be unique to the run, because the whole argument for reading
@@ -199,8 +309,20 @@ def marker(run_id: str, label: str) -> str:
     in the receiving editable on the first poll and reported `delivered: true` at
     0.0 seconds while nothing had been delivered (#263). One helper, so the two
     commands cannot drift apart on it again.
+
+    **The pair is in it, not only the run id** (#265, found by the first run that
+    delivered). A run is one `--run-id` over *both* pairs -- that is the evidence
+    discipline every Live script here shares -- and `run` stores its marker, so the
+    second pair opened a record that already held the first pair's
+    `<run-id>-A`. `await_marker`'s baseline guard caught it and reported
+    `marker_pre_existing: true`, which is the guard working and a void reading of
+    the transport all the same: it returns without waiting. The run id makes a
+    marker unique across runs and the pair makes it unique within one.
+
+    What it still does not cover is the same pair run twice under one run id. That
+    is the guard's remaining job, and a rerun takes a new `--run-id`.
     """
-    return "%s-%s" % (run_id, label)
+    return "%s-%s-%s" % (run_id, pair, label)
 
 
 def mint_run_id(now: datetime, prefix: str = PROBE_RUN_PREFIX) -> str:
@@ -295,9 +417,18 @@ def evidence_record(
     stored: str | None,
     labels: Mapping[str, str],
     saver: str,
+    collaboration: Mapping[str, Any] | None = None,
+    healing: Mapping[str, Any] | None = None,
     notes: str = "",
 ) -> dict[str, Any]:
-    """One run's record. `verdict` is NOT-RUN until a value was read back."""
+    """One run's record. `verdict` is NOT-RUN until a value was read back.
+
+    `verdict` is the value **the peer's save** left, which on the
+    `ingress-public` pair is deliberately not the end of the measurement:
+    `healing` carries the second reading, after the Ingress session has loaded
+    that value and saved it once (`healing_read`). `final_verdict` is the one the
+    escalation rule reads, and it is the healing verdict wherever there is one.
+    """
     if stored is None:
         verdict, present = NOT_RUN, []
     else:
@@ -321,9 +452,13 @@ def evidence_record(
         },
         "prefixes_equal": _equal_prefixes(prefixes),
         "transport": dict(transport),
+        # Why the transport did what it did, so a `delivered: false` is attributed
+        # by the run that read it and not by the next reader's inference (#265).
+        "collaboration": redact(dict(collaboration or {}), labels),
         "stored": redact(stored, labels),
         "stored_prefixes": present,
         "verdict": verdict,
+        "healing": redact(dict(healing), labels) if healing else None,
         "notes": notes,
     }
     return record
@@ -336,25 +471,213 @@ def _equal_prefixes(prefixes: Mapping[str, str | None]) -> bool | None:
     return len(set(values)) == 1
 
 
+HEALED_NOTE = (
+    "the peer's save stored an Ingress prefix and the next Ingress save removed it, which is the "
+    "whole of what the Ingress fix can do on this pair -- it cannot prevent that write"
+)
+UNHEALED_NOTE = (
+    "a prefix the Public peer stored is still in the record after an Ingress save, so the strip "
+    "did not heal it"
+)
+
+
+def healing_read(*, loaded: str, stored: str, labels: Mapping[str, str],
+                 saver: str) -> dict[str, Any]:
+    """The second half of the `ingress-public` measurement: did the Ingress save heal it?
+
+    ADR 0004's refinement, which #243's run left with no implementation: *read the
+    field after the Public peer saves (it may carry the prefix), then save once
+    under Ingress and read again (it must be clean)*. The two readings are not one
+    reading taken twice -- the Public origin serves no shim and no rewrite (ADR
+    0003 keeps it the control group), so a prefix it is handed is a prefix it
+    stores, and the Ingress strip's part is **healing the record on the next
+    Ingress save and not preventing the write**. A record with only the first
+    reading cannot tell those two apart.
+
+    `loaded` is the Ingress session's editable *before* it saves, and it is a
+    reading in its own right: it says the healing save had a subject. A `CLEAN`
+    after a save that loaded nothing to strip is a weaker statement than one after
+    a save that loaded a prefix, and the record keeps the difference rather than
+    leaving both as the same `CLEAN`.
+
+    **Any prefix in the loaded value is a subject, including this session's own.**
+    That is what the first run to deliver measured, and it is not the shape this
+    function first assumed: the `ingress-public` pair's two sessions are served
+    *one* token, the add-on's, so the prefix the Public peer stored is the Ingress
+    session's own and a subject test of "whose label is it" called the central case
+    "nothing foreign to strip". What makes it the harm is the token being in a
+    record at all, whoever's session it travelled through -- the same reason
+    `classify` treats `OWN-PREFIX-STORED` as a defect and not as a pass.
+    """
+    verdict, present = classify(stored, labels, saver)
+    loaded_prefixes = stored_prefix_labels(loaded, labels)
+    if verdict == CLEAN and loaded_prefixes:
+        notes = HEALED_NOTE
+    elif verdict in (FOREIGN_PREFIX_STORED, UNKNOWN_PREFIX_STORED):
+        notes = UNHEALED_NOTE
+    elif verdict == CLEAN:
+        notes = ("the Ingress save left the field clean, and it had nothing to strip: the value "
+                 "it loaded carried no Ingress prefix at all")
+    else:
+        notes = ""
+    return {
+        "performed": True,
+        "saver": saver,
+        "loaded_prefixes": loaded_prefixes,
+        "stored": redact(stored, labels),
+        "stored_prefixes": present,
+        "verdict": verdict,
+        "notes": notes,
+    }
+
+
+def healing_not_performed(reason: str) -> dict[str, Any]:
+    """No second reading, and why -- never a silently absent one.
+
+    `final_verdict` then falls back to the peer's save, which is the fail-closed
+    direction: a pair whose heal could not be measured escalates on what *was*
+    measured rather than on a missing `CLEAN`.
+    """
+    return {"performed": False, "reason": reason}
+
+
+def final_verdict(record: Mapping[str, Any]) -> str | None:
+    """The verdict for the value the record **ends** with.
+
+    Which is the healing verdict wherever the healing save ran, and the peer's
+    save otherwise. This is the reading #234's escalation rule is applied to
+    (#265): the harm that Issue is about is a Supervisor token sitting in
+    `project.task.description`, so what decides it is what is in the field when
+    the run is done -- not an intermediate value the run then removed on purpose.
+    An intermediate foreign prefix is not thrown away for that: `report` names it
+    separately, so "the Public peer stored one and the Ingress save healed it"
+    cannot be read as "nothing was ever stored".
+    """
+    healing = record.get("healing") or {}
+    if healing.get("performed"):
+        return healing.get("verdict")
+    return record.get("verdict")
+
+
+def _delivered(record: Mapping[str, Any]) -> bool:
+    return bool((record.get("transport") or {}).get("delivered"))
+
+
+ISSUE_234_RULE = (
+    "#234's criterion is a *confirmed* stored foreign token, so this reads every value the run "
+    "read and not only the last one: a prefix the run then removed was still in the record, and "
+    "a rule that only looked at the end would answer 'no' to the measurement that proves the "
+    "escape exists. Whether a token that is confirmed **and** healed moves #234's severity is "
+    "#234's decision; what a report may not do is hide the confirmation behind the heal."
+)
+
+
+def escalating_readings(record: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Every reading in one record that confirms a stored foreign or unclaimed prefix.
+
+    `ISSUE_234_RULE` is why this is every reading and not `final_verdict`. The
+    distinction cost a review: the first spelling of this read the value the record
+    ends with, so a run that had just measured the Public peer writing a Supervisor
+    token into `project.task.description` -- the exact escape #234 exists for --
+    printed `escalate_issue_234_to_blocker: false`, because the next Ingress save
+    had healed it. The heal is a reading of its own and it is reported as one
+    (`foreign_prefix_healed`); it is not a reason to answer "nothing was
+    confirmed".
+    """
+    confirmed = (FOREIGN_PREFIX_STORED, UNKNOWN_PREFIX_STORED)
+    healing = record.get("healing") or {}
+    readings = [("the peer's save", record.get("verdict"))]
+    if healing.get("performed"):
+        readings.append(("the Ingress healing save", healing.get("verdict")))
+    return [{"pair": record.get("pair"), "verdict": verdict, "reading": where}
+            for where, verdict in readings if verdict in confirmed]
+
+
 def report(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """What the run found, and what #234's own criteria make of it."""
+    """What the run found, and what #234's own criteria make of it.
+
+    **A `CLEAN` is reported with the transport it was read under** (#265). #243's
+    run recorded two of them while the collaboration transport delivered on
+    neither pair, and every document that then quoted "measured, `CLEAN`" --
+    ADR 0004's postscript, the parity plan's row, the evidence README -- was
+    quoting a measurement of the *save path* as if it were a measurement of a
+    delivered peer snapshot. The two are separated here so the shorter sentence
+    cannot be written again by accident.
+    """
     verdicts = [record.get("verdict") for record in records]
-    escalate = [
-        record for record in records
-        if record.get("verdict") in (FOREIGN_PREFIX_STORED, UNKNOWN_PREFIX_STORED)
-    ]
+    finals = [final_verdict(record) for record in records]
+    clean_delivered = sorted(record.get("pair") for record in records
+                             if final_verdict(record) == CLEAN and _delivered(record))
+    clean_undelivered = sorted(record.get("pair") for record in records
+                               if final_verdict(record) == CLEAN and not _delivered(record))
+    escalate = [reading for record in records for reading in escalating_readings(record)]
+    healed = [record for record in records
+              if record.get("verdict") in (FOREIGN_PREFIX_STORED, UNKNOWN_PREFIX_STORED)
+              and final_verdict(record) == CLEAN]
     return {
         "records": len(records),
+        # The peer's save, which is what this key has always counted.
         "verdicts": {verdict: verdicts.count(verdict) for verdict in sorted(set(verdicts))},
+        # And the value each record ends with, which is what the rule below reads.
+        "final_verdicts": {verdict: finals.count(verdict)
+                           for verdict in sorted(set(finals), key=str)},
         "transport_delivered": sorted(
-            {bool((record.get("transport") or {}).get("delivered")) for record in records}
+            {_delivered(record) for record in records}
         ),
+        "clean": {
+            "with_a_delivered_transport": clean_delivered,
+            "with_no_delivery": clean_undelivered,
+        },
+        "clean_means": clean_means(clean_delivered, clean_undelivered),
+        # Named rather than folded into the clean count: on the `ingress-public`
+        # pair this is the fix working as ADR 0004 says it can -- the Public
+        # peer's write happened and the next Ingress save removed it.
+        "foreign_prefix_healed": [
+            {"pair": record.get("pair"), "stored_by": record.get("saver"),
+             "healed_by": (record.get("healing") or {}).get("saver"),
+             "notes": HEALED_NOTE}
+            for record in healed
+        ],
+        "healing": {
+            "performed": sorted(record.get("pair") for record in records
+                                if (record.get("healing") or {}).get("performed")),
+            "not_performed": {record.get("pair"): (record.get("healing") or {}).get("reason")
+                              for record in records
+                              if record.get("healing") and
+                              not record["healing"].get("performed")},
+        },
+        "transport_causes": {record.get("pair"): (record.get("collaboration") or {}).get("cause")
+                             for record in records},
         # #234's acceptance criteria: a stored foreign token makes it a blocker
         # (parity plan section 1.3, token leak). Said by the report rather than
-        # left to whoever reads the JSONL.
+        # left to whoever reads the JSONL, and said of **every** reading the run
+        # took -- `ISSUE_234_RULE` is why, and what reading it the other way cost.
         "escalate_issue_234_to_blocker": bool(escalate),
+        "escalated_on": escalate,
+        "escalation_rule": ISSUE_234_RULE,
+        # Whether anything is still in the field now, which is the question the
+        # escalation is *not* asking: a run can confirm the write and leave none.
+        "foreign_prefix_still_stored": [
+            record.get("pair") for record in records
+            if final_verdict(record) in (FOREIGN_PREFIX_STORED, UNKNOWN_PREFIX_STORED)
+        ],
         "pairs": sorted({record.get("pair") for record in records}),
     }
+
+
+def clean_means(delivered: Sequence[str], undelivered: Sequence[str]) -> str:
+    """The sentence that keeps a `CLEAN` from being quoted as more than it is."""
+    if not delivered and not undelivered:
+        return "no record here reads CLEAN"
+    said = []
+    if delivered:
+        said.append("on %s the receiving session was handed a peer snapshot before it saved, so "
+                    "CLEAN there is about a delivered snapshot" % ", ".join(delivered))
+    if undelivered:
+        said.append("on %s the transport delivered nothing, so CLEAN there is about the save "
+                    "path only and says nothing about a delivered peer snapshot (#265)"
+                    % ", ".join(undelivered))
+    return "; ".join(said)
 
 
 # --- What a wait and a probe conclude ------------------------------------------
@@ -435,6 +758,114 @@ def transport_note(transport: Mapping[str, Any]) -> str:
     return "%s -- so the stored value is not evidence about the peer transport" % detail
 
 
+JOIN_ON_FOCUS_DETAIL = (
+    "the collaboration plugin joins the peer network on the editable's `focus` event when no "
+    "view sets `collaborative_trigger` (`collaboration_odoo_plugin.js:91-99`), and a session "
+    "that has not joined discards every signalling notification it receives, including the "
+    "other session's `ptp_join` (`:156-158`) -- so an unfocused receiver cannot be delivered to"
+)
+
+
+def _reading_value(reading: Mapping[str, Any] | None, key: str) -> Any:
+    """One value out of a session's reading, or `None` if there is no reading."""
+    if not isinstance(reading, Mapping) or reading.get("unread"):
+        return None
+    return reading.get(key)
+
+
+def transport_diagnosis(
+    *,
+    transport: Mapping[str, Any],
+    sessions: Mapping[str, Mapping[str, Any]],
+    signalling: Mapping[str, int],
+) -> dict[str, Any]:
+    """Why the transport did or did not deliver, from what the two sessions said.
+
+    #265 is this function's reason to exist: #243's run recorded `delivered:
+    false` on both pairs with nothing beside it, so "the two sessions never became
+    collaboration peers" was the only account available and it was an inference
+    from a timeout. The three questions that Issue asks -- is the field
+    collaborative on this build, is the bus reachable on each surface, do the two
+    sessions share the collaboration channel -- are each a value in `sessions`
+    here, so a run answers them instead of leaving them to be guessed.
+
+    A ladder and not a set of flags, because the readings are ordered by what they
+    make the later ones worth: with no bus there is nothing to conclude from a
+    peer count, and with a field that is not collaborative there is no plugin to
+    read a channel off. The first rung that holds is the `cause`; everything read
+    is in the record either way.
+
+    Pure, so the Static tier drives it: this is a judgement about readings, and
+    the readings are what the browser is for.
+    """
+    labels = sorted(sessions)
+    channels = {label: _reading_value(sessions.get(label), "channel") for label in labels}
+    unread = [label for label in labels
+              if not isinstance(sessions.get(label), Mapping)
+              or sessions[label].get("unread")]
+    diagnosis: dict[str, Any] = {
+        "sessions": {label: dict(sessions[label]) for label in labels if label in sessions},
+        "signalling_posts": {label: int(signalling.get(label, 0)) for label in labels},
+        "signalling_route": BUS_BROADCAST_ROUTE,
+        "shared_channel": (None if None in channels.values()
+                           else len(set(channels.values())) == 1),
+    }
+
+    def conclude(cause: str, detail: str) -> dict[str, Any]:
+        diagnosis["cause"] = cause
+        diagnosis["detail"] = detail
+        return diagnosis
+
+    if transport.get("delivered"):
+        return conclude(DELIVERED, "")
+    if transport.get("marker_pre_existing"):
+        # Read before every rung below, because on this one the readings are not
+        # evidence about anything: `await_marker` returns without waiting, so the
+        # sessions may well have been peers and the transport may well have
+        # delivered -- the run simply cannot say. Naming it is the point; the first
+        # run that hit it recorded `unattributed` beside two sessions that were
+        # plainly connected, which reads as a mystery rather than as a void reading.
+        return conclude(MARKER_COLLISION,
+                        "the marker was already in the loaded document, so the wait returned "
+                        "without measuring anything: this reading is void rather than negative, "
+                        "and the next run needs a marker unique to the run *and* the pair")
+    not_collaborative = [label for label in labels
+                         if _reading_value(sessions.get(label), "is_collaborative") is False
+                         or _reading_value(sessions.get(label), "plugin_present") is False]
+    if not_collaborative:
+        return conclude(NOT_COLLABORATIVE,
+                        "session(s) %s mounted an html field that is not collaborative, so "
+                        "there is no peer network to join on that surface"
+                        % ", ".join(not_collaborative))
+    no_bus = [label for label in labels
+              if _reading_value(sessions.get(label), "bus_worker_state") not in (None, "CONNECTED")]
+    if no_bus:
+        return conclude(BUS_NOT_CONNECTED,
+                        "the bus worker is not connected on session(s) %s, and the signalling "
+                        "this transport needs goes over the bus -- nothing can be negotiated "
+                        "without it" % ", ".join(no_bus))
+    if diagnosis["shared_channel"] is False:
+        return conclude(DIFFERENT_CHANNEL,
+                        "the two sessions subscribed to different collaboration channels, so "
+                        "neither one's signalling reaches the other")
+    not_joined = [label for label in labels
+                  if _reading_value(sessions.get(label), "ptp_joined") is False]
+    if not_joined:
+        return conclude(NOT_JOINED,
+                        "session(s) %s never joined the peer network: %s"
+                        % (", ".join(not_joined), JOIN_ON_FOCUS_DETAIL))
+    no_peers = [label for label in labels
+                if _reading_value(sessions.get(label), "connected_peers") == 0]
+    if no_peers:
+        return conclude(NO_DATA_CHANNEL,
+                        "session(s) %s joined and signalled but hold no connected peer, so the "
+                        "WebRTC data channel the steps travel over never opened -- the bus "
+                        "carries the negotiation and never the content" % ", ".join(no_peers))
+    return conclude(UNATTRIBUTED,
+                    "nothing in the readings accounts for the absence%s"
+                    % (" (session(s) %s could not be read)" % ", ".join(unread) if unread else ""))
+
+
 def probe_verdict(
     *,
     transport: Mapping[str, Any],
@@ -500,6 +931,36 @@ def _side_env(env: Env) -> Env:
     return copied
 
 
+class SignallingCount:
+    """Every collaboration signalling POST one session's context made.
+
+    The corroborating half of the diagnosis, and the reason it is here rather than
+    read off the page: `collaboration_reading` asks the client about itself, and a
+    client that never joined the peer network is exactly the client whose own
+    account of joining is worth least. This counts what went over the wire
+    instead. A session that joined posted a `ptp_join` to
+    `BUS_BROADCAST_ROUTE`; a session that never focused its editable posted
+    nothing at all, which is the shape #265 is about.
+
+    Counted per context off Playwright's `request` event, the way
+    `NavigationCount` counts documents (`e2e_menu_action_adapter.py`), and for the
+    same reason: the requests are not calls this code makes. A listener that
+    raised would raise inside Playwright's dispatch on whatever call happened to
+    be waiting, so it cannot.
+    """
+
+    def __init__(self, context) -> None:
+        self.posts = 0
+        context.on("request", self._seen)
+
+    def _seen(self, request) -> None:
+        try:
+            if request.method == "POST" and BUS_BROADCAST_ROUTE in request.url:
+                self.posts += 1
+        except Exception:  # noqa: BLE001 -- an accounting listener may not break a run
+            pass
+
+
 def open_pair(env: Env, browser, pair: str, *, viewport=(1600, 1000)):
     """Session A first, then session B: the second to join is the receiver."""
     context_args: dict[str, Any] = {
@@ -511,6 +972,12 @@ def open_pair(env: Env, browser, pair: str, *, viewport=(1600, 1000)):
         second = PublicSide(_side_env(env), browser, viewport=viewport, **context_args)
     else:
         second = IngressSide(_side_env(env), browser, viewport=viewport, **context_args)
+    # Before the login, so no signalling post can fall outside the count. The
+    # counter is attached to the session because every reader of it already holds
+    # one and the figure belongs to that context, the way `extra_secrets` below
+    # belongs to its Env.
+    for side in (first, second):
+        side.signalling = SignallingCount(side.context)
     first.start()
     second.start()
     # Each side's masker must know the other's prefix as a secret of its own,
@@ -574,6 +1041,55 @@ def type_marker(side, marker_text: str) -> None:
     editable.click()
     side.page.keyboard.press("Control+End")
     side.page.keyboard.type(" " + marker_text)
+
+
+def focus_editable(side) -> None:
+    """Focus the editable, which is what makes this session a collaboration peer.
+
+    **This is the step #243's run did not have, and the whole of why its transport
+    delivered nothing** (#265). With no view setting `collaborative_trigger` --
+    neither `project.view_task_form2`, the form `/odoo/project.task/<id>` serves,
+    nor `project_todo`'s -- the collaboration plugin does not join the peer
+    network on mount: it registers a one-shot `focus` listener on the editable and
+    joins there (`collaboration_odoo_plugin.js:91-99`). Until that runs,
+    `ptpJoined` is false, and the bus listener drops *every* notification it
+    receives on that condition -- including the other session's `ptp_join`
+    (`:156-158`). No log, no error, nothing in the DOM: a receiving session that
+    was never focused simply waits out the whole 30 seconds.
+
+    So the sending session joined by accident, because typing needs a focused
+    editable, and the receiving session never did: it only loaded the form and
+    read `innerHTML`. Both pairs were predicted to fail by the source before the
+    host was involved at all.
+
+    `focus()` and not `click()`: a click lands in the middle of the loaded
+    document, and the onboarding to-do's middle is a checklist whose items toggle
+    through `/web_editor/checklist` -- a write, on the command whose whole claim is
+    that it makes none. Focusing fires the event the plugin listens for and
+    touches no content.
+    """
+    side.root.locator(EDITABLE).first.focus()
+    # The join is asynchronous from here (`joinPeerToPeer` waits on
+    # `peerToPeerLoading`, which waits on the ICE-server RPC), so the reading that
+    # says whether it finished is `collaboration_reading`, not this call.
+    side.page.wait_for_timeout(500)
+
+
+def collaboration_reading(side) -> dict[str, Any]:
+    """What this session says about its own collaboration, or why it said nothing.
+
+    Never raises: a reading that failed is a reason in the record, the way
+    `AmbientReading.none` is. A diagnosis is worth a run and not the other way
+    round -- and the run this is read during costs a deploy, a host and two
+    30-second waits.
+    """
+    try:
+        reading = side.root.evaluate(COLLABORATION_STATE_JS)
+    except Exception as error:  # noqa: BLE001 -- the reason belongs in the record
+        return {"unread": sanitize_diagnostic(str(error))}
+    if isinstance(reading, dict):
+        return reading
+    return {"unread": sanitize_diagnostic("the page answered %r" % (reading,))}
 
 
 def editable_html(side) -> str:
@@ -707,9 +1223,11 @@ def stage(first, second, task_id: int | None, marker_text: str):
     """Both commands' common half, up to the point where only `run` saves.
 
     Session A opens the to-do and types `marker_text` **without saving**; session
-    B joins the same record; the run waits for that marker to reach B. Everything
-    after this differs: `probe` discards both forms and stops, `run` types B's own
-    marker, saves and reads the field back.
+    B joins the same record, **focuses its editable** so that it joins the peer
+    network at all, and the run waits for that marker to reach B. It then reads
+    both sessions' own account of the collaboration, which is what attributes the
+    outcome either way. Everything after this differs: `probe` discards both forms
+    and stops, `run` types B's own marker, saves and reads the field back.
 
     The two sessions are opened by the caller (`open_pair`) and not here, for two
     reasons that arrived together. The ambient figure's window opens at its first
@@ -731,8 +1249,25 @@ def stage(first, second, task_id: int | None, marker_text: str):
     baseline = editable_html(first)
     type_marker(first, marker_text)
     open_todo(second, task_id)
+    # The receiving session joins the peer network here and nowhere else, and
+    # until #265 nothing did it at all -- `focus_editable` has the mechanism and
+    # what its absence cost #243's run.
+    focus_editable(second)
     transport = wait_for_transport(second, marker_text, baseline=baseline)
-    return labels, task_id, transport
+    # Read before anything discards or saves: a discard remounts the editor and
+    # takes the plugin's state with it, and this reading is the only thing that
+    # attributes the transport's outcome (#265).
+    diagnosis = transport_diagnosis(
+        transport=transport,
+        sessions={"A": collaboration_reading(first), "B": collaboration_reading(second)},
+        signalling={"A": _signalling_posts(first), "B": _signalling_posts(second)},
+    )
+    return labels, task_id, transport, diagnosis
+
+
+def _signalling_posts(side) -> int:
+    """This session's signalling count, or zero if the pair was opened without one."""
+    return getattr(getattr(side, "signalling", None), "posts", 0)
 
 
 def do_probe(env: Env, browser, pair: str, task_id: int | None, run_id: str) -> int:
@@ -748,13 +1283,13 @@ def do_probe(env: Env, browser, pair: str, task_id: int | None, run_id: str) -> 
     hand, and "it writes nothing" is a claim about the field, never about the rows
     a page view leaves.
     """
-    probe_marker = marker(run_id, "A")
+    probe_marker = marker(run_id, "A", pair)
     first, second = open_pair(env, browser, pair)
     try:
         with ambient_accounting(ambient_figure(first, second),
                                 RunInfo(run_id=run_id, target=env.target, database=env.db),
                                 pair, None, command="probe", navigation_basis=AMBIENT_BASIS):
-            labels, task_id, transport = stage(first, second, task_id, probe_marker)
+            labels, task_id, transport, diagnosis = stage(first, second, task_id, probe_marker)
             # Read B's editable before discarding: after a discard it holds the stored
             # value, and what a reader needs from it is what the transport delivered.
             second_editable = redact(editable_html(second), labels)[:2000]
@@ -776,6 +1311,10 @@ def do_probe(env: Env, browser, pair: str, task_id: int | None, run_id: str) -> 
                     {"A": first.env.prefix, "B": second.env.prefix}
                 ),
                 "transport": transport,
+                # Why it did or did not deliver, read off both sessions. `probe`
+                # is the step a failure is attributed from, and until #265 it
+                # reported the outcome with nothing beside it.
+                "collaboration": redact(diagnosis, labels),
                 "second_session_editable": second_editable,
                 "saved": False,
                 "discarded": discarded,
@@ -803,8 +1342,53 @@ def do_probe(env: Env, browser, pair: str, task_id: int | None, run_id: str) -> 
             side.close()
 
 
+NO_HEAL_ON_THIS_PAIR = (
+    "the ingress-ingress pair has no foreign write to heal: both sessions are served the "
+    "add-on's one prefix and both save through the same strip, so the peer's save is the whole "
+    "measurement (parity plan section 12)"
+)
+
+
+def heal_under_ingress(first, task_id: int, labels: Mapping[str, str],
+                       marker_text: str) -> dict[str, Any]:
+    """Load what the Public peer stored under Ingress, save once, and read again.
+
+    The second half of the `ingress-public` measurement (`healing_read` says why
+    there has to be one). Four steps, and the order is the measurement:
+
+    - **A's own leftover goes first.** A is still dirty with the marker it typed
+      before B joined. Navigating a dirty To-do form persists the editor's content
+      through a `sendBeacon` nothing can intercept (#263, `discard_form`), so
+      reloading A without discarding would write A's stale document over B's save
+      and heal nothing -- it would *overwrite* the value under measurement.
+    - **A reloads the record.** A discard resets the form to the values the client
+      already held, which are the ones A loaded before B saved. Only a fresh
+      `web_read` hands A the value B stored, and the whole question is whether an
+      Ingress save strips a prefix that arrived *in the loaded value*.
+    - **The loaded editable is read**, before anything is typed into it. That
+      reading is what says the healing save had a subject.
+    - **A types and saves once.** The strip sits on the field's one write
+      (`HtmlField.updateValue`, #210/#238), and a clean form makes no write at
+      all, so there has to be a change for there to be a save. The marker carries
+      the run id like every other marker here.
+    """
+    discard_quietly(first)
+    open_todo(first, task_id)
+    loaded = editable_html(first)
+    type_marker(first, marker_text)
+    save_form(first)
+    return healing_read(loaded=loaded, stored=read_description(first, task_id),
+                        labels=labels, saver="A")
+
+
 def do_run(env: Env, browser, pair: str, task_id: int | None, run_id: str, out_path: str) -> int:
     """Stage both sessions, let B save, and write the record and the run's figure.
+
+    On the `ingress-public` pair there is a **second** reading after that: the
+    Public peer's save is the one the Ingress fix cannot prevent, so the record
+    also says what the next Ingress save did with it (`heal_under_ingress`). The
+    verdict the escalation rule reads is `final_verdict`, which is that second one
+    wherever it was taken.
 
     The ambient figure is appended beside `out_path` (`peer.jsonl` ->
     `peer.ambient.json`), appended because the records are: this command is run
@@ -816,10 +1400,40 @@ def do_run(env: Env, browser, pair: str, task_id: int | None, run_id: str, out_p
                                 RunInfo(run_id=run_id, target=env.target, database=env.db),
                                 pair, out_path, command="run", append=True,
                                 navigation_basis=AMBIENT_BASIS):
-            labels, task_id, transport = stage(first, second, task_id, marker(run_id, "A"))
-            type_marker(second, marker(run_id, "B"))
+            labels, task_id, transport, diagnosis = stage(first, second, task_id,
+                                                          marker(run_id, "A", pair))
+            type_marker(second, marker(run_id, "B", pair))
             save_form(second)
             stored = read_description(second, task_id)
+            if pair != HEALING_PAIR:
+                # A's form is still dirty with A's own marker, and leaving it that way
+                # writes it on the way out (#263). What this command is documented to
+                # store is what B saved, so A's leftover is discarded. B's form is
+                # clean; the save is what made it clean.
+                #
+                # This sits before the record is written, where the old ordering put it
+                # after, and `discard_quietly` is what makes that safe: it returns the
+                # outcome for a discard that raised instead of raising. Cleanup must
+                # never be what loses a measurement that cost a deploy, a host and a
+                # 30-second wait, and `discard_form` does raise -- its `wait_for` times
+                # out whenever the form will not go clean.
+                discard_quietly(first)
+                healing = healing_not_performed(NO_HEAL_ON_THIS_PAIR)
+            else:
+                # The healing half is a measurement and not cleanup, but it is taken
+                # **after** the one above, so it is guarded the way cleanup is: a
+                # second reading that could not be taken is a reason in the record,
+                # never a lost first reading. This run has already cost a deploy, a
+                # host and a 30-second wait by the time it gets here, and every step
+                # in it can time out (`discard_form`'s wait on a form that will not go
+                # clean, a save button that never hides).
+                try:
+                    healing = heal_under_ingress(first, task_id, labels,
+                                                 marker(run_id, "A-heal", pair))
+                except Exception as error:  # noqa: BLE001 -- the first reading matters more
+                    healing = healing_not_performed(
+                        "the Ingress healing save could not be taken: %s"
+                        % sanitize_diagnostic(str(error)))
             record = evidence_record(
                 run_id=run_id,
                 database=env.db,
@@ -828,22 +1442,24 @@ def do_run(env: Env, browser, pair: str, task_id: int | None, run_id: str, out_p
                 task_id=task_id,
                 prefixes={"A": first.env.prefix, "B": second.env.prefix},
                 transport=transport,
+                collaboration=diagnosis,
                 stored=stored,
                 labels=labels,
                 saver="B",
+                healing=healing,
                 notes=transport_note(transport),
             )
             with open(out_path, "a", encoding="utf-8") as handle:
                 handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
             print(json.dumps(record, indent=2, ensure_ascii=False))
-            # Only now: A's form is still dirty with A's own marker, and leaving it
-            # that way writes it on the way out (#263). What this command is documented
-            # to store is what B saved, so A's leftover is discarded -- but *after* the
-            # record is on disk and printed. A cleanup step must never be what loses a
-            # measurement that needed a deploy and a host to take. B's form is clean;
-            # the save is what made it clean.
-            discard_quietly(first)
-            clean = record["verdict"] == CLEAN
+            # Two questions, and the exit code answers both: did this run confirm a
+            # stored foreign prefix anywhere (`escalating_readings`, which is #234's
+            # rule as #234 wrote it), and does the record end clean. A `run` on the
+            # `ingress-public` pair of this host answers "yes" to the first, so it
+            # exits non-zero even though the heal worked -- that is the signal, not a
+            # fault in it: the command just measured a Supervisor token reaching a
+            # record. `report` says the same thing with the heal beside it.
+            clean = final_verdict(record) == CLEAN and not escalating_readings(record)
         # Outside the accounting, for `do_probe`'s reason: a verdict this run
         # measured must not be turned into a harness error by the figure's own
         # failure.

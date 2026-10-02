@@ -87,8 +87,69 @@
   `docs/testing/evidence/2026-10-02-issue-243/README.md` is **annotated** rather
   than rewritten: the absolute count it read is still what that run read. The
   pure parts are driven at the Static tier. No image change and no version bump.
+- **The collaboration transport has now been seen to deliver, and a delivered peer
+  snapshot does put the Ingress prefix in a record** (#265, on Release 0.4.10, the
+  version #243 measured). Both pairs delivered. `ingress-ingress` is `CLEAN` *after
+  a delivered snapshot*, which is the sentence #234's row had been quoted for and
+  which no run had made; `ingress-public` stored
+  `/api/hassio_ingress/<the add-on's token>` on both of the to-do's images —
+  `FOREIGN-PREFIX-STORED`, the write #234 has described since 2026-10-01, measured
+  for the first time — and the Ingress session's next save removed it, both `src`
+  root-relative. So both halves of "the fix heals the record rather than preventing
+  the write" are measured, the write itself is registered as `G-08` in the parity
+  plan's §11, and `report` escalates on it: #234's criterion is a *confirmed*
+  stored foreign token, so the rule reads every value the run read and not only the
+  last, with the heal reported beside it rather than instead of it. Whether #234's
+  severity follows the confirmation or the persistence is left to that issue.
+  Evidence:
+  `docs/testing/evidence/2026-10-02-issue-265/`; #243's directory is **annotated**,
+  not rewritten. No image change and no version bump.
 
 ### Fixed
+- **The peer snapshot never focused its receiving session, which is why nothing had
+  ever been delivered to it** (#265, the third defect #243's run exposed in this
+  driver). No view that shows `project.task.description` sets
+  `collaborative_trigger`, so the collaboration plugin joins the peer network on the
+  editable's `focus` event and nowhere else, and a session that has not joined
+  discards every signalling notification it receives — the other session's
+  `ptp_join` included, with no log and nothing in the DOM
+  (`collaboration_odoo_plugin.js:91-99`, `:156-158`). The sending session joined by
+  accident, because typing needs focus; the receiving one was first focused *after*
+  the 30-second wait expired. `stage` now focuses it, with `focus()` and not
+  `click()` — a click lands in the middle of the onboarding to-do, whose middle is a
+  checklist that toggles through `/web_editor/checklist`, a write on the command
+  that claims to make none.
+- A `delivered: false` is now attributed by the run that reads it. #243's two
+  records carried the bare boolean and the account that went into ADR 0004, the
+  parity plan and that run's own README — "the two sessions never became
+  collaboration peers" — was an inference from a timeout. Both commands now read
+  each session's own state (is the field collaborative, is the bus worker connected,
+  which channel, did it join, how many connected peers) and count the signalling
+  each posted to `/html_editor/bus_broadcast` off the wire, and
+  `transport_diagnosis` names the first rung that holds. The three questions #265
+  asked are each a value in the record.
+- `do_run` has the two-step healing read ADR 0004 asked for on `ingress-public` and
+  #243 could not take: the Ingress session discards its leftover, **reloads the
+  record** so its editor holds what the Public peer stored, and saves once; the
+  record carries `loaded_prefixes` (the reading that says the heal had a subject),
+  the second verdict, and a reason when it could not be taken. The escalation rule
+  reads **every** value the run read, because #234's criterion is a *confirmed*
+  stored foreign token: a prefix the heal removed was still confirmed in the record,
+  and the first spelling of this -- which read only the value the record ends with
+  -- answered `false` on the run that had just watched a Supervisor token reach the
+  field. The heal is reported beside it as `foreign_prefix_healed`, with
+  `foreign_prefix_still_stored` for what is in the field now, and neither is folded
+  into the clean count. `report` also splits `CLEAN` into `with_a_delivered_transport` and
+  `with_no_delivery` with a sentence beside it, so the two things #243's run was
+  quoted as having said cannot be written as one again.
+- A marker now carries the **pair** as well as the run id. One run is one
+  `--run-id` across both pairs and `run` stores its marker, so the second pair
+  opened a record that already held the first pair's `<run-id>-A`: the baseline
+  guard #263 added refused the match and returned without waiting, which made that
+  transport reading **void** rather than negative. Found by #265's own first
+  attempt, whose records are kept beside the final ones, and
+  `transport_diagnosis` grew a `marker-collision` rung so the shape is named
+  instead of reading as `unattributed` beside two plainly connected sessions.
 - The peer snapshot's `probe` no longer writes the field it reports it does not,
   and no longer reports a delivery that never happened (#263, both found by
   #243's run). It wrote on **every** run: it typed a marker into

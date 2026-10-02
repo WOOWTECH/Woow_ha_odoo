@@ -28,14 +28,24 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from e2e_collab_peer_snapshot_live import (
+    BUS_NOT_CONNECTED,
     CLEAN,
+    COLLABORATION_STATE_JS,
+    DELIVERED,
+    DIFFERENT_CHANNEL,
     EVIDENCE_SCHEMA,
+    HEALING_PAIR,
+    MARKER_COLLISION,
     FOREIGN_PREFIX_STORED,
     INGRESS_PREFIX_SHAPE,
+    NOT_COLLABORATIVE,
+    NOT_JOINED,
     NOT_RUN,
+    NO_DATA_CHANNEL,
     OWN_PREFIX_STORED,
     PAIRS,
     PROBE_RUN_PREFIX,
+    UNATTRIBUTED,
     UNKNOWN_PREFIX_STORED,
     await_marker,
     classify,
@@ -43,15 +53,22 @@ from e2e_collab_peer_snapshot_live import (
     do_probe,
     do_run,
     evidence_record,
+    final_verdict,
+    focus_editable,
+    heal_under_ingress,
+    healing_not_performed,
+    healing_read,
     ingress_prefixes,
     marker,
     mint_run_id,
+    open_pair,
     probe_verdict,
     redact,
     discard_quietly,
     report,
     stage,
     stored_prefix_labels,
+    transport_diagnosis,
     transport_note,
     wait_for_transport,
 )
@@ -70,6 +87,10 @@ PREFIX_B = "/api/hassio_ingress/" + TOKEN_B
 PREFIX_C = "/api/hassio_ingress/" + TOKEN_C
 PICTURE = "/project_todo/static/img/todo_access.png"
 LABELS = {PREFIX_A: "A", PREFIX_B: "B"}
+# The channel the collaboration plugin builds from the record and nothing else
+# (`collaboration_odoo_plugin.js:134`), which is why two sessions on one to-do
+# share it whatever surface each is on.
+CHANNEL = "editor_collaboration:project.task:description:5"
 
 
 class PrefixShapeTests(unittest.TestCase):
@@ -217,6 +238,34 @@ class RecordTests(unittest.TestCase):
         self.assertEqual(record["issue"], 234)
         self.assertIn(record["pair"], PAIRS)
 
+    def test_the_record_carries_the_diagnosis_and_the_second_reading(self):
+        """Both are #265's, and both are additive: the schema is still
+        `woow.peer-snapshot.v1` because this is the same kind of record with two
+        more fields, not a new kind of record."""
+        record = evidence_record(**self.kwargs(
+            collaboration={"cause": NOT_JOINED, "detail": "session(s) B never joined"},
+            healing={"performed": True, "verdict": CLEAN, "saver": "A"}))
+        self.assertEqual(record["collaboration"]["cause"], NOT_JOINED)
+        self.assertEqual(record["healing"]["verdict"], CLEAN)
+        self.assertEqual(record["schema"], EVIDENCE_SCHEMA)
+
+    def test_a_record_without_either_still_says_which_it_has(self):
+        record = evidence_record(**self.kwargs())
+        self.assertEqual(record["collaboration"], {})
+        self.assertIsNone(record["healing"],
+                          "null rather than absent: a reader can tell no second reading was taken")
+
+    def test_no_token_survives_in_either_field_the_record_grew(self):
+        """A diagnosis can carry a Playwright message, and a Playwright message
+        carries the URL it failed on -- which under Ingress is the prefix. The
+        healing reading goes through the same redaction at the same boundary, so
+        the guarantee does not depend on which helper built it."""
+        record = evidence_record(**self.kwargs(
+            collaboration={"sessions": {"B": {"unread": "timeout on %s/odoo" % PREFIX_C}}},
+            healing={"performed": False, "reason": "timeout on %s/odoo" % PREFIX_C}))
+        self.assertNotIn(TOKEN_C, json.dumps(record))
+        self.assertIn("<ingress:unknown>", record["healing"]["reason"])
+
     def test_the_schema_is_the_one_the_parity_plan_registers(self):
         """Section 12 of the plan is where evidence schemas are declared, and
         this one is not `odoo-parity-evidence/v1` for reasons recorded there.
@@ -234,7 +283,8 @@ class RecordTests(unittest.TestCase):
 
 class ReportTests(unittest.TestCase):
     def record(self, verdict, **overrides):
-        base = {"verdict": verdict, "pair": "ingress-ingress", "transport": {"delivered": True}}
+        base = {"verdict": verdict, "pair": "ingress-ingress", "transport": {"delivered": True},
+                "healing": None}
         base.update(overrides)
         return base
 
@@ -258,15 +308,341 @@ class ReportTests(unittest.TestCase):
         result = report([self.record(CLEAN, transport={"delivered": False})])
         self.assertEqual(result["transport_delivered"], [False])
 
+    def test_a_clean_is_reported_with_the_transport_it_was_read_under(self):
+        """#265's own criterion. #243's run recorded two `CLEAN`s while the
+        transport delivered on neither pair, and ADR 0004, the parity plan and the
+        evidence README then all quoted "measured, `CLEAN`" for a measurement of
+        the save path. The two cannot be written as one sentence from here."""
+        result = report([
+            self.record(CLEAN, pair="ingress-ingress", transport={"delivered": False}),
+            self.record(CLEAN, pair="ingress-public", transport={"delivered": True}),
+        ])
+        self.assertEqual(result["clean"], {"with_a_delivered_transport": ["ingress-public"],
+                                          "with_no_delivery": ["ingress-ingress"]})
+        self.assertIn("save path only", result["clean_means"])
+        self.assertIn("ingress-ingress", result["clean_means"])
+        self.assertIn("delivered snapshot", result["clean_means"])
+
+    def test_a_fully_delivered_clean_run_says_nothing_about_a_save_path_caveat(self):
+        result = report([self.record(CLEAN), self.record(CLEAN, pair="ingress-public")])
+        self.assertEqual(result["clean"]["with_no_delivery"], [])
+        self.assertNotIn("save path only", result["clean_means"])
+
+    def test_a_confirmed_prefix_escalates_even_when_the_heal_removed_it(self):
+        """#234's criterion is a **confirmed** stored foreign token, and a prefix the
+        heal removed was confirmed: it was in the record. The first spelling of this
+        read `final_verdict`, so a run that had just measured the Public peer writing
+        a Supervisor token into `project.task.description` -- the escape #234 exists
+        for -- printed `escalate_issue_234_to_blocker: false`. A report may not hide
+        the confirmation behind the heal; it reports both, and whether the severity
+        moves is #234's decision."""
+        result = report([self.record(FOREIGN_PREFIX_STORED, pair="ingress-public", saver="B",
+                                     healing={"performed": True, "verdict": CLEAN,
+                                              "saver": "A"})])
+        self.assertIs(result["escalate_issue_234_to_blocker"], True)
+        self.assertEqual(result["escalated_on"],
+                         [{"pair": "ingress-public", "verdict": FOREIGN_PREFIX_STORED,
+                           "reading": "the peer's save"}])
+        # And the heal is beside it, not instead of it.
+        self.assertEqual(result["foreign_prefix_healed"][0]["pair"], "ingress-public")
+        self.assertEqual(result["foreign_prefix_healed"][0]["stored_by"], "B")
+        self.assertEqual(result["foreign_prefix_healed"][0]["healed_by"], "A")
+        self.assertEqual(result["foreign_prefix_still_stored"], [],
+                         "the record ends clean, which is a different question")
+        self.assertEqual(result["final_verdicts"], {CLEAN: 1})
+        self.assertEqual(result["verdicts"], {FOREIGN_PREFIX_STORED: 1})
+
+    def test_a_prefix_that_survived_the_ingress_save_says_both_things(self):
+        result = report([self.record(FOREIGN_PREFIX_STORED, pair="ingress-public",
+                                     healing={"performed": True,
+                                              "verdict": FOREIGN_PREFIX_STORED, "saver": "A"})])
+        self.assertIs(result["escalate_issue_234_to_blocker"], True)
+        self.assertEqual([reading["reading"] for reading in result["escalated_on"]],
+                         ["the peer's save", "the Ingress healing save"])
+        self.assertEqual(result["foreign_prefix_still_stored"], ["ingress-public"])
+        self.assertEqual(result["foreign_prefix_healed"], [])
+
+    def test_the_report_carries_the_rule_it_applied(self):
+        """Because the rule has now been written two ways, and the one that reads
+        only the end of the run answers "no" to the measurement that proves the
+        escape exists."""
+        result = report([self.record(CLEAN)])
+        self.assertIn("confirmed", result["escalation_rule"])
+        self.assertIn("#234's decision", result["escalation_rule"])
+
+    def test_an_escalation_on_the_pair_with_no_healing_phase_names_that_reading(self):
+        result = report([self.record(FOREIGN_PREFIX_STORED)])
+        self.assertIs(result["escalate_issue_234_to_blocker"], True)
+        self.assertEqual(result["escalated_on"][0]["reading"], "the peer's save")
+
+    def test_a_heal_that_was_not_performed_is_in_the_report_with_its_reason(self):
+        """Not silently absent: a reader comparing two runs has to see that one of
+        them took one reading where the other took two."""
+        result = report([
+            self.record(CLEAN, pair="ingress-ingress",
+                        healing={"performed": False, "reason": "no foreign write to heal"}),
+            self.record(CLEAN, pair="ingress-public",
+                        healing={"performed": True, "verdict": CLEAN, "saver": "A"}),
+        ])
+        self.assertEqual(result["healing"]["performed"], ["ingress-public"])
+        self.assertEqual(result["healing"]["not_performed"],
+                         {"ingress-ingress": "no foreign write to heal"})
+
+    def test_the_report_carries_each_pairs_attributed_cause(self):
+        result = report([self.record(CLEAN, transport={"delivered": False},
+                                     collaboration={"cause": NOT_JOINED})])
+        self.assertEqual(result["transport_causes"], {"ingress-ingress": NOT_JOINED})
+
+
+class TransportDiagnosisTests(unittest.TestCase):
+    """#265: a `delivered: false` has to be attributed by the run that read it.
+
+    #243's run recorded two of them with nothing beside them, and the account that
+    then went into ADR 0004, the parity plan and the evidence README -- "the two
+    sessions never became collaboration peers" -- was an inference from a timeout.
+    It happened to be true, and it was not measured. The ladder below is what the
+    readings are worth and in which order.
+    """
+
+    def reading(self, **overrides):
+        base = dict(is_collaborative=True, display_readonly=False, res_id=5,
+                    plugin_present=True, channel=CHANNEL, ptp_joined=True,
+                    ptp_created=True, peers=1, connected_peers=1,
+                    bus_worker_state="CONNECTED", bus_connection_lost=False)
+        base.update(overrides)
+        return base
+
+    def diagnose(self, *, transport=None, a=None, b=None, signalling=None):
+        return transport_diagnosis(
+            transport=transport if transport is not None else {"delivered": False},
+            sessions={"A": a if a is not None else self.reading(),
+                      "B": b if b is not None else self.reading()},
+            signalling=signalling if signalling is not None else {"A": 3, "B": 2},
+        )
+
+    def test_a_delivered_transport_needs_no_cause_beyond_itself(self):
+        result = self.diagnose(transport={"delivered": True, "waited_seconds": 1.5})
+        self.assertEqual(result["cause"], DELIVERED)
+        self.assertEqual(result["detail"], "")
+        self.assertEqual(result["sessions"]["A"]["ptp_joined"], True,
+                         "and the readings are in the record either way")
+
+    def test_a_pre_existing_marker_makes_the_reading_void_and_not_negative(self):
+        """And it is read before every other rung, because on that path nothing was
+        measured: `await_marker` returns without waiting, so the two sessions may
+        well have been peers and the snapshot may well have arrived. The run that
+        hit this recorded `unattributed` beside two plainly connected sessions,
+        which reads as a mystery rather than as a void reading."""
+        result = self.diagnose(transport={"delivered": False, "marker_pre_existing": True,
+                                          "waited_seconds": 0.0})
+        self.assertEqual(result["cause"], MARKER_COLLISION)
+        self.assertIn("void", result["detail"])
+        self.assertIn("the pair", result["detail"])
+
+    def test_a_field_that_is_not_collaborative_is_the_first_rung(self):
+        """Before anything else, because without the plugin there is no channel to
+        compare and no peer count to read."""
+        result = self.diagnose(b=self.reading(is_collaborative=False, plugin_present=False,
+                                              channel=None, ptp_joined=None))
+        self.assertEqual(result["cause"], NOT_COLLABORATIVE)
+        self.assertIn("session(s) B", result["detail"])
+
+    def test_a_bus_that_never_connected_is_read_before_the_peer_state(self):
+        """The signalling this transport needs goes over the bus, so a peer count
+        taken without one says nothing. This is the rung that answers "is the bus
+        reachable under Ingress and on the Public origin"."""
+        result = self.diagnose(a=self.reading(bus_worker_state="DISCONNECTED",
+                                             ptp_joined=False))
+        self.assertEqual(result["cause"], BUS_NOT_CONNECTED)
+        self.assertIn("A", result["detail"])
+
+    def test_two_sessions_on_different_channels_are_named_as_such(self):
+        result = self.diagnose(b=self.reading(channel=CHANNEL.replace(":5", ":6")))
+        self.assertEqual(result["cause"], DIFFERENT_CHANNEL)
+        self.assertIs(result["shared_channel"], False)
+
+    def test_a_session_that_never_joined_the_peer_network_is_the_defect_265_found(self):
+        """And the detail says *why* a session would not have joined, because the
+        reason is not discoverable from the DOM, the console or a log: the plugin
+        joins on the editable's `focus` and the unjoined session drops every
+        notification it is sent."""
+        result = self.diagnose(b=self.reading(ptp_joined=False, peers=0, connected_peers=0),
+                               signalling={"A": 3, "B": 0})
+        self.assertEqual(result["cause"], NOT_JOINED)
+        self.assertIn("session(s) B", result["detail"])
+        self.assertIn("focus", result["detail"])
+        self.assertEqual(result["signalling_posts"], {"A": 3, "B": 0},
+                         "and the wire says the same thing the client does")
+
+    def test_peers_that_joined_with_no_data_channel_are_a_different_finding(self):
+        """The bus carries the negotiation and never the content, so a joined pair
+        with no connected peer is an RTC failure and not a signalling one."""
+        result = self.diagnose(a=self.reading(connected_peers=0),
+                               b=self.reading(connected_peers=0))
+        self.assertEqual(result["cause"], NO_DATA_CHANNEL)
+        self.assertIn("data channel", result["detail"])
+
+    def test_nothing_accounting_for_it_says_so_rather_than_picking_a_rung(self):
+        result = self.diagnose(a=self.reading(connected_peers=None),
+                               b=self.reading(connected_peers=None))
+        self.assertEqual(result["cause"], UNATTRIBUTED)
+
+    def test_a_session_that_could_not_be_read_is_not_read_as_a_false_value(self):
+        """An unread session must not satisfy a rung: `is_collaborative` missing is
+        not `is_collaborative: false`, and saying "the field is not collaborative"
+        on a page that never answered would be a worse account than none."""
+        result = self.diagnose(b={"unread": "no __WOWL_DEBUG__ root on this page"})
+        self.assertEqual(result["cause"], UNATTRIBUTED)
+        self.assertIn("B", result["detail"])
+        self.assertEqual(result["sessions"]["B"]["unread"],
+                         "no __WOWL_DEBUG__ root on this page")
+
+    def test_the_shared_channel_reading_is_none_when_one_side_has_no_channel(self):
+        result = self.diagnose(b=self.reading(channel=None, is_collaborative=True,
+                                              plugin_present=True))
+        self.assertIsNone(result["shared_channel"])
+
+    def test_the_route_the_posts_were_counted_on_is_in_the_record(self):
+        """A count with no denominator named is not a reading a second run can
+        compare with."""
+        self.assertEqual(self.diagnose()["signalling_route"], "/html_editor/bus_broadcast")
+
+    def test_the_state_expression_asks_for_no_secret_and_no_content(self):
+        """It runs in a page whose URL carries the Supervisor token, and its answer
+        goes into a record that is quoted in a pull request. Peer ids and documents
+        are counted, never carried."""
+        self.assertNotIn("innerHTML", COLLABORATION_STATE_JS)
+        self.assertNotIn("location", COLLABORATION_STATE_JS)
+        self.assertIn(".length", COLLABORATION_STATE_JS)
+        self.assertIn("ptpJoined", COLLABORATION_STATE_JS)
+        self.assertIn("workerState", COLLABORATION_STATE_JS)
+
+
+class HealingReadTests(unittest.TestCase):
+    """#265: the second half of the `ingress-public` measurement.
+
+    ADR 0004 asked for it when it refined #234's Live row -- read after the Public
+    peer saves, then save once under Ingress and read again -- and #243's run had
+    no implementation of it and no subject for it. The two readings are not one
+    reading twice: the Public origin stores what it is handed, and the Ingress
+    strip's part is removing it on the next Ingress save.
+    """
+
+    def heal(self, **overrides):
+        base = dict(loaded='<img src="%s%s"/>' % (PREFIX_A, PICTURE),
+                    stored='<img src="%s"/>' % PICTURE, labels=LABELS, saver="A")
+        base.update(overrides)
+        return healing_read(**base)
+
+    def test_a_prefix_the_public_peer_stored_and_the_ingress_save_removed(self):
+        """What the fix does on this pair, and the only thing it can do: it cannot
+        stop the Public peer writing."""
+        healing = self.heal(loaded='<img src="%s%s"/>' % (PREFIX_B, PICTURE))
+        self.assertIs(healing["performed"], True)
+        self.assertEqual(healing["verdict"], CLEAN)
+        self.assertEqual(healing["loaded_prefixes"], ["B"])
+        self.assertIn("cannot prevent that write", healing["notes"])
+
+    def test_a_prefix_that_survived_the_ingress_save_is_the_hole(self):
+        healing = self.heal(loaded='<img src="%s%s"/>' % (PREFIX_B, PICTURE),
+                            stored='<img src="%s%s"/>' % (PREFIX_B, PICTURE))
+        self.assertEqual(healing["verdict"], FOREIGN_PREFIX_STORED)
+        self.assertEqual(healing["stored_prefixes"], ["B"])
+        self.assertIn("did not heal", healing["notes"])
+
+    def test_a_clean_save_that_had_nothing_to_strip_says_so(self):
+        """Which is the weaker statement, and the one every run so far could make:
+        a `CLEAN` after a save that loaded no prefix is not evidence that the strip
+        works."""
+        healing = self.heal(loaded='<img src="%s"/>' % PICTURE)
+        self.assertEqual(healing["verdict"], CLEAN)
+        self.assertEqual(healing["loaded_prefixes"], [])
+        self.assertIn("nothing to strip", healing["notes"])
+
+    def test_the_sessions_own_prefix_in_the_loaded_value_is_still_a_subject(self):
+        """The central case, and the one this function first got wrong. The
+        `ingress-public` pair's two sessions are served **one** token -- the
+        add-on's -- so the prefix the Public peer stored is the Ingress session's
+        own, and a subject test of "whose label is it" called the measured case
+        "nothing to strip". What makes it the harm is the token being in a record at
+        all."""
+        healing = self.heal(loaded='<img src="%s%s"/>' % (PREFIX_A, PICTURE))
+        self.assertEqual(healing["loaded_prefixes"], ["A"])
+        self.assertEqual(healing["verdict"], CLEAN)
+        self.assertIn("cannot prevent that write", healing["notes"])
+
+    def test_the_savers_own_prefix_surviving_is_not_called_healed(self):
+        """`OWN-PREFIX-STORED` is `classify`'s "the strip did not run", so a healing
+        save that leaves it has not healed anything."""
+        healing = self.heal(loaded='<img src="%s%s"/>' % (PREFIX_A, PICTURE),
+                            stored='<img src="%s%s"/>' % (PREFIX_A, PICTURE))
+        self.assertEqual(healing["verdict"], OWN_PREFIX_STORED)
+        self.assertNotIn("removed it", healing["notes"])
+
+    def test_no_token_reaches_a_healing_record(self):
+        healing = self.heal(stored='<img src="%s%s"/>' % (PREFIX_C, PICTURE))
+        self.assertNotIn(TOKEN_C, json.dumps(healing))
+        self.assertEqual(healing["verdict"], UNKNOWN_PREFIX_STORED)
+
+    def test_a_heal_that_was_not_performed_carries_its_reason(self):
+        healing = healing_not_performed("the Ingress healing save could not be taken: TimeoutError")
+        self.assertIs(healing["performed"], False)
+        self.assertIn("TimeoutError", healing["reason"])
+        self.assertNotIn("verdict", healing,
+                         "a reading that was not taken has no verdict to report")
+
+
+class FinalVerdictTests(unittest.TestCase):
+    """#265: which of a record's two verdicts #234's escalation rule reads."""
+
+    def record(self, verdict, healing=None):
+        return {"pair": "ingress-public", "verdict": verdict, "healing": healing,
+                "saver": "B", "transport": {"delivered": True}}
+
+    def test_without_a_healing_phase_it_is_the_peers_save(self):
+        self.assertEqual(final_verdict(self.record(FOREIGN_PREFIX_STORED)),
+                         FOREIGN_PREFIX_STORED)
+
+    def test_with_one_it_is_the_value_the_record_ends_with(self):
+        healed = self.record(FOREIGN_PREFIX_STORED,
+                             {"performed": True, "verdict": CLEAN, "saver": "A"})
+        self.assertEqual(final_verdict(healed), CLEAN)
+
+    def test_a_heal_that_was_not_performed_falls_back_and_fails_closed(self):
+        """A pair whose second reading could not be taken escalates on the one that
+        was, rather than on a `CLEAN` nobody measured."""
+        blocked = self.record(FOREIGN_PREFIX_STORED,
+                              {"performed": False, "reason": "TimeoutError"})
+        self.assertEqual(final_verdict(blocked), FOREIGN_PREFIX_STORED)
+
 
 class MarkerTests(unittest.TestCase):
     """#263: a marker has to be unique to the run, and one helper has to mint it."""
 
     def test_both_sessions_markers_come_from_the_one_helper(self):
-        self.assertEqual(marker("WOOW-PEER-20261002T015318Z", "A"),
-                         "WOOW-PEER-20261002T015318Z-A")
-        self.assertEqual(marker("WOOW-PEER-20261002T015318Z", "B"),
-                         "WOOW-PEER-20261002T015318Z-B")
+        self.assertEqual(marker("WOOW-PEER-20261002T015318Z", "A", "ingress-ingress"),
+                         "WOOW-PEER-20261002T015318Z-ingress-ingress-A")
+        self.assertEqual(marker("WOOW-PEER-20261002T015318Z", "B", "ingress-ingress"),
+                         "WOOW-PEER-20261002T015318Z-ingress-ingress-B")
+
+    def test_the_two_pairs_of_one_run_do_not_type_the_same_marker(self):
+        """#265, found by the first run that delivered. A run is one `--run-id` over
+        both pairs, and `run` *stores* its marker -- so the second pair opened a
+        record already holding the first pair's `<run-id>-A`, the baseline guard
+        fired and the transport reading was void. The run id makes a marker unique
+        across runs; the pair makes it unique within one."""
+        run_id = "WOOW-PEER-20261002T062800Z"
+        self.assertNotEqual(marker(run_id, "A", PAIRS[0]), marker(run_id, "A", PAIRS[1]))
+        for pair in PAIRS:
+            self.assertIn(pair, marker(run_id, "A", pair))
+
+    def test_no_command_can_forget_the_pair(self):
+        """Positional and required, so a marker cannot be built without it."""
+        parameter = inspect.signature(marker).parameters["pair"]
+        self.assertIs(parameter.default, inspect.Parameter.empty)
+        for command in (do_probe, do_run):
+            for call in re.findall(r"marker\(run_id[^)]*\)", inspect.getsource(command)):
+                self.assertIn("pair", call, command.__name__)
 
     def test_neither_command_stages_a_constant_marker(self):
         """The defect in one assertion. `probe` typed the literal
@@ -369,6 +745,90 @@ class TransportWaitTests(unittest.TestCase):
                         source.index("type_marker(first"),
                         "the baseline must be read before anything is typed")
         self.assertIn("baseline=baseline", source)
+
+
+class ReceiverJoinsThePeerNetworkTests(unittest.TestCase):
+    """#265: the step whose absence made every run so far time out.
+
+    Source pins, for this file's standing reason: what went wrong was a step the
+    command did not do, and the only tier that can watch a browser join a peer
+    network is the one that needs the test host. The mechanism, read from the
+    deployed image: with no view setting `collaborative_trigger` the collaboration
+    plugin registers a one-shot `focus` listener on the editable and joins there
+    (`collaboration_odoo_plugin.js:91-99`), and a session whose `ptpJoined` is
+    false discards every signalling notification it receives -- the other
+    session's `ptp_join` included (`:156-158`). No log and nothing in the DOM says
+    so, which is why two pairs waited out 30 seconds and the records said only
+    that nothing arrived.
+    """
+
+    def test_the_receiving_session_is_focused_before_the_wait(self):
+        source = inspect.getsource(stage)
+        self.assertIn("focus_editable(second)", source)
+        self.assertLess(source.index("open_todo(second"), source.index("focus_editable(second)"),
+                        "the form has to be open before its editable can be focused")
+        self.assertLess(source.index("focus_editable(second)"),
+                        source.index("wait_for_transport(second"),
+                        "a session focused after the wait is a session that never joined")
+
+    def test_the_sender_is_focused_by_typing_and_the_order_still_holds(self):
+        """A joined by accident -- typing needs a focused editable -- and that is
+        why the sending half worked. The baseline still has to be read before it."""
+        source = inspect.getsource(stage)
+        self.assertLess(source.index("baseline = editable_html(first)"),
+                        source.index("type_marker(first"))
+        self.assertLess(source.index("type_marker(first"), source.index("open_todo(second"))
+
+    def test_the_focus_step_touches_no_content(self):
+        """`click()` lands in the middle of the loaded document, and the onboarding
+        to-do's middle is a checklist whose items toggle through
+        `/web_editor/checklist` -- a write, on the command whose whole claim is
+        that it makes none."""
+        source = inspect.getsource(focus_editable)
+        self.assertIn(".focus()", source)
+        self.assertNotIn(".click()", source)
+
+    def test_both_commands_record_why_the_transport_did_what_it_did(self):
+        for command in (do_probe, do_run):
+            source = inspect.getsource(command)
+            with self.subTest(command.__name__):
+                self.assertIn("diagnosis", source)
+                self.assertIn("collaboration", source)
+
+    def test_the_diagnosis_is_read_before_anything_discards_or_saves(self):
+        """A discard remounts the editor and takes the plugin's state with it, and a
+        save does the same on the receiving session. The reading has to be inside
+        `stage`, where neither has happened yet."""
+        source = inspect.getsource(stage)
+        self.assertIn("transport_diagnosis(", source)
+        self.assertIn("collaboration_reading(first)", source)
+        self.assertIn("collaboration_reading(second)", source)
+        for command in (do_probe, do_run):
+            self.assertNotIn("collaboration_reading(", inspect.getsource(command),
+                             "%s must take the reading through `stage`" % command.__name__)
+
+    def test_the_signalling_counter_is_attached_before_the_login(self):
+        """So that no post can fall outside the count, and so that a session the
+        pair opened always has one -- `_signalling_posts` reads zero rather than
+        raising for a caller that built a side by hand."""
+        source = inspect.getsource(open_pair)
+        self.assertIn("SignallingCount(side.context)", source)
+        self.assertLess(source.index("SignallingCount(side.context)"),
+                        source.index("first.start()"))
+
+    def test_the_healing_save_loads_the_record_again_before_it_saves(self):
+        """A discard resets the form to the values the client already held, which
+        are the ones A loaded *before* B saved. Only a fresh read hands A what B
+        stored, and whether an Ingress save strips a prefix that arrived in the
+        loaded value is the whole question."""
+        source = inspect.getsource(heal_under_ingress)
+        for earlier, later in (("discard_quietly(first)", "open_todo(first"),
+                               ("open_todo(first", "loaded = editable_html(first)"),
+                               ("loaded = editable_html(first)", "type_marker(first"),
+                               ("type_marker(first", "save_form(first)")):
+            self.assertLess(source.index(earlier), source.index(later),
+                            "%s must come before %s" % (earlier, later))
+        self.assertIn("healing_read(", source)
 
 
 class TransportNoteTests(unittest.TestCase):
@@ -564,16 +1024,51 @@ class ProbeWritesNothingTests(unittest.TestCase):
                         source.index("discard_quietly(first)"),
                         "A is discarded after B's save, or B would never see A's marker")
 
-    def test_run_has_its_record_on_disk_before_it_cleans_up(self):
-        """Cleanup must never be what loses a measurement. By the time A is
-        discarded the run has already cost a deploy, a host and a 30-second wait,
-        and `discard_form` can raise -- the `wait_for` times out whenever the form
-        will not go clean, which an invalid record guarantees. So the record is
-        appended and printed first."""
+    def test_a_step_that_comes_after_a_measurement_cannot_lose_it(self):
+        """Cleanup must never be what loses a measurement, and since #265 the step
+        after the first reading is not only cleanup: on the `ingress-public` pair
+        it is the healing save, which discards A, navigates, types and saves, and
+        every one of those can time out. So the whole of it is guarded and a
+        failure becomes `healing_not_performed` in the record -- the record is
+        still written, which is what the old ordering pin was protecting. By the
+        time this runs the measurement has already cost a deploy, a host and a
+        30-second wait."""
         source = inspect.getsource(do_run)
-        self.assertLess(source.index("handle.write("), source.index("discard_quietly(first)"))
-        self.assertLess(source.index("print(json.dumps(record"),
-                        source.index("discard_quietly(first)"))
+        self.assertIn("heal_under_ingress(", source)
+        self.assertLess(source.index("heal_under_ingress("), source.index("handle.write("),
+                        "the healing reading goes into the record, so it is taken first")
+        self.assertIn("except Exception as error", source)
+        self.assertIn("healing_not_performed(", source,
+                      "a second reading that could not be taken is a reason, not an exception")
+        self.assertLess(source.index("except Exception as error"), source.index("handle.write("))
+
+    def test_the_discard_that_now_precedes_the_write_cannot_throw(self):
+        """The other pair's step before the record is still cleanup, and it moved
+        above the write — so what protects the measurement there is that it goes
+        through `discard_quietly`, which returns the outcome of a discard that
+        raised instead of raising. `discard_form` does raise: its `wait_for` times
+        out whenever the form will not go clean."""
+        source = inspect.getsource(do_run)
+        self.assertLess(source.index("discard_quietly(first)"), source.index("handle.write("))
+        self.assertNotIn("discard_form(", source)
+
+    def test_the_healing_save_is_only_made_on_the_pair_that_needs_healing(self):
+        """`ingress-ingress` has no foreign write to heal -- one prefix, one strip
+        -- and saving a second time there would write the field for nothing."""
+        source = inspect.getsource(do_run)
+        self.assertIn("if pair != HEALING_PAIR:", source)
+        self.assertLess(source.index("if pair != HEALING_PAIR:"),
+                        source.index("heal_under_ingress("))
+        self.assertEqual(HEALING_PAIR, "ingress-public",
+                         "and the name still points at the pair with a Public peer")
+        self.assertIn("discard_quietly(first)", source,
+                      "the other pair still discards A's leftover rather than saving it")
+
+    def test_run_reads_the_verdict_the_record_ends_with(self):
+        """Not the peer's save: on the healing pair that one is allowed to carry a
+        prefix, and the exit code must not call the fix working a failure."""
+        source = inspect.getsource(do_run)
+        self.assertIn("final_verdict(record) == CLEAN", source)
 
     def test_both_commands_discard_through_the_wrapper_that_cannot_throw(self):
         """One session's failed discard must not stop the other's, nor stop the
@@ -668,6 +1163,39 @@ class BehaviourIsWrittenDownTests(unittest.TestCase):
         self.assertIn("Discard", doc,
                       "the Live-tier doc must say that `probe` discards both forms")
         self.assertIn("#263", doc)
+
+    def test_the_module_says_why_nothing_had_ever_been_delivered(self):
+        """#265. The cause is a step this driver did not take, and it is invisible
+        from the host: a reader who finds `delivered: false` and no explanation
+        reaches for the gateway or the bus, which is what three documents did."""
+        import e2e_collab_peer_snapshot_live as module
+
+        said = " ".join(module.__doc__.split())
+        self.assertIn("#265", said)
+        self.assertIn("focus", said)
+        self.assertIn("focus_editable", said)
+        self.assertIn("heal_under_ingress", said)
+        self.assertIn("focus", inspect.getdoc(module.focus_editable))
+
+    def test_the_live_tier_doc_says_the_receiver_is_focused_and_why(self):
+        """It is the file an agent reads before the first command, and the place a
+        `delivered: false` will be read next time. It has to send that reader to
+        the record's own `collaboration` block before the host."""
+        doc = LIVE_TIER_DOC.read_text(encoding="utf-8")
+        self.assertIn("#265", doc)
+        self.assertIn("focus", doc)
+        self.assertIn("collaborative_trigger", doc)
+        self.assertIn("ingress-public", doc)
+
+    def test_the_plan_registers_the_two_fields_the_record_grew(self):
+        """Section 12 is where a record's fields and their readings are declared.
+        The schema name did not change -- these are additive -- so the section is
+        the only place that says a reader should expect them."""
+        plan = PARITY_PLAN.read_text(encoding="utf-8")
+        section = plan[plan.index("## 12. "):]
+        for said in ("#265", "`collaboration`", "`healing`", "final_verdict",
+                     "with_no_delivery", "marker(run_id, label, pair)"):
+            self.assertIn(said, section, said)
 
     def test_the_evidence_conventions_distrust_a_zero_second_delivery(self):
         """Section 12 is where a record's fields and their readings are declared,

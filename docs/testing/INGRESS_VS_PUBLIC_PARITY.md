@@ -535,6 +535,32 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 「`probe` 不存檔」這句話當時就是**錯的**：`probe` 每一輪都把自己的 marker 寫進
 > `project.task.description`，因為在 dirty 的 To-do 表單上導覽離開會把 editor 的內容存進去。#263 已修
 > ——離開前按表單自己的 Discard，再把欄位讀回來回報 `wrote_nothing`——判準與 0.0 秒那個形狀記在第 12 節。
+>
+> **事後補註（#265，2026-10-02）：傳輸送到了，而 `ingress-public` 真的存進了前綴。** 上一則補註裡
+> 「都**沒有**送到」的原因查出來是**本腳本的缺陷**，不是這台主機或它的設定：沒有任何 view 設
+> `collaborative_trigger`，協作 plugin 因此只在 editable 的 `focus` 事件上加入 peer 網路
+> （`collaboration_odoo_plugin.js:91-99`），而還沒加入的 session 會把收到的每一則 signalling 通知
+> **默默丟掉**，包括對方的 `ptp_join`（`:156-158`）——沒有 log、DOM 裡也看不出來。送方是打字時順便
+> focus 才加入的，收方則要等到 30 秒等待結束後才第一次被 focus。#265 補上那一步後於同一個 Release
+> 0.4.10 重跑（`docs/testing/evidence/2026-10-02-issue-265/`，run `WOOW-PEER-20261002T064500Z`），
+> 三個讀數都量到了：欄位兩面都是 collaborative、bus 兩面都 `CONNECTED`、兩個 session 同一個
+> `editor_collaboration:project.task:description:5` channel。結果兩列：
+>
+> - `ingress-ingress`：**送到**（`delivered: true`、`marker_pre_existing: false`）後仍 `CLEAN`。這才是
+>   上一則補註那個 `CLEAN` 一直被引用成的那句話，之前沒有任何一輪真的講得出來。
+> - `ingress-public`：**送到**，而且 Public peer 的存檔把 to-do 兩張圖的 `src` 都存成
+>   `/api/hassio_ingress/<ingress:A>/…`——**`FOREIGN-PREFIX-STORED`，#234 講的那次寫入第一次被實測到**。
+>   接著是本列上面要求、#243 做不到的兩段式復原讀取：Ingress session 丟掉自己的殘留、**重新載入該
+>   記錄**（`loaded_prefixes: ["A"]`，這個讀數說明治療有對象）、打一次 marker 存一次檔，兩個 `src`
+>   都回到根相對路徑（`healing.verdict: CLEAN`）。
+>
+> 所以「Ingress 這邊擋不住那一次寫入，能做的是下一次 Ingress 存檔時把記錄治好」現在是**量過的**，兩半
+> 都量過。`report` 的 `escalate_issue_234_to_blocker` 因此是 **`true`**：#234 的驗收條件寫的是「**確認**
+> 存到 foreign token」，而這一輪確認到了，所以規則讀的是這一輪讀到的**每一個**值而不只是最後一個——
+> 只看最後一個的規則，會對著「證明逃逸存在」的那次量測回答「沒有」。治好那件事列在它**旁邊**而不是
+> 取代它（`foreign_prefix_healed`），另有 `foreign_prefix_still_stored` 回答「現在欄位裡還有沒有」
+> （這一輪是空的）。本列**不自行**改 #234 的 severity：現狀是「確認存到、而且被治好」，兩者哪一個算數
+> 是 #234 自己的決定，這一輪只把兩個讀數都報出來。那次寫入本身登記為 **`G-08`**（第 11 節）。
 
 > **媒體對話框「重新開啟時不會highlight原本那個附件」已於 2026-10-01 處理（#239，ADR 0004 的第四個
 > 2026-10-01 附記），Live 重跑已於 2026-10-02 在 Release 0.4.10 上部分完成（#243）：圖片那一行
@@ -848,7 +874,13 @@ schema 是第 12 節新登記的 `woow.ingress-markup/v1` 與既有的 `woow.pee
 與 `probe`、hand checks），所以缺的是當時的器材而不是當時的判斷；這一輪自己的證據目錄仍然沒有
 `.ambient.json`，那是它當時真的留下的東西，不改寫——要帶著那幾行的是這一族的**下一次**跑。
 另有三項仍欠：#234 的傳輸從未送達（#265）、#239 的另外兩行（#266），以及 `probe`
-其實會寫入（#263）。
+其實會寫入（#263）。**事後附記（#265，2026-10-02）**：第一項已結，#263 也已結。#265 在**同一個
+Release 0.4.10**、同一台主機上重跑 #234 那一列，兩個 pair 都送到了，`ingress-ingress` 在送到的前提下
+仍 `CLEAN`，`ingress-public` 則量到 Public peer 把 Ingress 前綴存進了記錄、再由下一次 Ingress 存檔治
+好（登記為 `G-08`）。**這一輪的 76 項守恆數字同樣不動**，理由與本段上面相同：那是第 9 節 #234 那一列
+的 Live 欄，不是共用層那一組，所以仍維持 **60 `PARITY` + 0 `GAP` + 2 `APPROVED-DIVERGENCE` + 6
+`STRUCTURAL` + 8 `NOT-RUN`**；`G-08` 是第 11 節的落差登記，不是 plan item，不進分母。#265 自己的證據
+在 `docs/testing/evidence/2026-10-02-issue-265/`，本輪這個目錄的記錄不改寫。
 
 這一輪另外跑了 `crawl --apps website` 兩面比對（30 判定 = 30 `PARITY`、
 1 跳過）與 #163 全部七個 target 兩面比對（7 判定 = 7 `PARITY`），後者是刻意跑整個 target 檔而不是只跑三行：
@@ -907,6 +939,7 @@ E 群組的判定**不只比較兩邊**：產出物裡只要有 HA 位址、相�
 | `G-05` | ~~Ingress-only 且 Supervisor 取不到 LAN 位址（Canonical URL 為空）時，Website 分享 snippet 仍把 `location.href` 交給社群網站，其中含 Supervisor 的 ingress token~~ **已修正（2026-09-23）** | ~~**Important**~~ | RC-9 | `nginx.conf.template` 的 `const currentUrl=` 補丁現在**無論有沒有 Canonical URL 都剝掉 ingress 前綴** | ADR 0006 已補一段修正，把這條列為「空值即今日行為」的唯一例外：今日行為是把憑證交給第三方，那不值得保留。無 Canonical URL 時連結仍指向 HA 主機、仍然打不開，但不再帶 token。另兩條補丁不受影響。促成重審的是 #108——空值的形態比原先估計的容易達到 |
 | `G-06` | ~~add-on 啟動**之後**才安裝 `website`（例如從 Apps 畫面裝），預設網站的 `domain` 一直是空的，直到下一次重啟；Ingress 下首頁的 `canonical`／`og:url`／`og:image`／`twitter:image` 與 `sitemap.xml` 因此以 HA 位址為基底~~ **已修正並在測試主機驗證（2026-09-25，`docs/testing/evidence/2026-09-25-issue-164/`）** | ~~**Important**~~ | RC-9 | `odoo-maintenance.py` 只在 add-on 啟動當下 `website` 已在 registry 時才寫 `website.domain`（「website module not installed」）；#143 跑 `odoo_parity` 時 `P-5` FAIL、`U-D8` GAP | Rewrite scan service 每輪多一步 **Canonical URL catch-up**（`odoo-canonical-catchup`）：以 `psql` 讀每個資料庫的預設網站 `domain`，空值或與 Canonical URL 不同時，才用同一支 maintenance library 經 `odoo shell` 補寫；穩態每輪不載入 registry。add-on log 出現 `maintenance db=<name>: … website.domain=<Canonical URL>`。追蹤 #164；Ingress 下 `sitemap.xml` 仍跟著請求位址走，已由 `AD-8` 收錄為核准分歧（#172） |
 | `G-07` | Odoo 自己在瀏覽器開出的新分頁（問卷的 Test 按鈕、任何開新分頁的連結、「在新分頁開啟」），在 ingress 下位址必然是 `<HA_BASE><INGRESS_PREFIX>/…`，帶著 Supervisor 的 ingress token（是 add-on 的那一份；per-user 的 session 走 cookie，見 `RC-15`） | **`STRUCTURAL`**（原始發現記為 Important；依第 1.4 節，證據記錄的 severity 為 `none`） | RC-15 | `docs/testing/evidence/2026-09-28-issue-183/checks.jsonl` 的 `check:U-C23\|shared\|generic`（run `WOOW-PARITY-20260928T070408Z`，2026-09-28，#183）：verdict `STRUCTURAL`、severity `none`、`public_path` `<PUBLIC_BASE>/survey/<token>`；ingress 分頁在 `<HA_BASE><INGRESS_PREFIX>/survey/<token>`，public 分頁在 `<PUBLIC_BASE>/survey/<token>`，兩邊開的是同一頁。原始發現見 `docs/testing/evidence/2026-09-25-issue-143/checks.jsonl`（run `WOOW-PARITY-20260925T043539Z`）：同樣的形態，但記於決定之前，verdict 仍是 `GAP`／`important` | **Public origin 承接**：ingress 的每一個頂層頁面都在 Supervisor 路徑之下，新分頁因此只有兩種結果——帶 token，或離開 Ingress 去別的 origin。Runtime shim 只夠得到 `window.open`，`target="_blank"` 錨點、中鍵與「在新分頁開啟」走的是 `href`，而 `href` 必須保持前綴才能在頁內導覽；分頁落到別的 origin 還要求第二次登入，LAN fallback 下離開內網就打不開，通道斷線時也打不開。ADR 0006 對 Ingress 內位址的判斷相同，故不改 shim、不改 Literal rewrite；要給別人開的同一個畫面，從 Public origin 取位址分享。使用者文件見 `odoo18ce/DOCS.md`「What only the Public origin can do」。決定本身見 #168（已關閉）；依新規則的補跑已於 2026-09-28 完成（#183） |
+| `G-08` | 協作中的 Public origin peer 會把 Ingress 前綴存進 `project.task.description`：To-do 的 description 是 `'collaborative': true`，後加入的 peer 會拿到先加入那個 peer 的整份文件當 snapshot，而 Public 那一面沒有 shim 也沒有 rewrite（ADR 0003 的對照組），收到什麼就存什麼。記錄裡那串是 add-on 的 `ingress_token`（不是 session secret，見 `RC-15`） | **Blocker**（§1.3「**ingress token 外洩**」；**待 #234 裁定**——寫入已經確認，而下一次 Ingress 存檔會把它治好，見「建議處置」）。**不是 `STRUCTURAL`**：§1.4 要求結構性落差指定「由 public surface 承接」的替代路徑，而這一列的 public surface 正是寫入的來源，沒有承接可指，所以不走那條路 | RC-15 | `docs/testing/evidence/2026-10-02-issue-265/peer.jsonl` 的 `ingress-public` 一列（run `WOOW-PEER-20261002T064500Z`，2026-10-02，#265，Release 0.4.10）：`transport.delivered: true`、peer 存檔後 `verdict` 為 `FOREIGN-PREFIX-STORED`、`stored_prefixes: ["A"]`，兩張圖的 `src` 都在 `/api/hassio_ingress/<ingress:A>/project_todo/static/img/…`；接著 `healing.verdict` 為 `CLEAN`、`loaded_prefixes: ["A"]`，兩個 `src` 回到根相對路徑。同一輪的 `ingress-ingress` 在送到的前提下仍 `CLEAN`。第一次嘗試（`peer-first-attempt.jsonl`）的傳輸讀數因 marker 撞號而**作廢**，一併保留 | **下一次 Ingress 存檔治好，擋不住**：Ingress 這邊的 strip 掛在欄位唯一的寫入點（`HtmlField.updateValue`，#210／#238），能做的是把載入值裡任何符合 `$safe_ingress_path` 形狀的前綴去掉（#234），而 Public origin 的那次寫入在另一個 surface 上，ADR 0003 不改它。所以殘留風險是**一筆再也沒有 Ingress session 存過的記錄**：在下一次 Ingress 存檔之前，token 就在那一列裡。量測由 `e2e_collab_peer_snapshot_live.py run --pair ingress-public` 的兩段式讀取維持，`report` 以 `foreign_prefix_healed` 單獨列出、不併進 clean 數。#234 的 severity 要不要因此改（它自己的驗收條件說「確認存到 foreign token 就升 `blocker`」，而現狀是「確認存到、而且被治好」）留給 #234 自己決定；本列只登記量到的東西。見 #265 |
 
 ---
 
@@ -968,6 +1001,35 @@ secret。欄位與判定由 `odoo18ce/tests/test_e2e_collab_peer_snapshot.py` �
 而不是把它縮成一個布林值。`probe` 另外回報 `wrote_nothing`——那是把欄位讀回來**量到**的，不是宣稱的——為
 false 時 exit code 非 0；它靠的是離開前按下表單自己的 Discard，因為在 dirty 的 To-do 表單上導覽離開會把
 editor 的內容存進去，「只有存檔才會寫欄位」在這張表單上不成立。
+
+**同一個 schema，#265（2026-10-02）加了三件事。** 版本仍是 `woow.peer-snapshot.v1`：欄位是**加**的，
+記錄的種類沒變。
+
+- **`collaboration`：傳輸為什麼是這個結果，由讀到它的那一輪說。** #243 那一輪留下的是兩個光禿禿的
+  `delivered: false`，後面三份文件寫的「兩個 session 從未成為協作 peer」其實是從 timeout 推的。現在兩個
+  session 各自回報 `is_collaborative`／`bus_worker_state`／`channel`／`ptp_joined`／`connected_peers`，
+  再加上每個 session 往 `/html_editor/bus_broadcast` 發出的 signalling 次數（從 wire 上數，不是聽 client
+  自己說），`transport_diagnosis` 取**第一個成立的**原因：`delivered`、`marker-collision`、
+  `field-not-collaborative`、`bus-not-connected`、`different-collaboration-channel`、
+  `peer-network-not-joined`、`no-peer-data-channel`、`unattributed`。梯子有順序，因為讀數彼此有前提：
+  沒有 bus 時 peer 數不能說明什麼。
+- **`healing`：`ingress-public` 量兩次。** peer 存檔後一次（`verdict`，允許帶前綴），Ingress session
+  重新載入該值、存一次檔後再一次（`healing.verdict`，必須乾淨），另加 `loaded_prefixes` 說明治療有沒有
+  對象。`ingress-ingress` 不做這一段，`healing.performed` 為 false 並寫明理由；取不到時也是
+  `performed: false` 加理由，**不**是缺欄位。**升級規則讀的是 `final_verdict`**——有治療那一段就是它，
+  否則是 peer 存檔那一個——因為 #234 講的危害是 token **留在**記錄裡；中途那次寫入不會因此消失，
+  `report` 以 `foreign_prefix_healed` 單獨列出。
+- **`CLEAN` 要連著當時的傳輸一起讀。** `report` 把 clean 分成 `with_a_delivered_transport` 與
+  `with_no_delivery` 兩串 pair，並寫一句 `clean_means`。#243 那兩個 `CLEAN` 是在傳輸兩面都沒送到的情況
+  下讀到的，而後來 ADR 0004 的附記、本計劃這一列、那一輪的 evidence README 都把它引用成「量過了，
+  乾淨」——那是把**存檔路徑**的量測當成**送到的 peer snapshot** 的量測。這兩句話從此不能被寫成一句。
+
+marker 的規則也補了一半：`marker(run_id, label, pair)`——**pair 也要進去**。一次 run 是一個 `--run-id`
+跑**兩個** pair，而 `run` 會把 marker 存進欄位，所以第二個 pair 開到的記錄裡已經有第一個 pair 的
+`<run-id>-A`；baseline 那道關卡擋下來了（`marker_pre_existing: true`），但那一筆的傳輸讀數就**作廢**
+了——它不等待就回。run id 讓 marker 跨 run 唯一，pair 讓它在一次 run 之內唯一；同一個 pair 用同一個
+run id 再跑一次仍然要換 `--run-id`。實例見 `docs/testing/evidence/2026-10-02-issue-265/`
+的 `peer-first-attempt.jsonl`。
 
 **第三個 schema：`odoo-parity-ambient/v1`（#256，2026-10-01；#264，2026-10-02）。** 任何一次開過
 website 頁面的 run 都會留下沒人要求的列：tracked page 的 GET 會 upsert 一筆 `website.visitor` 並插入一筆

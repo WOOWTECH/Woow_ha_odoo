@@ -1120,7 +1120,9 @@ prefix; they do not say a *delivered* peer snapshot stores none, which is what
 this postscript is about. And the two-step healing read this record asks for on
 the `ingress-public` pair -- read after the Public peer saves, then save once
 under Ingress and read again -- has no implementation in `do_run`, and had no
-subject on that run because nothing was delivered. Both are #265. Separately,
+subject on that run because nothing was delivered. Both are #265. **Both are now
+done, and the cause of the non-delivery was this repository's own driver and not
+the host: see the 2026-10-02 postscript at the end of this record.** Separately,
 `probe` turned out to write the field it says it does not, and its marker is a
 constant, which made one reading a false `delivered: true` (#263). Evidence:
 `docs/testing/evidence/2026-10-02-issue-243/`.
@@ -1401,3 +1403,72 @@ reported `odoo.debug === ""`, the command was never registered, and the toolbar
 came up with seven groups and no code view -- which reads exactly like a missing
 button. The flag belongs on the form navigation itself. Evidence:
 `docs/testing/evidence/2026-10-02-issue-243/`.
+
+## Postscript (2026-10-02, #265, the peer snapshot that was actually delivered)
+
+The postscript above about the collaborative peer snapshot ends with two things
+#243's run did not establish. Both are now established, and the first one's cause
+was **this repository's own driver** rather than anything about the host.
+
+**Why nothing was ever delivered.** No view that shows
+`project.task.description` sets `collaborative_trigger`, so the collaboration
+plugin takes the `undefined` branch and joins the peer network on the editable's
+`focus` event and nowhere else (`collaboration_odoo_plugin.js:91-99`, read from
+the deployed image and confirmed against the pinned `.deb`). A session whose
+`ptpJoined` is still false **discards every signalling notification it receives**,
+including the other session's `ptp_join` (`:156-158`) -- no log, no console
+message, nothing in the DOM. `e2e_collab_peer_snapshot_live.py` focused the
+sending session by accident, because typing needs a focused editable, and focused
+the receiving one only *after* the 30-second wait had expired. So both of #243's
+pairs were predicted to time out by the source, before the host was involved at
+all. The three questions #265 asked are each a reading in the record now: the
+field is collaborative on both surfaces, the bus worker is `CONNECTED` on both,
+and both sessions subscribe to
+`editor_collaboration:project.task:description:<id>` -- the channel the plugin
+builds from the record and not from the session, which is why one record is one
+channel whatever surface each peer is on.
+
+**What a delivered snapshot does.** 2026-10-02, the same Release 0.4.10, the same
+host, run `WOOW-PEER-20261002T064500Z`:
+
+- `ingress-ingress`: delivered, and still `CLEAN`. That is the sentence this ADR's
+  earlier postscript was quoted for and which no run had yet made -- the strip ran
+  on a value that arrived over the transport, not merely on one the same session
+  had loaded.
+- `ingress-public`: delivered, and the Public peer's save stored
+  `/api/hassio_ingress/<the add-on's token>` on both of the to-do's images.
+  **`FOREIGN-PREFIX-STORED`: the write this record has described since 2026-10-01,
+  measured for the first time.** Then the two-step this record asked for -- the
+  Ingress session discards its leftover, reloads the record so its editor holds
+  what the Public peer stored (`loaded_prefixes: ["A"]`), and saves once -- and
+  both `src` come back root-relative, `healing.verdict: CLEAN`.
+
+So "the Ingress fix heals the record on the next Ingress save rather than
+preventing the write" is no longer a prediction this record makes; both halves of
+it are measured. The write is registered as `G-08` in the parity plan's section
+11, because what it leaves behind is a record that no Ingress session saves
+again: until one does, the token is in the row.
+
+**The escalation rule reads every value the run read, and that is deliberate.**
+#234's criterion is a *confirmed* stored foreign token, so
+`escalate_issue_234_to_blocker` is `true` on this run: the prefix was in the
+record, and a rule that looked only at the end of the run would answer "no" to
+the very measurement that proves the escape exists. The first spelling of it did
+look only at the end, and a review caught what that produced -- a boolean named
+after #234's rule reporting `false` on the run that had just watched a Supervisor
+token reach `project.task.description`. The heal is reported *beside* the
+escalation and not instead of it (`foreign_prefix_healed`, plus
+`foreign_prefix_still_stored` for what is in the field now), and `report` splits
+`CLEAN` into `with_a_delivered_transport` and `with_no_delivery`, so the two
+sentences #243's run was quoted as having said cannot be written as one again.
+Whether #234's severity follows the confirmation or the persistence is a decision
+for that issue; #265's run reports both readings and takes neither.
+
+One thing the run found about its own method, worth keeping because it is the
+second time a marker has cost a reading here (#263 was the first). A run is one
+`--run-id` across **both** pairs and `run` stores its marker, so the second pair
+opened a record already holding the first pair's `<run-id>-A`: the baseline guard
+refused the match and returned without waiting, which made that transport reading
+**void** rather than negative. The marker now carries the pair as well as the run
+id. Evidence, including the void attempt:
+`docs/testing/evidence/2026-10-02-issue-265/`.
