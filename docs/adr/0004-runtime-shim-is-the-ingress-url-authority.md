@@ -1281,6 +1281,58 @@ on both surfaces. `isInitialMedia` only matches an attachment the dialog listed,
 element. The fixture that measures anything is an attachment scoped to the record.
 Evidence: `docs/testing/evidence/2026-10-02-issue-243/`.
 
+**The other two lines were measured on 2026-10-02 as well (#266), on the same
+Release, and both pass.** No Release and no Deploy were needed: the rules were
+already in 0.4.10, and that run read `rule_in_served_method` **and**
+`legacy_rule_in_served_method` as `true` under Ingress and `false` on the Public
+origin, on every record.
+
+- **Row 2, `data-original-src`.** Measured on a website page the driver builds,
+  which is the only screen where both halves hold at once: stored arch carrying an
+  attachment's own `image_src` in `src` and in `data-original-src`, delivered as an
+  HTML response. Ingress reads the attribute prefixed and selects its tile (4
+  tiles, 1 selected); the Public origin reads it root-relative and selects the same
+  tile (1 of 1). The branch therefore ran on a prefixed operand against an
+  unprefixed `attachment.image_src` and matched, which is what this row exists for.
+  Two further readings in that record exist because either would have produced a
+  false pass: the attribute is read **again after the element is selected**, because
+  `ImageTools._initializeImage` deletes the whole `data-original-*` group when the
+  attribute fails to load; and the fixture carries
+  `data-mimetype-before-conversion`, because without it `loadImageInfo` overwrites
+  `data-original-src` with the root-relative value the ORM just returned -- in which
+  case the branch would compare two unprefixed values and pass whether or not this
+  rule shipped.
+  **The other candidate screen cannot measure it, and that is now settled rather
+  than open.** `mass_mailing_themes` is the only module in the package that ships
+  the attribute in stored arch; its seven themed images carry `data-original-id`
+  values from the developer's own database and paths no `ir.attachment` here
+  matches, so they can never highlight a tile, and the theme arch reaches the
+  designer over `ir.ui.view.render_public_asset` -- `call_kw`, unrewritten, so the
+  attribute arrives root-relative.
+- **Row 3, the document comparison.** Its tile was read on the **legacy** dialog,
+  which the mail designer opens, and the premise was re-measured there: the
+  element's `href` prefixed, the served literal prefixed, 372 bytes against 309.
+  Both surfaces select the fixture's tile. The control the open list implied,
+  `#media-replace`, is **present and hidden** -- the legacy editor hides its whole
+  toolbar for a media whose `data-mimetype` is not an image, and the dialog's own
+  `createElements` always stamps one on a document -- so a double-click is the way
+  in. The current editor stays unreachable by construction: Replace's namespace
+  predicate requires an `IMG`, and that editor's document selector no longer
+  produces an `a.o_image` at all.
+
+**A divergence was found beside those two rows, and it belongs to the generic
+literal rules rather than to this family: #271.** Under Ingress the Documents tab
+lists every generated asset bundle, because `DocumentSelector.attachmentsDomain`
+excludes them with `!['url', '=like', '/web/assets/%']` and that pattern is a
+string literal in the same bundle as the URL literals this location rewrites -- so
+it arrives prefixed (`served_domain_asset_exclusion_prefixed: true` under Ingress,
+`false` on the Public origin; the getter is 383 bytes against 320, one prefix
+insertion) and the exclusion then matches no stored `url`. The finding worth acting
+on is the class: **a generic literal rewrite reaches ORM domain literals, not only
+URLs.** It does not move #239's severity -- the preselection is correct on both
+surfaces, and a search domain travels in a request body, so nothing is stored.
+Evidence: `docs/testing/evidence/2026-10-02-issue-266/`.
+
 ## Postscript (2026-10-01, the code view round trip)
 
 The first item on the 2026-09-30 postscript's open list was "the code view's

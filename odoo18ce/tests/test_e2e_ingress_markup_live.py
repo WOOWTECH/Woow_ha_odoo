@@ -24,6 +24,7 @@ wrong would produce a record that reads clean:
    through the redaction, including the stored field values the whole run is
    about.
 """
+import base64
 import inspect
 import os
 import re
@@ -418,12 +419,16 @@ def test_an_extra_reading_with_its_own_name_is_kept():
 
 
 def test_every_flow_s_extra_keys_stay_clear_of_the_record_s_own():
-    """A standing check on the names the eight flows actually use."""
+    """A standing check on the names the nine flows actually use."""
     used = {"task_id", "created_task", "deleted_task", "rendered_iframe", "sandbox",
             "mailing_id", "uid", "signature_before", "signature_restored", "debug",
             "code_view_shown", "code_view_bytes", "element", "dialog", "editor",
             "replace_control", "theme", "saved", "unsaved_after_save", "body_arch_before",
-            "body_restored", "revisions", "has_description_history", "form"}
+            "body_restored", "revisions", "has_description_history", "form",
+            # #266's two fixture-building media checks
+            "fixture", "fixture_removed", "element_after_select", "operand",
+            "replace_control_present", "replace_control_visible",
+            "replace_control_found_in", "discarded", "read_back_error"}
     assert not (used & markup.RESERVED_RECORD_KEYS)
 
 
@@ -636,3 +641,294 @@ def test_a_record_counts_as_kept_only_once_it_is_on_disk():
     source = inspect.getsource(markup.run_check)
     assert source.index('open(out_path, "a"') < source.index("kept.add(")
     assert source.index('open(out_path, "a"') < source.index("records.append(")
+
+
+# --- #239's two owed lines, and the fixtures they needed (#266) ---------------
+#
+# #243's run reached both and measured neither, for the same reason both times:
+# nothing on the host could execute the branch. So the fixtures *are* the
+# measurement, and what they contain is as load-bearing as any verdict here.
+
+
+ATTACHMENT = {"id": 7, "name": "woow-document-fixture-woow-x.txt",
+              "mimetype": "text/plain", "checksum": "abc123", "image_src": None}
+
+IMAGE_ATTACHMENT = {"id": 8, "name": "woow-image-fixture-woow-x.png",
+                    "mimetype": "image/png", "checksum": "def456",
+                    "image_src": "/web/image/8-def456/woow-image-fixture-woow-x.png"}
+
+MEDIA_FLOWS = {
+    "media-image-todo": (markup.do_media_image_todo,),
+    "media-image-website": (markup.do_media_image_website, markup._website_after_seeding),
+    "media-document-todo": (markup.do_media_document_todo,),
+    "media-document-mailing": (markup.do_media_document_mailing,
+                               markup._document_mailing_after_seeding),
+}
+
+
+def test_the_media_flows_this_file_pins_are_every_media_check():
+    """So a tenth check cannot be added without being pinned below."""
+    assert set(MEDIA_FLOWS) == {name for name in markup.CHECKS if name.startswith("media-")}
+
+
+@pytest.mark.parametrize("check", sorted(MEDIA_FLOWS))
+def test_every_media_check_records_data_original_src(check):
+    """#266 asks for the attribute on **both surfaces for every media check**.
+
+    Including the two document ones, where it is structurally absent: an `<a>`
+    has no `src` for the image tools to have optimised, so `None` is the reading
+    and an omitted key could not be told apart from a record taken before the
+    key existed. The verdict of either document line turns on the `href`, not on
+    this -- which is exactly why it has to be recorded rather than inferred.
+    """
+    source = "".join(inspect.getsource(flow) for flow in MEDIA_FLOWS[check])
+    assert '"data_original_src"' in source
+    assert 'get_attribute("data-original-src")' in source
+
+
+def test_the_website_fixture_compares_an_attachment_against_itself():
+    """The one property the measurement rests on: `data-original-src` holds the
+    attachment's own `image_src`, which is the comparison's other operand. A
+    fixture whose two sides were different values could never select a tile, and
+    would read exactly like a rule that failed."""
+    section = markup.website_fixture_section("WOOW-X", IMAGE_ATTACHMENT)
+    assert 'src="%s"' % IMAGE_ATTACHMENT["image_src"] in section
+    assert 'data-original-src="%s"' % IMAGE_ATTACHMENT["image_src"] in section
+
+
+def test_the_website_fixture_carries_what_stops_the_attribute_being_overwritten():
+    """`loadImageInfo` early-returns only when **both** `data-original-src` and
+    `data-mimetype-before-conversion` are present (`image_processing.js:490-496`).
+
+    Without the second one it would re-fetch the image info in the window
+    between the click and the dialog and overwrite the first with the
+    root-relative value the ORM just returned -- so under Ingress the branch
+    would compare two unprefixed values and pass whether or not rule 2 shipped.
+    That is a false pass, and this attribute is what prevents it."""
+    section = markup.website_fixture_section("WOOW-X", IMAGE_ATTACHMENT)
+    assert 'data-mimetype-before-conversion="image/png"' in section
+    assert 'data-original-id="8"' in section
+
+
+def test_the_website_fixture_is_root_relative_and_names_its_run():
+    """It is written into stored arch, so a prefix in it would be a prefix in the
+    database -- and `live-tier.md` wants every writing step marked with its run."""
+    section = markup.website_fixture_section("WOOW-X", IMAGE_ATTACHMENT)
+    assert markup.stored_verdict(section) == (markup.CLEAN, 0)
+    assert "WOOW-X" in section
+    assert 'alt="%s"' % markup.FIXTURE_IMAGE_ALT in section
+
+
+def test_the_website_check_finds_its_own_image_and_not_the_first_visible_one():
+    """#243 picked "the first visible image" in the preview frame and got
+    `/web/image/website/1/logo/My%20Website` -- a record-field image with no
+    `data-original-src` at all, which is how that run measured nothing. The
+    element under test is named now, so another image cannot stand in for it."""
+    source = inspect.getsource(markup._website_after_seeding)
+    assert 'img[alt="%s"]' in source and "FIXTURE_IMAGE_ALT" in source
+    assert 'locator("img")' not in source
+
+
+def test_the_website_check_reads_the_attribute_again_after_the_click():
+    """`ImageTools._initializeImage` **deletes** the whole `data-original-*`
+    group when `loadImage(data-original-src)` is rejected
+    (`snippets.options.js:7679-7686`), and that runs between the click and the
+    dialog. A record carrying only the before-reading could not tell "the
+    attribute was dropped" from "the comparison disagreed"."""
+    source = inspect.getsource(markup._website_after_seeding)
+    assert '"element_after_select"' in source
+    assert source.index('extra["element"]') < source.index("image.click()")
+    assert source.index("image.click()") < source.index('extra["element_after_select"]')
+
+
+def test_each_surface_builds_its_own_fixture_page():
+    """`U-D3`'s reason: the two surfaces are separate invocations against one
+    database, so a shared name would make the second reuse the first's page."""
+    names = {markup.fixture_page_name("WOOW-X", surface)
+             for surface in (INGRESS, PUBLIC)}
+    assert len(names) == 2
+    for name in names:
+        assert "woow-x" in name
+        assert "_" not in name
+
+
+def test_the_document_fixture_is_the_dialogs_own_spelling():
+    """`createElements` builds `` /web/content/${id}?unique=${checksum}&download=true ``,
+    sets `title` and `data-mimetype` (`document_selector.js:69-89`), and
+    `media_dialog.js:260` adds `o_image`. A different shape would measure a
+    document no user has."""
+    markup_text = markup.document_link_markup(ATTACHMENT)
+    assert 'class="o_image"' in markup_text
+    assert 'href="/web/content/7?unique=abc123&amp;download=true"' in markup_text
+    assert 'data-mimetype="text/plain"' in markup_text
+    assert ATTACHMENT["name"] in markup_text
+
+
+def test_the_document_fixture_carries_a_query_string_the_comparison_must_strip():
+    """Rule 3's left operand is compared against
+    `getAttribute('href').replace(/[?].*/, '')`. A fixture with no query string
+    leaves that half of the premise unexercised, so the strip is part of what
+    this fixture is for."""
+    assert "?" in markup.document_link_markup(ATTACHMENT)
+    assert "/web/content/7?" in markup.document_link_markup(ATTACHMENT)
+
+
+def test_the_document_fixture_body_is_root_relative_and_names_its_run():
+    body = markup.mailing_document_body_value("WOOW-X", ATTACHMENT)
+    assert markup.stored_verdict(body) == (markup.CLEAN, 0)
+    assert "WOOW-X" in body
+    assert markup.document_link_markup(ATTACHMENT) in body
+
+
+def test_the_document_check_looks_for_the_control_before_falling_back():
+    """#266 asks for the tile *or* the control that was looked for. Both are
+    recorded: `#media-replace` is un-hidden for any `.o_image`, but the same
+    function hides the whole toolbar for a media whose `data-mimetype` is not an
+    image -- which every dialog-inserted document has. So the fallback is
+    expected to be the one that works, and a record that did not say which
+    control opened the dialog would not answer the question."""
+    source = inspect.getsource(markup._document_mailing_after_seeding)
+    assert "REPLACE_LEGACY" in source
+    assert '"replace_control_present"' in source
+    assert '"replace_control_visible"' in source
+    assert '"dblclick"' in source
+    assert source.index('"replace_control_present"') < source.index('"dblclick"')
+
+
+def test_the_document_check_reads_the_two_mailing_fields_back_into_stored():
+    """Nothing here is meant to be saved, and that sentence is not the guarantee.
+    Clicking inside the designer's editable can leave the form dirty, and an Odoo
+    form persists a dirty editor on `beforeunload` and on `visibilitychange`
+    without the record being dirty (#263 is the same mechanism on the To-do
+    form). The read-back is in `stored`, where `stored_verdict` names a prefix
+    that reached the database."""
+    source = inspect.getsource(markup._document_mailing_leaving)
+    assert '"mailing.mailing.body_arch"' in source
+    assert '"mailing.mailing.body_html"' in source
+    assert "DISCARD_BUTTON" in source
+    assert "return {" in source and '"stored": stored' in source
+
+
+def test_every_exit_from_the_document_check_cleans_up_and_reads_back():
+    """One exit point, because a check that gave up early must still discard,
+    still read the record back and still remove its fixture -- and there are four
+    places it can give up."""
+    source = inspect.getsource(markup._document_mailing_after_seeding)
+    returns = [line for line in source.splitlines() if line.strip().startswith("return ")]
+    assert returns
+    assert all("_document_mailing_leaving(" in line for line in returns)
+
+
+@pytest.mark.parametrize("check", sorted(MEDIA_FLOWS))
+def test_every_media_check_declares_itself_as_a_write(check):
+    """All four build what they measure (#266), and ADR 0012 wants a check to
+    say so: `read_only_first` orders on this flag, so one left marked read-only
+    would run before the cheap ones and would misdescribe itself in the
+    register."""
+    assert markup.CHECKS[check]["writes"] is True
+
+
+def test_the_todo_fixtures_are_scratch_records_and_not_the_onboarding_one():
+    """#243's rule, and the reason the iframe check has the same one: #235's
+    checks read the onboarding to-do's stored `src`, so a write there would be
+    read as their result."""
+    source = inspect.getsource(markup.seed_media_task)
+    assert "scratch_task_name(run_id)" in source
+    assert "onboarding_todo_id" not in source
+    assert '"element_survived"' in source
+
+
+def test_the_todo_fixtures_read_the_description_back():
+    """`project.task.description` is `sanitize_tags=True`, and this driver has
+    already been caught by that field once -- #237's check 2 seeded a full-HTML
+    value into it and got back the bare `<img>`. The anchor's attributes are all
+    whitelisted, so it is expected to survive; the read-back is what replaces
+    "expected to"."""
+    source = inspect.getsource(markup.seed_media_task)
+    assert "read_field(side, \"project.task\"" in source
+    assert '"element_survived": wanted in stored' in source
+
+
+def test_the_image_todo_fixture_carries_no_data_original_src():
+    """Rule 2's branch `return`s before the `src` comparison, so an image
+    carrying that attribute would measure rule 2 on the screen whose whole point
+    is rule 1 -- and the attribute would be root-relative here anyway, because a
+    field value arrives over `call_kw` with its quotes escaped and the generic
+    HTML location's bare `src="/` cannot claim a position inside `src=\\"/`.
+    Rule 2 has a screen of its own for exactly that reason."""
+    source = inspect.getsource(markup.seed_media_task)
+    assert 'data-original-src="' not in source
+    assert "FIXTURE_IMAGE_ALT" in source
+    # And the one screen that does carry it is the one that needs it.
+    assert 'data-original-src="' in markup.WEBSITE_FIXTURE_SECTION
+
+
+def test_the_module_says_what_the_two_media_fixtures_create():
+    """The docstring's `Writing:` paragraph is where a reader looks before
+    running this against the host, so the two new fixtures belong in it."""
+    said = " ".join(markup.__doc__.split())
+    assert "website.page" in said
+    assert "ir.attachment" in said
+    assert "--cleanup" in said
+    assert "media-document-mailing" in said
+
+
+def test_the_image_fixture_is_a_real_png():
+    """The dialog's domain is `['mimetype', 'in', IMAGE_MIMETYPES]` and
+    `image_src` is only computed for a supported image mimetype, so a fixture
+    that was not really a PNG would be listed by nothing and compared to
+    nothing."""
+    raw = base64.b64decode(markup.FIXTURE_PNG_BASE64)
+    assert raw.startswith(b"\x89PNG\r\n\x1a\n")
+    assert b"IHDR" in raw
+    assert raw.endswith(b"IEND\xaeB\x60\x82")
+
+
+def test_the_attachment_fixture_is_public_and_newest_rather_than_searched_for():
+    """Two selector properties, both relied on and neither obvious.
+
+    `public=True` is what lists it whatever record the dialog was opened from --
+    the website editor's dialog is opened from an `ir.ui.view` and would not list
+    the record-scoped attachment #243 used. And `order: 'id desc'` with a limit
+    of 30 is why the newest attachment is the first tile: the preselection runs
+    inside the first page's own loop, so a tile on page two would never be
+    compared and the check would have to type a search."""
+    source = inspect.getsource(markup.create_fixture_attachment)
+    assert '"public": True' in source
+    assert "id desc" in source
+    assert '"image_src"' in source and '"checksum"' in source
+
+
+def test_the_fixture_removal_says_what_went_rather_than_swallowing_it():
+    """`website.page.unlink` may take the view with it, so unlinking the view
+    afterwards raises on a record that is correctly gone. A silent `except` would
+    read as "removed" for a fixture still on the host."""
+    source = inspect.getsource(markup.remove_website_fixture_page)
+    assert 'removed["page"]' not in source  # it is keyed by the loop's label
+    assert "removed[label] = False" in source
+    assert 'removed["attachment"] = False' in source
+
+
+def test_both_media_dialogs_are_probed_for_the_rule():
+    """Rule 2 is the single pattern the two dialogs spell identically, and the
+    two media image checks open *different* ones -- the backend form opens
+    `html_editor`'s, the website editor opens the legacy `web_editor` one. A
+    probe that only read the current editor's method would report a rule that
+    reached a dialog the check never drove. The #243 key names are kept so the
+    two runs stay comparable."""
+    assert "@html_editor/main/media/media_dialog/image_selector" in markup._RULE_PROBE
+    assert "@web_editor/components/media_dialog/image_selector" in markup._RULE_PROBE
+    assert '"rule_in_served_method"' in markup._RULE_PROBE
+    assert '"legacy_"' in markup._RULE_PROBE
+
+
+def test_the_document_operand_probe_takes_the_dialog_as_a_parameter():
+    """Odoo ships the document comparison twice and the Static tier records both
+    as measured-and-left-alone. The legacy reading is the one that belongs beside
+    a tile the legacy dialog actually showed."""
+    assert markup.CURRENT_DOCUMENT_SELECTOR.startswith("@html_editor/")
+    assert markup.LEGACY_DOCUMENT_SELECTOR.startswith("@web_editor/")
+    assert "spec.module" in markup._DOCUMENT_OPERAND_PROBE
+    assert "spec.dialog" in markup._DOCUMENT_OPERAND_PROBE
+    source = inspect.getsource(markup._document_mailing_after_seeding)
+    assert "LEGACY_DOCUMENT_SELECTOR" in source

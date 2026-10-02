@@ -566,12 +566,13 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 的那個形狀：一筆被 Public peer 寫過、而**再也沒有 Ingress session 存過**的記錄會一直留著 token。
 
 > **媒體對話框「重新開啟時不會highlight原本那個附件」已於 2026-10-01 處理（#239，ADR 0004 的第四個
-> 2026-10-01 附記），Live 重跑已於 2026-10-02 在 Release 0.4.10 上部分完成（#243）：圖片那一行
-> 過（Ingress 4 格選中 1、Public 1 格選中 1，另外量到 `rule_in_served_method` 在 Ingress 為 true、
-> 在 Public 為 false，直接證明改寫只住在 Ingress asset location）；document 那一行在現行編輯器
-> **無法到達**（Replace 在 `image` namespace，document 是 `a.o_image`），但兩個運算元都帶前綴這個
-> 前提已在主機上量到；website 那一行**到達但沒驗到** rule 2（首頁唯一可見圖片沒有
-> `data-original-src`）。後兩行見 #266。這一列不因此改嚴重度——它什麼都不存。** 這是 ADR 0004 開放清單裡最後兩項，而且是這一族
+> 2026-10-01 附記），Live 重跑已於 2026-10-02 在 Release 0.4.10 上**完成**：#243 跑了 image 那一行
+> （Ingress 4 格選中 1、Public 1 格選中 1，另外量到 `rule_in_served_method` 在 Ingress 為 true、
+> 在 Public 為 false，直接證明改寫只住在 Ingress asset location），另外兩行當時沒量到——document 那一行
+> 在現行編輯器**無法到達**（Replace 在 `image` namespace，document 是 `a.o_image`），website 那一行
+> **到達但沒驗到** rule 2（首頁唯一可見圖片沒有 `data-original-src`）；**#266 把那兩行都量到了，兩行都
+> 過**（細節見本列最後的「Live 補跑」）。**這一列改記 `PARITY`，而且不因 Live 結果改嚴重度——它什麼都不
+> 存。** 這是 ADR 0004 開放清單裡最後兩項，而且是這一族
 > 唯一「反向」的三項：不是插入 markup，而是**比較**——一邊期待 root-relative、另一邊拿到帶前綴的值。
 > 本輪的結論是**三項裡兩項真的壞掉、第三項本來就是對的，而對第三項照 issue 說的做會把它弄壞**：
 >
@@ -630,6 +631,58 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 那半是「原本壞的現在好了」，document 那半是「**本來就是好的，確認它還是好的**」——在 Ingress 下重新
 > 開啟某張圖片／某個文件連結的媒體對話框，對應附件被 highlight，兩面行為一致。image 那半值得**在網站
 > 編輯器的對話框上也跑一次**而不只是待辦表單：第 2 列的前綴只出現在 HTML 回應那條路上。
+>
+> **Live 補跑（#266，2026-10-02，同一個 Release 0.4.10，不需要重新發版也沒有重新部署）：三行全部量到，
+> 這一列改記 `PARITY`。** 證據在 `docs/testing/evidence/2026-10-02-issue-266/`（`markup.jsonl` 14 筆、
+> `markup.ambient.json` 14 行，run `WOOW-MARKUP-20261002T074704Z`）。
+>
+> | 行 | 畫面 | Ingress | Public | 判定 |
+> | --- | --- | --- | --- | --- |
+> | 1 image | driver 自建的 scratch 待辦＋圖片，現行編輯器 | 元素 `src` 帶前綴，4 格選中 1 | root-relative，1 格選中 1 | **`PARITY`** |
+> | 2 website | driver 自建的 website 頁面，網站編輯器的 Replace Media | `data-original-src` **帶前綴**，4 格選中 1 | root-relative，1 格選中 1 | **`PARITY`** |
+> | 3 document | driver 自建的文件，**舊編輯器**（郵件設計器）的對話框 | 元素 `href` 帶前綴，Documents 分頁 30 格選中 1 | root-relative，1 格選中 1 | **`PARITY`** |
+> | 3 document | 同一份文件，**現行**編輯器 | 沒有任何控制項能重新開啟對話框 | 同樣沒有 | `NOT-RUN`（附理由） |
+>
+> **第 2 列是本輪第一次真的被執行到。** #243 到得了那個畫面但量不到東西：首頁唯一可見的圖是
+> `/web/image/website/1/logo/...`，record-field image，`data-original-src` 是 `None`，所以
+> `if (this.props.media.dataset.originalSrc)` 根本沒跑。#266 用 driver 自建的 website 頁面——stored arch
+> 裡 `src` 與 `data-original-src` 都放同一個附件自己的 `image_src`，以 **HTML 回應**送達——量到：Ingress
+> 下該屬性帶前綴、Public 下 root-relative，兩面都選中那一格；而且**點選圖片之後再讀一次**該屬性，兩面
+> 都沒變。後者是必須的：`ImageTools._initializeImage` 在 `data-original-src` 載入失敗時會把整組
+> `data-original-*` **刪掉**，而 `loadImageInfo` 在缺 `data-mimetype-before-conversion` 時會用 ORM 剛回
+> 的 root-relative 值**覆寫**它——兩者都發生在點選與對話框之間，任何一個發生都會讓這一行變成「兩個不帶
+> 前綴的值相比」而不管規則有沒有出貨都過。fixture 帶齊四個 `data-*` 就是為了這個。
+>
+> **第 3 列的格子量到了，而且是在舊對話框上。** 郵件設計器是還在跑舊 `web_editor` 編輯器的兩個畫面之
+> 一；對話框按元素 `tagName` 自動落在 Documents 分頁（`DocumentSelector.tagNames` 是 `["A"]`），兩面都
+> 選中 fixture 那一格。前提也在舊對話框上重量了一次：`served_literal_prefixed` Ingress `true`／Public
+> `false`，方法長度 372 對 309，與 #243 在現行編輯器上讀到的同一個 63 bytes 差。
+> **被找的那個控制項 `#media-replace` 存在但被隱藏**：`replace_control_present: true`、
+> `replace_control_visible: false`、實際用的是 `dblclick`，兩面一致。原因在舊編輯器自己身上、與 Ingress
+> 無關——`#media-replace` 對任何 `img, .fa, .o_image, .media_iframe_video` 都會顯示（`.o_image` 在內，
+> 而且那是 snippets 側欄唯一不會把它搶走的情形），但同一個函式十二行後對「`data-mimetype` 不是圖片」的
+> media **直接把整條 toolbar 藏掉**，而對話框自己的 `createElements` 必定會在 document 上蓋
+> `data-mimetype`。`dblclick` 綁在同一個 selector 上且沒有這道關卡，那才是進得去的路。現行編輯器則是
+> **構造上**到不了：Replace 在 `image` namespace 而 namespace 的判定要求 `IMG`，而且現行的 document
+> selector 根本不再產生 `a.o_image`（改成 `span.o_file_box`，其整個子樹抑制 toolbar）。
+>
+> **四個 media check 現在都自己建它要量的東西，不只 #266 點名的那兩個。** #266 的頭兩次嘗試是這個決定的
+> 理由，兩筆都留在 `markup.jsonl` 裡：#243 的 line 1 **pass** 與 line 3 的前提都靠手建的 fixture，收尾
+> 時正確地清掉了，所以兩個讀數都不可重現——重跑時 line 1 看到的是待辦自己的圖
+> `/project_todo/static/img/todo_access.png`（static module asset，背後沒有 `ir.attachment`，
+> `isInitialMedia` 比不中任何東西，`ABSENT`），line 3 看到的是「description 裡沒有 `a.o_image`」。
+> 現在四個 check 各自建一個 public `ir.attachment` 加一筆記錄（scratch 待辦／website 頁面／草稿 mailing
+> 的 `body_arch`），`--cleanup` 全部移除，主機跑完查核為空。
+>
+> **本輪另外找到一個分歧，而它不是這一列的：#271。** `media-document-mailing` 在 Ingress 下 Documents
+> 分頁列出 **30** 格、Public 只有 **1** 格，多出來的是產生出來的 asset bundle。原因量到了：
+> `DocumentSelector.attachmentsDomain` 用 `!['url', '=like', '/web/assets/%']` 排除 bundle，而那個字串是
+> **ORM domain 裡的字面值**、和被改寫的 URL 字面值住在同一包 bundle 裡，所以也被加了前綴
+> （`served_domain_asset_exclusion_prefixed` Ingress `true`／Public `false`，getter 長度 383 對 320，
+> 正好一個前綴）。加了前綴的排除條件比不中任何一筆 `url`，於是什麼都沒排除。**這不改這一列的嚴重度**：
+> #239 管的 preselection 兩面都正確，責任規則是 #166 的通用字面規則之一，而且 domain 走的是 request
+> body，什麼都不存（兩面 `stored_verdict` 都是 `CLEAN`）。真正值得處理的是那個**類別**——通用字面改寫會
+> 碰到 ORM domain 的字面值而不只是 URL——由 #271 承接。
 
 > **HTML 編輯器「把 code view 切回去」會重新插入不帶 Ingress 前綴的 markup，已於 2026-10-01 處理
 > （#240，ADR 0004 的第五個 2026-10-01 附記），Live 重跑已於 2026-10-02 在 Release 0.4.10 上
@@ -885,6 +938,28 @@ Release 0.4.10**、同一台主機上重跑 #234 那一列，兩個 pair 都送�
 `STRUCTURAL` + 8 `NOT-RUN`**；`G-08` 是第 11 節的落差登記，不是 plan item，不進分母。#265 自己的證據
 在 `docs/testing/evidence/2026-10-02-issue-265/`，本輪這個目錄的記錄不改寫。
 
+**事後附記（#266，2026-10-02）**：第二項也結了，在**同一個 Release 0.4.10**、同一台主機上，不需要重新
+發版也沒有重新部署——#239 的三條規則早就在 0.4.10 裡，而本輪自己讀到
+`rule_in_served_method` 與 `legacy_rule_in_served_method` 在 Ingress 都是 `true`、在 Public 都是
+`false`，所以「規則有沒有到瀏覽器」是量到的而不是從版號推的。#239 欠的兩行都量到且都過：website 那
+一行用 driver 自建的 website 頁面（stored arch 以 HTML 回應送達，`data-original-src` 在 Ingress 帶
+前綴、在 Public root-relative，兩面都選中），document 那一行的格子在**舊**對話框（郵件設計器）上量到
+（兩面都選中；被找的 `#media-replace` 存在但被隱藏，實際進得去的是 `dblclick`），現行編輯器維持
+**構造上到不了**並附理由。#239 那一列因此改記 `PARITY`。**這一輪的 76 項守恆數字同樣不動**，理由與本段
+上面兩次相同：那是第 9 節 #239 那一列的 Live 欄，`woow.ingress-markup/v1` 也**不**進 `conservation`，
+所以仍維持 **60 `PARITY` + 0 `GAP` + 2 `APPROVED-DIVERGENCE` + 6 `STRUCTURAL` + 8 `NOT-RUN`**。
+本輪另外找到一個分歧並**另案**登記為 **#271**（Ingress 下 Documents 分頁列出所有 asset bundle，因為通用
+字面改寫把 `attachmentsDomain` 裡的 `'/web/assets/%'` **ORM domain 字面值**也加了前綴，getter 長度
+383 對 320）——那不是 #239 的規則，也不改 #239 的嚴重度，什麼都不存。
+**這也是這一族第一次留下 `.ambient.json`**，就是上面那句「要帶著那幾行的是下一次跑」所指的那一次：
+14 行對 14 筆記錄，`website.track` 與 `website.visitor` 的 delta 每一行都是 **0**（含網站編輯器那個
+check 的每面 5 次 navigation），兩側絕對值 198／59 與 #243 跑完在主機上讀到的同兩個數字相同。
+這是**記帳不是判定**：`diff` 不讀它，76 項的守恆數字不為它而動。證據在
+`docs/testing/evidence/2026-10-02-issue-266/`（`markup.jsonl` 14 筆、`markup.ambient.json` 14 行；
+同一個 check 與 surface 以**最後一筆**為判定，前兩次嘗試一併保留，因為那兩筆正是「#243 的 fixture 是手
+建而且已清掉，所以它那兩個讀數不可重現」的證據——四個 media check 現在都自己建它要量的東西，
+`--cleanup` 全部移除）。#243 的證據目錄只加附記，不改寫。
+
 這一輪另外跑了 `crawl --apps website` 兩面比對（30 判定 = 30 `PARITY`、
 1 跳過）與 #163 全部七個 target 兩面比對（7 判定 = 7 `PARITY`），後者是刻意跑整個 target 檔而不是只跑三行：
 0.4.9 是第一個部署 #238 那 182 行 Literal rewrite 的 Release，規則若在不該觸發的頁面觸發，會在無關 target 上
@@ -1078,6 +1153,18 @@ delta 不相等只是先後順序的產物（第一輪建的 visitor 列第二�
 **不**進 `conservation`：這八個 check 都是第 9 節各自那一列的 Live 欄，不是共用層那 76 項，§10.6 的守恆
 數字不因它而動。欄位與判定由 `odoo18ce/tests/test_e2e_ingress_markup_live.py` 固定；瀏覽器步驟**沒有**
 靜態測試，模組開頭有說，理由與 `e2e_collab_peer_snapshot_live.py` 相同。
+
+**#266（2026-10-02）之後是九個 check，schema 本身不變。** 新增的是
+`media-document-mailing`（#239 line 3 在舊對話框上），而四個 media check 都改成自己建 fixture 並由
+`--cleanup` 移除，所以這一族的 `writes` 欄從三個變成六個，`read_only_first` 的順序隨之改變。記錄多帶
+幾個 `extra` 讀數——`fixture`／`fixture_removed`（建了什麼、清掉了沒有）、`element_after_select`
+（點選之後再讀一次 `data-original-src`，因為 image tools 會在那個空窗裡刪掉或覆寫它）、
+`replace_control_present`／`replace_control_visible`／`replace_control_found_in`（被找的控制項在不在、
+看不看得見、在哪個 document 裡），以及 `operand` 現在帶 `dialog`（`current`／`legacy`）與
+`served_domain_*`（#271 的那三個讀數）。`extra` 仍然是平面合併進記錄，所以名稱不得撞到
+`RESERVED_RECORD_KEYS`，那條由同一個測試檔守著。`data_original_src` 現在**每一個** media check 都記，
+包含兩個 document 行——那裡它結構上是 `None`，而漏掉那個 key 的記錄無法和「這個 key 還不存在的時候
+量的」區分開。
 
 
 落差報告最終彙整為：

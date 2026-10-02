@@ -309,6 +309,36 @@ website page whose stored arch carries the attribute.
 nothing it measures is stored. Both halves that were measured agree with the
 Public origin, and the unmeasured half is recorded as unmeasured.
 
+*Annotated 2026-10-02, after this run: **#266 has measured both of the rows above**,
+on the same Release and against the same host, and both pass. Line 2 was measured
+on a **website page the driver builds** — stored arch carrying an attachment's own
+`image_src` in both `src` and `data-original-src`, delivered as an HTML response:
+the attribute arrives prefixed under Ingress, root-relative on the Public origin,
+and the tile is selected on both. Line 3's tile was measured on the **legacy**
+dialog, which the mail designer opens; `#media-replace` turned out to be present
+and **hidden**, because the legacy editor hides its whole toolbar for a media
+carrying a non-image `data-mimetype` and the dialog always stamps one on a
+document, so a double-click is what reaches it. The current editor stays
+unreachable, for the three reasons this section gives.*
+
+*Two things this section says are, after #266, true of the instrument and not only
+of this run. The two readings above needed fixtures the driver builds, and so did
+the two rows this run **did** measure: the record-scoped attachment behind line
+1's pass and the document link behind line 3's premise were both made by hand here
+and cleaned up afterwards, so neither reading was repeatable — #266's first
+attempt at each found a static module asset and an empty description and could
+only say so. All four media checks now build what they measure and remove it on
+`--cleanup`. The paragraphs above are **not** rewritten: they are what was read,
+and the fixtures they describe are exactly why the next run had to build its own.*
+
+*One divergence was found beside those two lines and is **not** #239's: under
+Ingress the Documents tab lists every generated asset bundle, because a generic
+literal rewrite prefixes the `'/web/assets/%'` pattern in
+`DocumentSelector.attachmentsDomain`. Filed as #271. #239's severity is unchanged
+by it — the preselection is correct on both surfaces, and a search domain travels
+in a request body, so nothing is stored. Evidence:
+`docs/testing/evidence/2026-10-02-issue-266/`.*
+
 ## Ambient rows
 
 **This run emits no `.ambient.json`, and that is a gap in the instrument rather
@@ -340,6 +370,18 @@ per invocation in `hand-checks.ambient.json`, each appended because those record
 append. `probe` keeps no records, so there is nothing for its figure to sit beside
 and it prints it instead — a backend-only delta is expected to be zero, and the
 point of reading it is that a zero which is read is a reading.
+
+*Annotated 2026-10-02: **that next run has happened** — #266, and
+`docs/testing/evidence/2026-10-02-issue-266/markup.ambient.json` is this family's
+first such file, 14 lines beside 14 records. Its `website.track` and
+`website.visitor` deltas are **0** on every line, the website-editor check
+included, across five navigations per surface; the absolute counts on either side
+of every window are 198 and 59, the same two numbers read here. So the sentence
+above — "the website-editor check navigates website pages, so ambient rows were
+certainly written" — is narrowed rather than confirmed: over the navigations that
+run made, neither model moved. It is still not a claim that the editor never
+writes one, because the figure is a net delta over a window and
+`navigation_basis` counts document GETs rather than page views.*
 
 The guarantee, quoted the way ADR 0012's 2026-10-01 postscript (#227) requires: a
 read-only Live run makes **no business writes**. It does not leave **zero rows**,
