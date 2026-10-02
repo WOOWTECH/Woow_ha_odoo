@@ -297,6 +297,24 @@ evidence than the run's own figure: `website.track` **198**, `website.visitor`
 **59**. No before-reading was taken on 0.4.10, so no delta can be stated. Follow-up
 filed to give this driver the same accounting.
 
+**Annotated after the fact: #264 has given these drivers the figure, and this run's
+records still carry none.** The follow-up named above is done — the markup driver,
+the peer snapshot's `run` and `probe` and the hand checks each count
+`website.track` and `website.visitor` over their own session's RPC once it is
+logged in and again on the way out, the same two models and the same way as the
+adapter's `crawl` and `open`. What that changes here is the account of the gap and
+not the numbers: the instrument did not have the figure when this run drove it, so
+the two counts above are still everything this run can say about its ambient rows,
+and they are still an absolute reading taken afterwards rather than a delta. The
+paragraphs above are **not** rewritten for the same reason the Writes rows are not
+— they are what was read. The next run of this family writes the delta instead:
+one JSON line per surface per check in `markup.ambient.json` beside
+`markup.jsonl`, one per pair in `peer.ambient.json` beside `peer.jsonl`, and one
+per invocation in `hand-checks.ambient.json`, each appended because those records
+append. `probe` keeps no records, so there is nothing for its figure to sit beside
+and it prints it instead — a backend-only delta is expected to be zero, and the
+point of reading it is that a zero which is read is a reading.
+
 The guarantee, quoted the way ADR 0012's 2026-10-01 postscript (#227) requires: a
 read-only Live run makes **no business writes**. It does not leave **zero rows**,
 and never has on a database with `website` installed. This run was not read-only in

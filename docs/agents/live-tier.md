@@ -187,8 +187,8 @@ maintenance bootstrap writes `web.base.url`, `web.base.url.freeze` and
 
 - **Evidence**, under `docs/testing/evidence/<date>-issue-<n>/`: `README.md`
   (what ran, against what, and the P-Check table), `checks.jsonl`,
-  `conservation.json`, `reconciled.jsonl`, and the `*.ambient.json` each `crawl`
-  or `open` writes beside its own records (the bullet below). Follow
+  `conservation.json`, `reconciled.jsonl`, and the `*.ambient.json` every Live
+  driver writes beside its own records (the bullet below). Follow
   `2026-09-27-issue-172/` — it is the smallest complete example.
 - **The parity plan updated to what the run recorded**, not the other way
   round: the item's row, the `G-`/`AD-` list, and the §10.6 tally.
@@ -205,15 +205,30 @@ maintenance bootstrap writes `web.base.url`, `web.base.url.freeze` and
   Quote the guarantee that way in an evidence README; do not promise zero rows,
   and do not delete the rows to make it true — #235's run exported the ones it
   cleared and said why. **How many** a run left is the run's own figure since
-  #256, not something to count on the host afterwards: `crawl` and `open` count
-  both models after the login and again after the last navigation and write the
-  delta beside their evidence, under the records' own name with `.ambient.json`
-  for its extension (`ingress-open.jsonl` → `ingress-open.ambient.json`) — a
-  `website.track` and a `website.visitor` delta, counts only, over the
-  navigations the run actually made. Keep that file with the evidence and
-  quote its numbers in the README. It is accounting and not a verdict: `diff`
-  never reads it, and the §10.6 and §12 conservation tallies do not move for
-  it.
+  #256, not something to count on the host afterwards, and since #264 every Live
+  driver carries that figure and not only the adapter: the adapter's `crawl` and
+  `open`, the markup driver (`odoo18ce/tests/e2e_ingress_markup_live.py`), the
+  peer snapshot's `run` and `probe`
+  (`odoo18ce/tests/e2e_collab_peer_snapshot_live.py`) and the hand checks
+  (`odoo18ce/tests/e2e_ingress_hand_checks.py`). Each counts both models over
+  its own session's RPC — never over `ssh`, which would be a different
+  measurement and could not be a delta — after the login and again on the way
+  out, and writes the delta beside its evidence, under the records' own name
+  with `.ambient.json` for its extension (`ingress-open.jsonl` →
+  `ingress-open.ambient.json`) — a `website.track` and a `website.visitor`
+  delta, counts only, over the navigations the run actually made. Read the
+  file's `navigation_basis` before comparing two of these numbers: the adapter
+  counts the navigations it issued, and a hand-driven driver counts the document
+  GETs its browser context made, which is the only way to see a navigation a
+  click caused or one the website editor's preview iframe made for itself. A
+  driver whose records append appends its figure too — one JSON object per line,
+  per surface or per invocation, because one truncated figure would stand for
+  every invocation's rows. `probe` keeps no records, so there is nothing for its
+  figure to sit beside and it prints it on stderr instead of writing a file; it
+  is still a figure that was read, which is the whole reason to take a delta
+  expected to be zero. Keep the file with the evidence and quote its numbers in
+  the README. It is accounting and not a verdict: `diff` never reads it, and the
+  §10.6 and §12 conservation tallies do not move for it.
 
 ## When it cannot run
 

@@ -39,6 +39,54 @@
   false `delivered` (#263); the hand-driven drivers emit no `.ambient.json`, so
   #256's accounting has a hole (#264); and two of #239's three lines are still
   unmeasured, one of them needing a fixture carrying `data-original-src` (#266).
+- **Every Live driver now names the ambient rows it left, not only the adapter**
+  (#264, found by the run above). #256 made the figure the run's own — count
+  `website.track` and `website.visitor` after the login and again on the way out,
+  write the delta beside the records under their own name with `.ambient.json`
+  for its extension (`ingress-open.jsonl` → `ingress-open.ambient.json`) — and
+  built it in `crawl` and `open`, which left the three hand-driven drivers
+  reconstructing it on the host afterwards: that is exactly what #243's evidence
+  had to do, an absolute `website.track` 198 with no before-reading and so no
+  delta. `e2e_ingress_markup_live.py` now writes one line per surface per check,
+  `e2e_collab_peer_snapshot_live.py`'s `run` one per pair, and
+  `e2e_ingress_hand_checks.py` one per invocation — so **a figure file is read one
+  JSON object per line**, and the adapter's own, which truncates with its records,
+  is the one-line case of that rather than a second format under the same
+  extension. The counts go over the
+  session's own `search_count` and never over `ssh` (`Operation.COUNT_ROWS`, the
+  same seam `SurfaceDriver.count_rows` passes through), and the shared parts live
+  in `e2e_menu_action_adapter.py` rather than in three copies: `ambient_accounting`
+  takes a `SessionAmbientDriver` wrapping any session with an `rpc` and a
+  `context`, and the `True`-is-an-`int` guard that would record a refusing
+  controller's boolean as "one row" is `validated_count`, in one place.
+- The navigation denominator is **counted and not estimated**, and the record now
+  says which quantity it is (`navigation_basis`, a new field in the schema).
+  `SurfaceDriver._goto` is the adapter's one navigation call and the hand-driven
+  drivers have no equivalent — the hand checks' `editbtn` navigates by clicking a
+  link, the markup driver drives a website editor whose preview iframe fetches
+  documents on its own account, and the peer snapshot opens a form on two
+  sessions — so for those the denominator is every document GET the browser
+  context made under the surface's base, off Playwright's `request` event. That
+  is an upper bound on page views rather than a count of them, because a redirect
+  hop is a document GET that renders nothing, and the field carries that sentence
+  beside the number so two files' `navigations` are not read as the same thing. A
+  two-session run counts rows over session A — the models are database-wide, so a
+  row cannot be attributed to one of two open sessions — sums both sessions'
+  navigations, and records the pair name in `surface`.
+- `probe` keeps no records, so `ambient_accounting` takes `out_path=None` and the
+  figure is printed on stderr rather than written. It opens only `/odoo/...`
+  backend routes, so its delta is expected to be zero, and reading it anyway is
+  the point: **a zero that is read is a reading and a zero that is assumed is
+  not**, which is the distinction #256 drew about `crawl`. `visit` is the
+  opposite case and the one subcommand where the figure is the measurement rather
+  than the accounting — it exists to make the tracking write, and `U-C5` is
+  judged from the row. Nothing about judging moved: `read_records` still refuses
+  the schema, `diff` never reads the file, and the §10.6 and §12 conservation
+  figures do not move for it. `docs/agents/live-tier.md`, ADR 0012's 2026-10-01
+  postscript and the parity plan's §12 say it of every driver now, and
+  `docs/testing/evidence/2026-10-02-issue-243/README.md` is **annotated** rather
+  than rewritten: the absolute count it read is still what that run read. The
+  pure parts are driven at the Static tier. No image change and no version bump.
 
 ### Fixed
 - The peer snapshot's `probe` no longer writes the field it reports it does not,

@@ -75,6 +75,21 @@ Writing: `readonly-iframe` creates one scratch `project.task` and deletes it on
 one mailing's `body_arch` and `body_html`. Each marker names its run, so a
 later reader can tell whose text it is. Every other check reads only. The
 boundary is ADR 0012.
+
+**The ambient rows a run leaves are counted by the run** (#256, #264): each
+surface counts `website.track` and `website.visitor` over its own session's RPC
+after the login and again on the way out, and the delta is appended beside the
+records under their own name with `.ambient.json` for its extension
+(`markup.jsonl` -> `markup.ambient.json`) -- one line per surface per
+invocation, because the records append the same way. Counts only, no URL and no
+visitor identity. `media-image-website` is why this driver needs the figure:
+it opens the website editor, whose preview iframes load tracked website pages,
+so those rows are certainly written -- #243's evidence had to read an absolute
+count on the host afterwards and say that no delta could be stated. The
+denominator is every document GET the session's browser context made under its
+base, which is the only way to count a navigation the editor made for itself.
+It is accounting and not a verdict: `diff` never reads it, `read_records`
+refuses its schema, and the conservation tally does not move for it.
 """
 from __future__ import annotations
 
@@ -681,6 +696,15 @@ def run_check(
     row = CHECKS[check]
     handler = handler_for(check)
     records: list[dict[str, Any]] = []
+    # Which surfaces have a record on disk, so the surface-failure fallback below
+    # cannot write a second, contradicting line for one of them.
+    kept: set[str] = set()
+    # An ambient figure that could not be written, held until every surface has
+    # run. `ambient_accounting` raises when the figure is a passing run's only
+    # failure (#256), and raising it where it arrives would cost the *other*
+    # surface its measurement -- a run of `--surface both` would open the public
+    # origin never, record nothing for it, and exit by traceback.
+    unaccounted: list[Exception] = []
 
     def keep(record: dict[str, Any], side=None) -> None:
         """Append one record to `--out` the moment it exists.
@@ -693,9 +717,13 @@ def run_check(
         path tokens (`mailing.mailing.body_html` especially).
         """
         masked = side.env.mask(record) if side is not None else record
-        records.append(masked)
         with open(out_path, "a", encoding="utf-8") as out:
             out.write(json.dumps(masked, ensure_ascii=False, sort_keys=True) + "\n")
+        # After the write, both of them: `kept` is read as "this surface's record
+        # is on disk" and `records` as "this is what the run recorded", and a line
+        # the file never got is neither.
+        records.append(masked)
+        kept.add(masked["surface"])
         print("%s/%s %s  (expected %s)" % (
             masked["check"], masked["surface"], masked["verdict"], masked["expected"]))
 
@@ -708,38 +736,66 @@ def run_check(
                 side = None
                 try:
                     side = open_one(env, browser, surface)
-                    outcome: dict[str, Any] = {
-                        "screen": row["screen"], "pictures": None, "stored": {}, "notes": "",
-                    }
-                    mark = side.recorder.mark() if side.recorder else None
-                    try:
-                        outcome.update(handler(
-                            side, run_id, task_id=task_id, mailing_id=mailing_id, cleanup=cleanup,
-                        ) or {})
-                    except Exception as error:  # noqa: BLE001 -- a step that could not run
-                        # A step that threw is `NOT-RUN` with its reason, never a
-                        # pass and never a silent gap: `pictures` stays None.
-                        outcome["notes"] = "%s: %s" % (
-                            type(error).__name__, adapter.sanitize_diagnostic(str(error)))
-                    signals = side.recorder.since(mark) if (side.recorder and mark) else {}
-                    record = evidence_record(
-                        check=check, issue=row["issue"], run_id=run_id,
-                        database=session_database(side) or db,
-                        target=env.target, surface=surface,
-                        screen=outcome.get("screen") or row["screen"],
-                        pictures=outcome.get("pictures"),
-                        stored=outcome.get("stored") or {},
-                        signals=signals,
-                        extra=outcome.get("extra"),
-                        notes=outcome.get("notes", ""),
-                    )
-                    keep(record, side)
+                    # This surface's ambient-row figure, counted by the run itself
+                    # (#256, #264) and appended beside the records as
+                    # `markup.ambient.json`. The window opens here, after the
+                    # login, because the counts go over this session's own RPC --
+                    # and it is per surface for the same reason the records are:
+                    # each surface has its own session, and a delta over a
+                    # database-wide count cannot be split between two of them
+                    # afterwards. `media-image-website` is why this driver needs
+                    # the figure at all: it opens the website editor, whose
+                    # preview iframes load tracked pages.
+                    with adapter.ambient_accounting(
+                        adapter.SessionAmbientDriver(side, mask=env.mask),
+                        adapter.RunInfo(run_id=run_id, target=env.target,
+                                        database=session_database(side) or db),
+                        surface, out_path, command=check, append=True,
+                        navigation_basis=adapter.AMBIENT_BASIS_DOCUMENTS,
+                    ):
+                        outcome: dict[str, Any] = {
+                            "screen": row["screen"], "pictures": None, "stored": {}, "notes": "",
+                        }
+                        mark = side.recorder.mark() if side.recorder else None
+                        try:
+                            outcome.update(handler(
+                                side, run_id, task_id=task_id, mailing_id=mailing_id,
+                                cleanup=cleanup,
+                            ) or {})
+                        except Exception as error:  # noqa: BLE001 -- a step that could not run
+                            # A step that threw is `NOT-RUN` with its reason, never a
+                            # pass and never a silent gap: `pictures` stays None.
+                            outcome["notes"] = "%s: %s" % (
+                                type(error).__name__, adapter.sanitize_diagnostic(str(error)))
+                        signals = side.recorder.since(mark) if (side.recorder and mark) else {}
+                        record = evidence_record(
+                            check=check, issue=row["issue"], run_id=run_id,
+                            database=session_database(side) or db,
+                            target=env.target, surface=surface,
+                            screen=outcome.get("screen") or row["screen"],
+                            pictures=outcome.get("pictures"),
+                            stored=outcome.get("stored") or {},
+                            signals=signals,
+                            extra=outcome.get("extra"),
+                            notes=outcome.get("notes", ""),
+                        )
+                        keep(record, side)
                 except Exception as error:  # noqa: BLE001 -- the surface itself failed
                     # `open_one`, `side.close()` and `evidence_record`'s own
                     # collision guard all sit outside the handler's `try`. Letting
                     # one escape would have abandoned the whole run with `--out`
                     # never opened, leaving a host this driver had already written
                     # to with no evidence line accounting for it.
+                    if surface.value in kept:
+                        # This surface's record is on disk, so the failure is in
+                        # something after it -- the ambient accounting, which
+                        # raises when it is a passing run's only failure (#256). A
+                        # second line for the same surface would be read as this
+                        # surface's verdict by `summarise`, which takes the last,
+                        # so the figure's failure is held and raised after the
+                        # loop instead.
+                        unaccounted.append(error)
+                        continue
                     keep({
                         "schema": EVIDENCE_SCHEMA, "run_id": run_id, "check": check,
                         "issue": row["issue"], "database": db, "target": os.environ.get(
@@ -760,6 +816,15 @@ def run_check(
         finally:
             browser.close()
 
+    if unaccounted:
+        # Every surface has run and every record it took is on disk; what is left
+        # is a figure that could not be written, and #256 exists so that is not
+        # swallowed. The first one is raised and the rest are named, because an
+        # operator needs the reason and not a count of reasons.
+        for later in unaccounted[1:]:
+            print("a further ambient figure could not be written: %s"
+                  % adapter.sanitize_diagnostic(str(later)), file=sys.stderr)
+        raise unaccounted[0]
     if not records:
         print("no record was written: nothing ran")
         return 1
