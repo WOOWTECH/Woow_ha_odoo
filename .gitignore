@@ -8,3 +8,11 @@ docs/plans/odoo-handoff-*.html
 
 # A run that ignored E2E_ARTIFACT_DIR used to drop artifacts here (#188).
 parity-artifacts/
+
+# Agent worktrees. The Driver's own live outside the repository, but Claude
+# Code's `EnterWorktree` puts one here — and an untracked directory holding a
+# second checkout makes `git status --porcelain` non-empty, which is the single
+# pre-Sweep clean-tree check (`bin/issue-loop:1636`, "working tree is not clean
+# — commit or stash first"). Ignoring the path also keeps a `git add -A` from
+# committing a whole worktree, since `git add -A` does not stage ignored files.
+.claude/worktrees/
