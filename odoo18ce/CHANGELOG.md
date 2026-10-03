@@ -300,7 +300,9 @@
   `extra["body_html_inlined"]` reading is the marker the designer **typed**,
   which is in no RPC-seeded value; it is recorded and not judged, because a
   verdict there would make this check's `PARITY` turn on a mechanism that is not
-  its subject.
+  its subject. Presence alone turns out not to be that reading on a *reclaimed*
+  row, whose `body_html` already holds this run's marker -- filed as #279 and
+  fixed in the entry below.
 - One thing the review found that is not fixed in #276 itself: a *reclaimed*
   scratch mailing's body links the public `ir.attachment` an **earlier** run
   created, and that attachment is in no fixture dict the reclaiming run holds, so
@@ -567,6 +569,27 @@
   `docs/testing/evidence/2026-10-02-issue-243/README.md` is **annotated** rather
   than rewritten: its Writes row is what that run left, and what changes is the
   attribution.
+- **`body_html_inlined` could read `true` from a reclaimed row's earlier marker**
+  (#279, found by the review of #277 and not introduced by it -- the reading is
+  #276's). That reading asks whether rule 8 ran at all, and it asked it as
+  "`marker_for(run_id)` is in the `body_html` read back". `--run-id` is one value
+  for the whole invocation and `--surface both` drives the check on both surfaces
+  against one database, so without `--cleanup` the ingress surface left scratch
+  mailing M with its marker inlined in `body_html`, the public surface's
+  `scratch_mailing_id` reclaimed that same M -- by design, the subject is this
+  run's -- and a second save that stored `body_arch` and never ran
+  `commitChanges` read as inlined off the first surface's value. The same thing
+  happened on a re-run of one surface under one run id.
+- The fix judges the marker **newly** present: in the value read back and not in
+  `fixture["before"]["body_html"]`, which the seeder already reads before it
+  writes `body_arch`, so it costs no further RPC. Scoping the typed marker per
+  surface was the alternative and is **not** the fix -- it closes the
+  cross-surface case only, leaves the one-surface re-run, and changes the value
+  other readings compare against. Nothing else about the reading changes: it
+  stays **recorded and not judged**, for `_media_verdict`'s reason, so no verdict
+  moves either way. What it protects is the evidence a reader uses to tell
+  "inlined, and root-relative" from "never inlined", since `stored_verdict(False)`
+  is `CLEAN` and an empty `body_html` already scores a pass on its own.
 
 ## 0.4.10 — 2026-10-01
 

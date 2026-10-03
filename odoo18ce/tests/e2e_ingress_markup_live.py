@@ -2778,6 +2778,33 @@ def mailing_body_value(run_id: str) -> str:
 MAILING_BODY_VALUE = MAILING_BODY_TEMPLATE % "WOOW parity"
 
 
+def body_html_inlined(run_id: str, before: Mapping[str, Any],
+                      after: Mapping[str, Any]) -> bool:
+    """Did **this** save's `commitChanges` build `body_html` (rule 8)?
+
+    The marker the designer typed is the discriminator, because it is not in the
+    RPC-seeded `body_arch` and rule 8 is the only thing that could carry it into
+    `body_html`. "Present after the save" is not that reading though, and #279 is
+    where the difference shows: `--run-id` is one value for the whole invocation
+    and `--surface both` drives the check on both surfaces against one database,
+    so without `--cleanup` the second surface's `scratch_mailing_id` reclaims the
+    first surface's scratch row -- by design, the subject is this run's. Its
+    `body_html` already holds `marker_for(run_id)` from the first save, so a
+    second save that stored only `body_arch` would read as inlined.
+
+    So the marker has to be **newly** present: in `after` and not in the value
+    read before the seed. That value is already in hand -- `fixture["before"]`
+    -- so this costs no further read, and it closes a re-run of the *same*
+    surface under one run id as well, which a surface-specific marker would not.
+
+    Both sides can be `False` rather than a string: `create_fixture_mailing`
+    leaves `body_html` unset, and a save that never inlined leaves it that way.
+    """
+    typed = marker_for(run_id)
+    return (typed in (after.get("body_html") or "")
+            and typed not in (before.get("body_html") or ""))
+
+
 def do_mailing_editable(side, run_id: str, *, mailing_id=None, cleanup=False, **_) -> dict[str, Any]:
     """#238 lines 1 and 2: the designer loads, and the save stores **two** fields.
 
@@ -2975,11 +3002,13 @@ def _mailing_after_seeding(side, fixture, run_id, *, cleanup=False) -> dict[str,
     # save that stored `body_arch` and never inlined `body_html` would score a
     # pass for the one field this check exists to measure, the field that leaves
     # the installation with the mail. The marker the designer typed is what
-    # separates "inlined, and root-relative" from "never inlined": it is not in
-    # the RPC-seeded value, only in what `commitChanges` built. Recorded rather
-    # than judged, for the reason `_media_verdict` is: a verdict here would make
-    # this check's `PARITY` depend on a mechanism that is not its subject.
-    extra["body_html_inlined"] = marker_for(run_id) in (after.get("body_html") or "")
+    # separates "inlined, and root-relative" from "never inlined", and it has to
+    # be *newly* there: on a reclaimed row the marker is already in `body_html`
+    # (#279), so `body_html_inlined` reads the value from before the seed too.
+    # Recorded rather than judged, for the reason `_media_verdict` is: a verdict
+    # here would make this check's `PARITY` depend on a mechanism that is not its
+    # subject.
+    extra["body_html_inlined"] = body_html_inlined(run_id, fixture["before"], after)
     return _mailing_editable_leaving(side, fixture, extra, screen, cleanup=cleanup,
                                      pictures=pictures, stored=stored, notes="")
 

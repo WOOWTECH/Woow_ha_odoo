@@ -887,9 +887,44 @@ def test_a_body_html_the_save_never_inlined_is_not_a_pass():
     discriminator, because it is not in the RPC-seeded value."""
     assert markup.stored_verdict(False) == (markup.CLEAN, 0)
     assert markup.stored_verdict("") == (markup.CLEAN, 0)
+    assert markup.body_html_inlined(RUN, {"body_html": False},
+                                    {"body_html": markup.marker_for(RUN)})
+    assert not markup.body_html_inlined(RUN, {"body_html": False},
+                                        {"body_html": markup.MAILING_BODY_VALUE})
     source = inspect.getsource(markup._mailing_after_seeding)
     assert '"body_html_inlined"' in source
-    assert 'marker_for(run_id) in (after.get("body_html")' in source
+    assert 'body_html_inlined(run_id, fixture["before"], after)' in source
+
+
+def test_a_marker_already_in_body_html_is_not_this_save_inlining_it():
+    """#279. `--run-id` is one value for the whole invocation and `--surface both`
+    drives both surfaces against one database, so without `--cleanup` the second
+    surface's `scratch_mailing_id` reclaims the first's scratch row -- by design,
+    since the subject is this run's. That row's `body_html` already holds
+    `marker_for(run_id)` from the first surface's save, so a marker merely
+    *present* after the second save says nothing about whether `commitChanges`
+    ran. Only a marker that is **newly** present does, and the same reading
+    closes a re-run of one surface under one run id."""
+    typed = markup.marker_for(RUN)
+    reclaimed = {"body_html": "<div>%s</div>" % typed}
+    assert not markup.body_html_inlined(RUN, reclaimed, reclaimed)
+    # A body that changed around an already-present marker is no evidence of rule
+    # 8 either: the marker is the discriminator, and this one was not typed into
+    # this save's editable.
+    assert not markup.body_html_inlined(
+        RUN, reclaimed, {"body_html": "<div><p>%s</p></div>" % typed})
+    # An earlier run's marker is a different string, so it does not mask this one.
+    assert markup.body_html_inlined(RUN, {"body_html": markup.marker_for("WOOW-OLD")},
+                                    {"body_html": typed})
+
+
+def test_the_newly_present_reading_survives_an_unset_body_html():
+    """`create_fixture_mailing` leaves `body_html` as `False`, and `read` returns
+    that `False` rather than a string -- on both sides of the comparison, since a
+    save that never inlined leaves the field untouched."""
+    assert not markup.body_html_inlined(RUN, {"body_html": False}, {"body_html": False})
+    assert not markup.body_html_inlined(RUN, {}, {})
+    assert markup.body_html_inlined(RUN, {}, {"body_html": markup.marker_for(RUN)})
 
 
 # Anything that undoes part of a fixture. A handler's error path has to name at
