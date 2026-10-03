@@ -1323,10 +1323,16 @@ seeder 在寫 `body_arch` 之前就已經讀過，所以不用多一次 RPC。�
 做完了，表單**一定**是髒的，而緊接著的那一步就是還原，照樣寫下 `body_restored: true`（`do_codeview` 是
 `help_restored: true`），即使 `run_check` 自己的 `side.close()` 會在那張還是髒的表單上觸發 `beforeunload`，
 把這一輪的標記 body 原封不動蓋回去。現在是三種讀數而不是兩種：沒有 key（沒東西要 discard）、`true`
-（discard 成功）、`false`（`UNSAVED` 命中而表單沒有變乾淨——click 失敗、settle 失敗，或連 discard 按鈕都
-找不到），還原自己的讀數於是對得起來。`_remove_mailing_fixture` 逐一回報每次刪除就是同一個理由（一個靜
-默的 `except` 讀起來等於「刪掉了」），而 `e2e_collab_peer_snapshot_live` 的 `discard_quietly` 早就回報這一
-對。讀不到的頁面（frame 已經換掉、context 已經關掉）仍然不加 key：那時候連「有沒有東西要 discard」都不知
+（discard 成功）、`false`（`UNSAVED` 命中而表單沒有變乾淨——click 失敗、settle 失敗、找不到可見的 discard
+按鈕，或按完之後那個未存檔指示器還在），還原自己的讀數於是對得起來。而 `true` 的意思是**表單真的乾淨
+了**，不是「click 沒有拋例外」：discard 之後等 `UNSAVED` 轉 hidden（記錄一乾淨，指示器就又帶上
+`invisible`，這個 selector 就不再命中，而沒有元素的 locator 算 hidden——`discard_form` 一直是這樣讀這個結
+果的），否則一次沒有生效的 discard（上面彈了 dialog、表單因記錄無效而不肯離開）仍會記成 `true`，而
+`side.close()` 面對的還是一張髒表單——同一個讀數錯誤換一個成因。按鈕也改用 `>> visible=true` 而不是
+`.first`（本來就是這個 repo 對同一顆按鈕的寫法）：`.first` 不管狀態都取 DOM 裡第一個命中，所以一顆隱藏的
+前面的按鈕（dialog 的、子表單的）會通過 `count()`、把界耗在一個永遠點不到的元素上，真正那一顆從頭到尾沒
+被點。`_remove_mailing_fixture` 逐一回報每次刪除就是同一個理由（一個靜默的 `except` 讀起來等於「刪掉
+了」），而 `e2e_collab_peer_snapshot_live` 的 `discard_quietly` 早就回報這一對。讀不到的頁面（frame 已經換掉、context 已經關掉）仍然不加 key：那時候連「有沒有東西要 discard」都不知
 道，和「discard 失敗」不是同一個讀數。
 
 另一半是**那一下 click 本來沒有界**：這個 driver 從頭到尾沒有呼叫 `set_default_timeout`（`TIMEOUT` 只會明
@@ -1335,9 +1341,13 @@ seeder 在寫 `body_arch` 之前就已經讀過，所以不用多一次 RPC。�
 正是不讓 `beforeunload` 蓋掉還原的原因）——於是操作者按下 Ctrl+C 之後，那 30 秒整整卡在中斷與那筆記錄唯一
 一次還原之間；窗口裡的第二次 Ctrl+C 是 `KeyboardInterrupt`，`_discard_unsaved_form` 的 `except Exception`
 接不到，handler 自己的 `except Exception` 也接不到，標記文字就留在那個 action 上，沒有任何東西還原它。現在
-click 明寫 `timeout=DISCARD_TIMEOUT`（2 秒；按鈕在點之前已經確認存在，頁面也是本機的），既把等待收短，也
-把第二次中斷能落下的窗口收短；中斷真的落下時，`discarded: false` 已經寫進 `extra` 才往外拋。另外兩個
-handler 的錯誤路徑共用同一個函式，所以同一個界也跟著套上。全域 `set_default_timeout` 會動到這個 driver 的
+兩個等待都明寫界：click 是 `DISCARD_TIMEOUT`（2 秒——它只需要一顆可點的按鈕，而那一顆剛剛才以
+`visible=true` 命中），指示器轉 hidden 是 `DISCARD_CLEAN_TIMEOUT`（5 秒——它等的是 discard 送回宿主的那次
+記錄 reload，而這個 driver 的 Ingress surface 是隔著網路在開 HA 前端，所以這一半給得寬一點）。兩者都遠低
+於 30 秒，這正是重點：等待收短，第二次中斷能落下的窗口也收短。中斷真的落下時，`discarded: false` 已經寫
+進 `extra` 才往外拋——那條路徑上不會有任何一行記錄（`run_check` 只接 `Exception`，被 `KeyboardInterrupt`
+打斷的 surface 連 `NOT-RUN` 都不會寫），這個讀數是給其他每一條**會**寫記錄的路徑用的。另外兩個
+handler 的錯誤路徑共用同一個函式，所以同一組界也跟著套上。全域 `set_default_timeout` 會動到這個 driver 的
 每一個等待，不是修法；「失敗的 discard 之後要不要跳過還原」也不是——還原仍然要試，那是那筆記錄唯一的機
 會，所以這一票改的是讀數，不是順序。
 

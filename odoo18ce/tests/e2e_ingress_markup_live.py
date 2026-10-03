@@ -676,14 +676,19 @@ VIEWER_IFRAME = HTML_FIELD + " iframe"
 SAVE_BUTTON = ".o_form_button_save"
 DISCARD_BUTTON = ".o_form_button_cancel"
 UNSAVED = ".o_form_status_indicator_buttons:not(.invisible)"
-# The discard click's own bound. No `set_default_timeout` is applied anywhere in
-# this driver -- `TIMEOUT` is only ever passed explicitly -- so a click with no
+# The discard's own two bounds. No `set_default_timeout` is applied anywhere in
+# this driver -- `TIMEOUT` is only ever passed explicitly -- so a wait with no
 # `timeout=` takes Playwright's 30 s default, and `do_codeview`'s interrupt path
 # spends them between the operator's Ctrl+C and the only restore a real
-# `ir.actions.act_window.help` is going to get (#280). The button is asserted
-# present before the click and the page is local, so a couple of seconds is
-# generous.
+# `ir.actions.act_window.help` is going to get (#280). They are two numbers
+# because they wait for different things: the click needs nothing but an
+# actionable button, which was matched `visible=true` in the same breath, while
+# the indicator clearing afterwards waits on the record reload the discard sends
+# to the host -- this driver's Ingress surface drives the HA frontend over the
+# network, so that half gets the more generous of the two. Both are far below the
+# default, which is the point.
 DISCARD_TIMEOUT = 2_000
+DISCARD_CLEAN_TIMEOUT = 5_000
 DIALOG = ".o_dialog .modal-content"
 PICTURES = "img"
 
@@ -735,10 +740,11 @@ def _discard_unsaved_form(side, extra) -> None:
     (#280): no key at all for a page with nothing to discard, `true` for a
     discard that came off, and `false` once `UNSAVED` has matched and the form
     did not come clean -- a modal over the button, a page that stopped
-    responding, no discard button to click. Without that third reading a failed
-    discard is indistinguishable from an already-clean form, while the step after
-    it still stamps `body_restored` / `help_restored` over a write this run's own
-    `beforeunload` can put straight back. `discard_quietly` in
+    responding, no visible discard button to click, an indicator that never
+    cleared. Without that third reading a failed discard is indistinguishable
+    from an already-clean form, while the step after it still stamps
+    `body_restored` / `help_restored` over a write this run's own `beforeunload`
+    can put straight back. `discard_quietly` in
     `e2e_collab_peer_snapshot_live` reports the same pair for the same reason.
     """
     try:
@@ -750,10 +756,24 @@ def _discard_unsaved_form(side, extra) -> None:
     # only reading that may say otherwise is a discard that actually came off.
     extra["discarded"] = False
     try:
-        discard = side.root.locator(DISCARD_BUTTON).first
+        # `>> visible=true` rather than `.first`, this repository's idiom for this
+        # same button (`e2e_collab_peer_snapshot_live.discard_form`): `.first`
+        # takes the first DOM match whatever its state, so one hidden earlier
+        # button -- a dialog's, a sub-form's -- would spend the bound on an
+        # element that can never be clicked and never reach the real one.
+        discard = side.root.locator(DISCARD_BUTTON + " >> visible=true").first
         if not discard.count():
             return
         discard.click(timeout=DISCARD_TIMEOUT)
+        # `true` has to mean the form came clean, not that the click did not
+        # raise. The indicator carries `invisible` again once the record is clean,
+        # so `UNSAVED` stops matching and a locator with no element counts as
+        # hidden -- `discard_form` reads the outcome the same way. Without this
+        # wait a discard that did not take (a dialog raised over it, an invalid
+        # record the form refuses to leave) reads as `true` while `run_check`'s
+        # `side.close()` still has a dirty form to save.
+        side.root.locator(UNSAVED).first.wait_for(
+            state="hidden", timeout=DISCARD_CLEAN_TIMEOUT)
         side.settle(2000)
     except Exception:  # noqa: BLE001 -- the reading stays `false`
         return

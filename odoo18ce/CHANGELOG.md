@@ -623,31 +623,48 @@
 - There are now three readings rather than two: no key for a page with nothing
   to discard, `true` for a discard that came off, and `false` once `UNSAVED` has
   matched and the form did not come clean -- a click that failed, a `settle` that
-  failed, or no discard button to click at all. The restore's own reading is then
-  checkable against it. This is the trap `_remove_mailing_fixture` already
-  reports each removal to avoid, and the pair `discard_quietly` in
-  `e2e_collab_peer_snapshot_live` has always reported. A page that cannot be read
-  at all (a frame that navigated away, a context that closed) still adds no key:
-  there "was there anything to discard" is unknown, which is not the same reading
-  as a discard that failed.
-- The click now passes an explicit `timeout=DISCARD_TIMEOUT` (2 s; it is a local
-  click on a button already asserted present). No `set_default_timeout` is
-  applied anywhere in this driver -- `TIMEOUT` is only ever passed explicitly to
-  `wait_for` -- so the click took Playwright's 30 s default, and `do_codeview`'s
+  failed, no visible discard button to click, or an unsaved indicator still up
+  afterwards. The restore's own reading is then checkable against it. This is the
+  trap `_remove_mailing_fixture` already reports each removal to avoid, and the
+  pair `discard_quietly` in `e2e_collab_peer_snapshot_live` has always reported.
+  A page that cannot be read at all (a frame that navigated away, a context that
+  closed) still adds no key: there "was there anything to discard" is unknown,
+  which is not the same reading as a discard that failed.
+- **`true` means the form came clean, not that the click did not raise.** The
+  discard is confirmed by waiting for `UNSAVED` to go hidden -- the indicator
+  carries `invisible` again once the record is clean, and a locator with no
+  element counts as hidden, which is how `discard_form` has always read the same
+  outcome. Without it a discard that did not take (a dialog raised over it, an
+  invalid record the form will not leave) recorded `true` while `side.close()`
+  still had a dirty form to save, which is the reading this issue is about with a
+  different cause. The button is matched `>> visible=true` for the same reason
+  `discard_form` matches it that way rather than with `.first`: `.first` takes
+  the first DOM match whatever its state, so one hidden earlier button -- a
+  dialog's, a sub-form's -- passes `count()`, spends the new bound on an element
+  that can never be clicked, and leaves the real button unclicked.
+- The two waits are now bounded explicitly: `DISCARD_TIMEOUT` (2 s) on the
+  click, which needs nothing but an actionable button and has just matched one
+  `visible=true`, and `DISCARD_CLEAN_TIMEOUT` (5 s) on the indicator clearing,
+  which waits on the record reload the discard sends to the host -- the Ingress
+  surface drives the HA frontend over the network, so that half gets the more
+  generous of the two. No `set_default_timeout` is applied anywhere in this
+  driver -- `TIMEOUT` is only ever passed explicitly to `wait_for` -- so each
+  would otherwise take Playwright's 30 s default, and `do_codeview`'s
   `except BaseException` runs the discard *ahead* of the RPC that puts a real
   `ir.actions.act_window.help` back. On Ctrl+C mid-check those 30 s sat between
   the interrupt and the only restore that record was going to get, and a second
   Ctrl+C inside the window raises `KeyboardInterrupt`, which neither the
   discard's `except Exception` nor the handler's own catches -- leaving the marker
-  text on that action with nothing restoring it. The bound shortens both the wait
-  and that window, the other two handlers' recovery paths share the same function
-  and so the same bound, and an interrupt that does land now leaves
-  `discarded: false` in the record on its way out. A global
-  `set_default_timeout` is **not** the fix -- it would change every wait in the
-  driver -- and neither is skipping the restore after a failed discard: it is
-  still the record's only chance, so what changes here is the reading and not the
-  order.
-
+  text on that action with nothing restoring it. The bounds shorten both the
+  waiting and that window, and the other two handlers' recovery paths share the
+  same function and so the same bounds. An interrupt that does land leaves
+  `discarded: false` in `extra` on its way out rather than nothing -- not in an
+  evidence line, since `run_check` catches `Exception` only and so writes no
+  record at all for a surface a `KeyboardInterrupt` left; the reading is there
+  for every other path that does write one. A global `set_default_timeout` is
+  **not** the fix -- it would change every wait in the driver -- and neither is
+  skipping the restore after a failed discard: it is still the record's only
+  chance, so what changes here is the reading and not the order.
 
 ## 0.4.10 — 2026-10-01
 

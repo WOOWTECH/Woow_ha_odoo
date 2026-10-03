@@ -889,7 +889,14 @@ def test_the_codeview_check_leaves_the_real_action_s_form_clean():
 
 
 class DiscardLocator:
-    """One selector on `DiscardPage`, answering only what the seam asks it."""
+    """One selector on `DiscardPage`, answering only what the seam asks it.
+
+    The discard button answers *by selector*, because which of the two spellings
+    the seam reaches for is the difference between clicking the real button and
+    spending the bound on a hidden earlier one.
+    """
+
+    VISIBLE_DISCARD = markup.DISCARD_BUTTON + " >> visible=true"
 
     def __init__(self, page, selector):
         self.page = page
@@ -902,13 +909,24 @@ class DiscardLocator:
     def count(self):
         if self.page.unreadable:
             raise RuntimeError("Target page, context or browser has been closed")
-        return 1 if (self.page.dirty if self.selector == markup.UNSAVED
-                     else self.page.button) else 0
+        if self.selector == markup.UNSAVED:
+            return 1 if self.page.dirty else 0
+        return 1 if self.page.button else 0
 
     def click(self, **kwargs):
-        self.page.clicks.append(kwargs)
+        self.page.clicks.append((self.selector, kwargs))
+        if self.page.hidden_first_button and self.selector == markup.DISCARD_BUTTON:
+            # Playwright's own shape for a click that waited out its bound on an
+            # element that is in the DOM and not visible.
+            raise RuntimeError("element is not visible")
         if self.page.click_error is not None:
             raise self.page.click_error
+
+    def wait_for(self, **kwargs):
+        self.page.waits.append((self.selector, kwargs))
+        if self.selector == markup.UNSAVED and kwargs.get("state") == "hidden" \
+                and self.page.still_dirty:
+            raise RuntimeError("Timeout %sms exceeded" % kwargs.get("timeout"))
 
 
 class DiscardPage:
@@ -920,13 +938,21 @@ class DiscardPage:
     """
 
     def __init__(self, *, dirty=True, button=True, click_error=None,
-                 unreadable=False, settle_error=None):
+                 unreadable=False, settle_error=None, still_dirty=False,
+                 hidden_first_button=False):
         self.dirty = dirty
         self.button = button
         self.click_error = click_error
         self.unreadable = unreadable
         self.settle_error = settle_error
+        # The form that never came clean: the click went in and the unsaved
+        # indicator is still up when the wait runs out.
+        self.still_dirty = still_dirty
+        # A hidden earlier match for `DISCARD_BUTTON`, which `count()` passes and
+        # a click can never reach.
+        self.hidden_first_button = hidden_first_button
         self.clicks = []
+        self.waits = []
         self.settled = []
 
     @property
@@ -994,6 +1020,31 @@ def test_a_page_that_cannot_be_read_adds_no_key():
     assert extra == {}
 
 
+def test_a_form_that_never_came_clean_reads_false():
+    """`true` has to mean the form came clean, not that the click did not raise.
+    A dialog raised over the discard, or an invalid record the form refuses to
+    leave, keeps the unsaved indicator up -- and `run_check`'s `side.close()`
+    then has a dirty form to save, which is the whole reason this seam exists."""
+    extra = {}
+    side = DiscardPage(still_dirty=True)
+    markup._discard_unsaved_form(side, extra)
+    assert extra == {"discarded": False}
+    assert [wait[1].get("state") for wait in side.waits] == ["hidden"]
+
+
+def test_a_hidden_earlier_discard_button_does_not_take_the_click():
+    """`.first` takes the first DOM match whatever its state, so one hidden
+    earlier button -- a dialog's, a sub-form's -- would spend the bound on an
+    element that can never be clicked while the real button is never reached.
+    `>> visible=true` is this repository's existing idiom for the same button
+    (`e2e_collab_peer_snapshot_live.discard_form`)."""
+    extra = {}
+    side = DiscardPage(hidden_first_button=True)
+    markup._discard_unsaved_form(side, extra)
+    assert extra == {"discarded": True}
+    assert [click[0] for click in side.clicks] == [DiscardLocator.VISIBLE_DISCARD]
+
+
 def test_the_discard_click_is_bounded_by_a_short_timeout():
     """No `set_default_timeout` is applied anywhere in this driver, so a click
     with no `timeout=` takes Playwright's 30 s default. `do_codeview`'s
@@ -1004,17 +1055,22 @@ def test_the_discard_click_is_bounded_by_a_short_timeout():
     """
     side = DiscardPage()
     markup._discard_unsaved_form(side, {})
-    assert side.clicks and "timeout" in side.clicks[0], \
+    assert side.clicks and "timeout" in side.clicks[0][1], \
         "the discard click takes Playwright's 30 s default"
-    timeout = side.clicks[0]["timeout"]
+    timeout = side.clicks[0][1]["timeout"]
     assert 0 < timeout <= 5_000, timeout
     assert timeout < markup.TIMEOUT
+    # And so is the wait for the form to come clean, the other half of the window.
+    assert side.waits and side.waits[0][1].get("timeout"), side.waits
+    assert 0 < side.waits[0][1]["timeout"] < markup.TIMEOUT
 
 
 def test_an_interrupt_inside_the_discard_leaves_the_failed_reading_and_propagates():
     """The second Ctrl+C: `KeyboardInterrupt` is not an `Exception`, so it still
-    continues out of the handler -- the record keeps the reading that the
-    discard did not come off rather than nothing at all."""
+    continues out of the handler -- and `extra` keeps the reading that the
+    discard did not come off rather than nothing at all. `run_check` catches
+    `Exception` only, so that path writes no evidence line for the surface
+    whatever is in `extra`; the reading is for every other path that writes one."""
     extra = {}
     with pytest.raises(KeyboardInterrupt):
         markup._discard_unsaved_form(DiscardPage(click_error=KeyboardInterrupt()), extra)
