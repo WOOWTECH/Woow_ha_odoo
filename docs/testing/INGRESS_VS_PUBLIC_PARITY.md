@@ -1301,6 +1301,15 @@ seeder 在寫 `body_arch` 之前就已經讀過，所以不用多一次 RPC。�
 因此移動；它守的是讀者用來分辨「inline 過，而且是 root-relative」與「根本沒 inline」的那份證據——
 `stored_verdict(False)` 是 `CLEAN`，空的 `body_html` 自己就會拿到一個 pass。
 
+代價是明寫出來的：**在 reclaim 來的那一列上，這個讀數不論那一次存檔怎麼走都是 `false`**（標記在存檔之前
+就已經在欄位裡了）。對一個「職責是拒絕假 pass」的讀數來說，這是該往的那個方向——「inline 過」才是需要證
+據的那個主張——而新記下的 `extra["body_html_marker_before"]`（在讀 `before` 的地方一起讀）就是用來分辨兩
+種 `false` 的：「這次存檔沒有 inline」與「標記本來就在，這一列說不了話」。想在那一列拿到正面讀數，就帶
+`--cleanup`，或給它自己的 run id。至於「在種 `body_arch` 的同時把 `body_html` 清掉」——那會讓兩邊讀數都
+成立，但刻意不做：`--mailing-id` 與 `found` 借的是真 campaign，還原只在 `--cleanup` 下才跑，而這件事講的
+正是不帶 `--cleanup` 的那個模式，所以那種寫法會把人家正在用的 campaign 上「跟著信件離開這套安裝」的那個
+欄位清空。
+
 
 落差報告最終彙整為：
 

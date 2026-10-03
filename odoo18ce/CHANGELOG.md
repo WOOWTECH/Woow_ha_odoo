@@ -590,6 +590,18 @@
   moves either way. What it protects is the evidence a reader uses to tell
   "inlined, and root-relative" from "never inlined", since `stored_verdict(False)`
   is `CLEAN` and an empty `body_html` already scores a pass on its own.
+- **On a reclaimed row the reading is now `false` whichever way that save went**,
+  and the record says so rather than leaving it to be worked out: the new
+  `extra["body_html_marker_before"]` is read where the `before` read happens, so
+  the two `false`s -- "the save never inlined" and "the marker was already in the
+  field, so this row cannot say" -- are told apart from the record itself. That is
+  the direction to fail in for a reading whose job is to refuse a false pass, and
+  a positive reading on that row wants `--cleanup` or a run id of its own.
+  Clearing `body_html` beside the `body_arch` seed would make both readings
+  possible on it and is deliberately not done: `--mailing-id` and `found` borrow a
+  real campaign, the restore only runs under `--cleanup`, and the mode this is
+  about is the one without it, so that spelling would blank the field that leaves
+  the installation with the mail on somebody's live campaign.
 
 ## 0.4.10 — 2026-10-01
 
