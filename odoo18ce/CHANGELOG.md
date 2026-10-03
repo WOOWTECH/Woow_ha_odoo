@@ -598,10 +598,13 @@
   the direction to fail in for a reading whose job is to refuse a false pass, and
   a positive reading on that row wants `--cleanup` or a run id of its own.
   Clearing `body_html` beside the `body_arch` seed would make both readings
-  possible on it and is deliberately not done: `--mailing-id` and `found` borrow a
-  real campaign, the restore only runs under `--cleanup`, and the mode this is
-  about is the one without it, so that spelling would blank the field that leaves
-  the installation with the mail on somebody's live campaign.
+  possible on it and is deliberately not done here, though gated on
+  `fixture["scratch_mailing"]` it could be: what it changes is the **write**, and
+  through it the `stored["mailing.mailing.body_html"]` that `stored_verdict`
+  *judges* -- the judged half of the same stale value, which #279 puts out of
+  scope and which is real rather than hypothetical, since on a reclaimed row the
+  public surface's `PREFIX-STORED` or `CLEAN` can be the ingress surface's
+  leftover value. That half wants an issue of its own.
 
 ## 0.4.10 — 2026-10-01
 

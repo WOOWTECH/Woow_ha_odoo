@@ -1305,10 +1305,13 @@ seeder 在寫 `body_arch` 之前就已經讀過，所以不用多一次 RPC。�
 就已經在欄位裡了）。對一個「職責是拒絕假 pass」的讀數來說，這是該往的那個方向——「inline 過」才是需要證
 據的那個主張——而新記下的 `extra["body_html_marker_before"]`（在讀 `before` 的地方一起讀）就是用來分辨兩
 種 `false` 的：「這次存檔沒有 inline」與「標記本來就在，這一列說不了話」。想在那一列拿到正面讀數，就帶
-`--cleanup`，或給它自己的 run id。至於「在種 `body_arch` 的同時把 `body_html` 清掉」——那會讓兩邊讀數都
-成立，但刻意不做：`--mailing-id` 與 `found` 借的是真 campaign，還原只在 `--cleanup` 下才跑，而這件事講的
-正是不帶 `--cleanup` 的那個模式，所以那種寫法會把人家正在用的 campaign 上「跟著信件離開這套安裝」的那個
-欄位清空。
+`--cleanup`，或給它自己的 run id。至於「在種 `body_arch` 的同時把 `body_html` 清掉」——那會讓那一列的兩
+邊讀數都成立，這裡刻意不做，但不是因為做不到（掛在 `fixture["scratch_mailing"]` 上就只會碰到這個 driver
+自己的垃圾）：那種寫法改的是**寫入**，連帶改掉 `stored["mailing.mailing.body_html"]`，而那一個是
+`stored_verdict` 會**判定**的——同一份殘值的「被判定」那一半，正是 #279 劃在範圍外的東西。那一半是真的、
+不是假想：在一列 reclaim 來的 mailing 上，若第二次存檔只寫了 `body_arch` 而沒有 inline，public surface 記
+下的 `PREFIX-STORED` 或 `CLEAN` 可能是 ingress surface 留下的值，而不是這次存檔寫的任何東西。那一半該另開
+一張票。
 
 
 落差報告最終彙整為：

@@ -2818,10 +2818,19 @@ def body_html_inlined(run_id: str, before: Mapping[str, Any],
     positive reading on that row wants `--cleanup`, or a run id of its own.
 
     Clearing `body_html` alongside the `body_arch` seed would make both readings
-    possible and is deliberately **not** done: `--mailing-id` and `found` borrow a
-    real campaign, the restore only runs under `--cleanup`, and the mode this is
-    about is the one without it -- so that spelling would blank the field that
-    leaves the installation with the mail on somebody's live campaign.
+    possible on that row, and it is **not** done here -- deliberately, and not
+    because it could not be. Gated on `fixture["scratch_mailing"]` it would touch
+    only this driver's own litter: `mailing-editable` passes `borrow=False`, so
+    `found` is unreachable and the only borrowed row it can be on is the one
+    `--mailing-id` named, whose inlined body an ungated clear would blank with the
+    restore running under `--cleanup` only. What that spelling changes is the
+    **write**, and through it `stored["mailing.mailing.body_html"]`, which
+    `stored_verdict` *judges* -- and the judged half of this same stale value is
+    what #279 puts out of scope. That half is real and not hypothetical: on a
+    reclaimed row whose second save stores `body_arch` without inlining, the
+    public surface's `PREFIX-STORED` or `CLEAN` can be the ingress surface's
+    leftover value rather than anything this save wrote. It wants an issue of its
+    own rather than a change made inside this one.
     """
     return body_html_marked(run_id, after) and not body_html_marked(run_id, before)
 
