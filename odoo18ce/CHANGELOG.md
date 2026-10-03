@@ -275,6 +275,40 @@
   on the To-do form), and `run_check` closes the session *after* the handler has
   returned, so a save made there would fall outside every reading the check took
   and would undo the restore it had just made.
+- **The discard was on the wrong half of three checks** (#276 review). It sat on
+  the exits that go through a leaving function and on none of the handlers'
+  recovery paths -- which are the paths that matter *more*, because the typing is
+  already done by the time a later step can fail, so the form is certainly dirty.
+  Concretely: `mailing-editable --mailing-id 42` whose `save.click()` times out
+  restored the operator's campaign, returned, and then had `run_check`'s own
+  `side.close()` fire `beforeunload` on the still-dirty form and write this run's
+  marker body straight back -- while the record said `body_restored: true`. Both
+  mailing handlers and `do_codeview` now discard first on both recovery paths.
+- **`do_codeview` had the same window on its success path, over a record it can
+  neither delete nor rebuild**: a real `ir.actions.act_window.help`. It recorded
+  `unsaved_after_save` and acted on it nowhere, so a `--cleanup` run whose save
+  left the form dirty put this run's marked help text back on that action
+  permanently, with `help_restored: true` beside it. The discard now sits between
+  the read-back (which is the reading) and the restore. Found by the same review;
+  the rule it breaks is the one #276 states generally, so it is fixed here rather
+  than filed.
+- **A `body_html` the save never inlined no longer reads as a pass.** Building the
+  row makes `False` the baseline for that field, and an empty field is `CLEAN`
+  -- correctly, since there is no prefix in it -- so a save that stored
+  `body_arch` and never ran `commitChanges` would have scored `PARITY` for rule
+  8's field, the one that leaves the installation with the mail. The new
+  `extra["body_html_inlined"]` reading is the marker the designer **typed**,
+  which is in no RPC-seeded value; it is recorded and not judged, because a
+  verdict there would make this check's `PARITY` turn on a mechanism that is not
+  its subject.
+- One thing the review found that is **not** fixed here: a *reclaimed* scratch
+  mailing's body links the public `ir.attachment` an **earlier** run created, and
+  that attachment is in no fixture dict the reclaiming run holds, so nothing
+  removes it. It predates #276 -- #274's reclaim is where it starts -- and the
+  two mailing checks now sharing one scratch-subject prefix only adds a second
+  way to reach it. Filed as #277 with the shape of the fix; the docstrings and
+  the module's "`--cleanup` removes all five" now name the gap instead of
+  implying it does not exist.
 - **A generic literal rewrite reached an ORM *search pattern*, so the media
   dialog's Documents tab listed every generated asset bundle** (#271, found by
   #266's run beside #239's document line and filed separately because it is not

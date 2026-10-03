@@ -121,7 +121,9 @@ run made its image and document fixtures by hand and cleaned them up, and the
 only things left on the record are a static module asset and a website logo,
 which no dialog lists. `mailing-editable` builds its mailing for the other half
 of the same rule (#276): it measures a **save**, so the record it saves over must
-not be somebody's campaign. `--cleanup` removes all five. Each marker names its run, so a
+not be somebody's campaign. `--cleanup` removes all five, with one gap: the
+public attachment an earlier run's *reclaimed* mailing links to is in no fixture
+dict the reclaiming run holds, and is #277. Each marker names its run, so a
 later reader can tell whose text it is. Every other check reads only. The
 boundary is ADR 0012.
 
@@ -1133,7 +1135,8 @@ def scratch_mailing_id(side) -> int | None:
 
     The search a check that borrows **nothing** makes (#276). `editable_mailing_id`
     would hand it somebody's campaign; the only row such a check may reuse is one
-    it wrote itself, and `--cleanup` is optional, so there usually is one.
+    **this driver** wrote -- either mailing check's, since both name their scratch
+    rows the same way -- and `--cleanup` is optional, so there usually is one.
 
     `=like` and not `like`: the prefix is anchored at the start, so a real campaign
     whose subject merely *mentions* the words is not a match -- the same test
@@ -1150,12 +1153,17 @@ def scratch_mailing_id(side) -> int | None:
 def reclaimable_scratch_mailing(side, mailing_id: int) -> dict[str, Any] | None:
     """This driver's own scratch mailing, or `None` for somebody's real one.
 
-    The subject is the whole test, and it is sound because this check is the
-    only thing in the repository that ever creates a `mailing.mailing`: a
-    subject starting with `SCRATCH_NAME_PREFIX` was written by an earlier
-    surface or an earlier run of *this* check. Such a row is deleted rather than
-    preserved -- see `seed_document_mailing_fixture` for why reading it as
-    borrowed is worse than it sounds.
+    The subject is the whole test, and it is sound because **this driver** is the
+    only thing in the repository that ever creates a `mailing.mailing`: a subject
+    starting with `SCRATCH_NAME_PREFIX` was written by an earlier surface or an
+    earlier run of one of its two mailing checks -- either of them, since #276,
+    which is why the sentence is about the driver and not about one check. Such a
+    row is deleted rather than preserved; see `fixture_mailing` for why reading it
+    as borrowed is worse than it sounds.
+
+    What a reclaim does **not** reach is the public `ir.attachment` an earlier
+    run's body links to: it is in no fixture dict this run holds. That is #277,
+    and it predates #276.
     """
     [record] = side.rpc("mailing.mailing", "read", [[mailing_id], ["subject", "state"]])
     if not (record.get("subject") or "").startswith(SCRATCH_NAME_PREFIX):
@@ -1728,8 +1736,12 @@ def do_codeview(side, run_id: str, *, cleanup=False, **_) -> dict[str, Any]:
     except Exception as error:
         # The partial readings are the whole value of a failed attempt -- was debug
         # on, did the toolbar appear, was there a selection -- and `run_check`
-        # discards a handler's return value when it raises. So restore, then
-        # return them as a NOT-RUN outcome rather than re-raising and losing them.
+        # discards a handler's return value when it raises. So discard, restore,
+        # then return them as a NOT-RUN outcome rather than re-raising and
+        # losing them -- the discard for the same reason as on the success path,
+        # and more pressingly here, since a step that failed is likelier to have
+        # left the editor dirty.
+        _discard_unsaved_form(side, extra)
         try:
             write_field(side, "ir.actions.act_window", uid, "help", before or False)
             extra["help_restored"] = True
@@ -1745,6 +1757,7 @@ def do_codeview(side, run_id: str, *, cleanup=False, **_) -> dict[str, Any]:
         # browser step, so it is put back here too and the interrupt then continues.
         # `--cleanup` does not cover this; it is only reached on the success path.
         try:
+            _discard_unsaved_form(side, extra)
             write_field(side, "ir.actions.act_window", uid, "help", before or False)
         except Exception:  # noqa: BLE001 -- the session itself may be gone
             pass
@@ -1865,6 +1878,14 @@ def _codeview_after_seeding(side, run_id, uid, before, extra, *, cleanup=False) 
     after = read_field(side, "ir.actions.act_window", uid, "help")
     stored = {"ir.actions.act_window.help": after}
 
+    # Read first, then leave the form clean, and only then restore (#276). This
+    # check replaced a **real** `ir.actions.act_window.help`, and `run_check`
+    # closes the session after the handler returns: a `beforeunload` save on a
+    # form still showing unsaved changes -- which `unsaved_after_save` just
+    # recorded and nothing acted on -- would put this run's marked help text
+    # back on that action permanently, with `help_restored: true` in the
+    # evidence saying otherwise.
+    _discard_unsaved_form(side, extra)
     if cleanup:
         write_field(side, "ir.actions.act_window", uid, "help", before or False)
         extra["help_restored"] = True
@@ -2690,9 +2711,16 @@ def do_mailing_editable(side, run_id: str, *, mailing_id=None, cleanup=False, **
     try:
         return _mailing_after_seeding(side, fixture, run_id, cleanup=cleanup)
     except Exception as error:
-        # Restore, then return the partial readings rather than re-raising: a
-        # handler that raises has its return value discarded by `run_check`, and
-        # the readings are the whole value of a failed attempt.
+        # Discard first, then restore, then return the partial readings rather
+        # than re-raising: a handler that raises has its return value discarded
+        # by `run_check`, and the readings are the whole value of a failed
+        # attempt. The discard is not optional on this path and this is where it
+        # matters most: the typing is already done when a step fails, so the form
+        # is dirty, and `run_check` closes the session *after* this return --
+        # a `beforeunload` save there would write this run's body back over the
+        # restore made two lines below and the record would still say
+        # `body_restored: true`.
+        _discard_unsaved_form(side, extra)
         _restore_borrowed_mailing_body(side, fixture, extra)
         if cleanup:
             extra["fixture_removed"] = _remove_mailing_fixture(side, fixture)
@@ -2706,6 +2734,7 @@ def do_mailing_editable(side, run_id: str, *, mailing_id=None, cleanup=False, **
         # as in `do_media_document_mailing`: an interrupted run is nobody's to
         # come back and tidy.
         try:
+            _discard_unsaved_form(side, extra)
             _restore_borrowed_mailing_body(side, fixture, extra)
             _remove_mailing_fixture(side, fixture)
         except Exception:  # noqa: BLE001 -- the session itself may be gone
@@ -2838,6 +2867,16 @@ def _mailing_after_seeding(side, fixture, run_id, *, cleanup=False) -> dict[str,
         "mailing.mailing.body_arch": after.get("body_arch"),
         "mailing.mailing.body_html": after.get("body_html"),
     }
+    # **Did rule 8 run at all?** Building the row (#276) makes `False` the
+    # baseline for `body_html`, and `stored_verdict(False)` is `CLEAN` -- so a
+    # save that stored `body_arch` and never inlined `body_html` would score a
+    # pass for the one field this check exists to measure, the field that leaves
+    # the installation with the mail. The marker the designer typed is what
+    # separates "inlined, and root-relative" from "never inlined": it is not in
+    # the RPC-seeded value, only in what `commitChanges` built. Recorded rather
+    # than judged, for the reason `_media_verdict` is: a verdict here would make
+    # this check's `PARITY` depend on a mechanism that is not its subject.
+    extra["body_html_inlined"] = marker_for(run_id) in (after.get("body_html") or "")
     return _mailing_editable_leaving(side, fixture, extra, screen, cleanup=cleanup,
                                      pictures=pictures, stored=stored, notes="")
 
@@ -2944,6 +2983,11 @@ def do_media_document_mailing(side, run_id: str, *, mailing_id=None, cleanup=Fal
     try:
         return _document_mailing_after_seeding(side, fixture, extra, cleanup=cleanup)
     except Exception as error:
+        # The discard belongs on this path for the reason the docstring gives
+        # above: the element has been clicked by the time most steps can fail,
+        # and `run_check` closes the session after this return. Only the exits
+        # through `_document_mailing_leaving` used to have it.
+        _discard_unsaved_form(side, extra)
         _restore_borrowed_mailing_body(side, fixture, extra)
         if cleanup:
             extra["fixture_removed"] = _remove_mailing_fixture(side, fixture)
@@ -2952,6 +2996,7 @@ def do_media_document_mailing(side, run_id: str, *, mailing_id=None, cleanup=Fal
                                      adapter.sanitize_diagnostic(str(error))[:300])}
     except BaseException:
         try:
+            _discard_unsaved_form(side, extra)
             _restore_borrowed_mailing_body(side, fixture, extra)
             _remove_mailing_fixture(side, fixture)
         except Exception:  # noqa: BLE001 -- the session itself may be gone

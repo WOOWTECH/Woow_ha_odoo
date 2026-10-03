@@ -441,7 +441,10 @@ def test_every_flow_s_extra_keys_stay_clear_of_the_record_s_own():
             "replace_control_present", "replace_control_visible",
             "replace_control_found_in", "discarded", "read_back_error",
             # #274's reading: where the mailing came from
-            "mailing_source"}
+            "mailing_source",
+            # #276: did `commitChanges` inline `body_html` at all
+            "body_html_inlined", "save_visible", "typing_error", "save_incomplete",
+            "help_restored"}
     assert not (used & markup.RESERVED_RECORD_KEYS)
 
 
@@ -833,6 +836,60 @@ def test_both_mailing_checks_leave_the_form_clean_behind_them():
     and the typing is deliberate there."""
     for leaving in (markup._document_mailing_leaving, markup._mailing_editable_leaving):
         assert "_discard_unsaved_form(" in inspect.getsource(leaving), leaving.__name__
+
+
+# Every handler that types into a form and then writes a record back. The
+# recovery paths matter more than the success path, not less: the typing is
+# already done when a later step fails, so the form is certainly dirty.
+RESTORING_HANDLERS = (markup.do_mailing_editable, markup.do_media_document_mailing,
+                      markup.do_codeview)
+
+
+@pytest.mark.parametrize("handler", RESTORING_HANDLERS, ids=lambda f: f.__name__)
+def test_a_handler_that_restores_a_record_discards_before_it_does(handler):
+    """A restore the session's own `beforeunload` then undoes is worse than no
+    restore, because the record says `body_restored` / `help_restored` is true.
+
+    `run_check` closes the session after the handler has returned -- outside
+    every reading -- and an Odoo form persists a dirty editor on `beforeunload`
+    and on an ungated `visibilitychange` (#263 is the same mechanism on the To-do
+    form). So the discard belongs on **both** recovery paths of every handler
+    that puts a record back, and the success path's own exit, and a review of
+    #276 found all three handlers leaving one of them open.
+    """
+    source = inspect.getsource(handler)
+    ordinary, interrupted = source.split("except BaseException:")
+    # On the name the outer handler binds, not on `except Exception`: each of
+    # these paths has a nested `except Exception` of its own guarding the restore.
+    ordinary = ordinary.split("except Exception as error:")[-1]
+    for where, body in (("except Exception", ordinary),
+                        ("except BaseException", interrupted)):
+        assert "_discard_unsaved_form(" in body, (
+            "%s's %s path restores a record without leaving the form clean"
+            % (handler.__name__, where))
+
+
+def test_the_codeview_check_leaves_the_real_action_s_form_clean():
+    """The one of the three that writes a record it can neither delete nor
+    rebuild: `ir.actions.act_window.help` on a real action. The discard has to
+    come after the read-back -- which is the reading -- and before the restore."""
+    source = inspect.getsource(markup._codeview_after_seeding)
+    assert source.index('read_field(side, "ir.actions.act_window"') \
+        < source.index("_discard_unsaved_form(") < source.index("if cleanup:")
+
+
+def test_a_body_html_the_save_never_inlined_is_not_a_pass():
+    """Building the row makes `False` the baseline for `body_html`, and an empty
+    field is `CLEAN` -- correctly, since there is no prefix in it. So a save that
+    stored `body_arch` and never inlined `body_html` would score `PARITY` for the
+    one field this check exists to measure: rule 8's, the one that leaves the
+    installation with the mail. The marker the designer **typed** is the
+    discriminator, because it is not in the RPC-seeded value."""
+    assert markup.stored_verdict(False) == (markup.CLEAN, 0)
+    assert markup.stored_verdict("") == (markup.CLEAN, 0)
+    source = inspect.getsource(markup._mailing_after_seeding)
+    assert '"body_html_inlined"' in source
+    assert 'marker_for(run_id) in (after.get("body_html")' in source
 
 
 # Anything that undoes part of a fixture. A handler's error path has to name at

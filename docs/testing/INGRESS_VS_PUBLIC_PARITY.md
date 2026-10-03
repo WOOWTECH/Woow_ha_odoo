@@ -1225,6 +1225,25 @@ campaign）：改用 `scratch_mailing_id`，以 `=like` 從開頭比對 `SCRATCH
 `run_check` 是在 handler **回傳之後**才關 session——那時存下去的既不在任何讀數裡，還會把剛做完的還原再
 蓋掉）。
 
+審查（#276）另外補掉三件事。**discard 本來掛錯了一半**：它只在走 leaving function 的出口上，三個 handler
+的錯誤路徑全都沒有——而那才是更要緊的一半，因為一個步驟失敗時打字早就做完了，表單一定是髒的
+（`mailing-editable --mailing-id 42` 的 `save.click()` 逾時，還原了對方的 campaign、回傳，然後
+`run_check` 自己的 `side.close()` 在髒表單上觸發 `beforeunload`，把這一輪的標記 body 原封不動寫回去，而
+記錄上寫著 `body_restored: true`）。兩個 mailing handler 與 `do_codeview` 的兩條錯誤路徑現在都先 discard。
+**`do_codeview` 的成功路徑也有同一個窗口，而且寫的是一筆既不能刪也不能重建的真記錄**（真的
+`ir.actions.act_window.help`）：它記了 `unsaved_after_save` 卻沒有對它做任何事，所以存檔後表單還髒的
+`--cleanup` 跑法會把這一輪的 help 永久留在那個 action 上、旁邊還寫著 `help_restored: true`；discard 現在
+放在讀回（那才是讀數）與還原之間。第三件：**自己建列之後，`body_html` 的基準變成 `False`，而空值是
+`CLEAN`**（本來就該是，裡面沒有前綴），於是「存了 `body_arch`、`commitChanges` 根本沒跑」會替第 8 條規則
+那個欄位——跟著信件離開這套安裝的那一個——記下 `PARITY`。新讀數 `extra["body_html_inlined"]` 用的是
+designer 裡**打進去**的標記（RPC 種下的值裡沒有它），只記不判：在那裡下判定會讓這一列的 `PARITY` 取決於
+不是它主題的機制。
+
+審查還找到一件**沒有**在這裡修的：被 reclaim 的 scratch mailing，body 裡連的是**更早那一輪**建的 public
+`ir.attachment`，而那一筆不在這一輪任何 fixture dict 裡，所以沒人刪得掉。它早於 #276（#274 的 reclaim
+就是起點），兩個 mailing check 共用同一個 scratch subject 前綴只是多了一條到得了那裡的路。已開 #277 並
+寫下修法形狀；docstring 與模組開頭的「`--cleanup` 把五個都收掉」現在明寫這個缺口。
+
 
 落差報告最終彙整為：
 
