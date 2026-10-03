@@ -1201,6 +1201,30 @@ env.user.email_formatted`，partner 沒有 email 就是 `False`，而 required �
 `NOT NULL`），所以只在 ORM 算不出值時補一個 `.invalid` 的佔位位址——否則 #274 會在它自己要修的那個場景
 （全新資料庫）上以 `IntegrityError` 收場。
 
+**#276（2026-10-03）把同一條規則補到 `mailing-editable`（#238）上，而這裡的答案和 #274 相反。**
+那一列也只 `search` 一筆 `draft`／`in_queue` 的 mailing，所以在沒有草稿 mailing 的資料庫上同樣只記
+`NOT-RUN`；但它不只是用 RPC 覆蓋借來的 `body_arch`，它會**在 mail designer 裡打字並按存檔**——#238 的
+主題本來就是存檔這條縫（`body_arch` 走 `getEditingValue`、`body_html` 由 `commitChanges` 另外 inline，
+而後者才是**跟著信件離開這套安裝**的那個欄位）。於是一輪跑完，別人的 campaign 的**兩個**欄位都被寫成這
+一輪的標記 body；`--cleanup` 和 handler 的錯誤路徑都會寫回去，但「存檔到還原之間被砍掉」和「根本沒帶
+`--cleanup`」（那是選用的）兩種情形都沒人管，留在資料庫上的就是一封 body 為
+`WOOW-MARKUP hand check <run id>` 加公司 logo 的真 campaign。所以這一列改成**除了 `--mailing-id` 指定
+以外一律自己建一筆、什麼都不借**：量到的東西一點沒少（designer、`getEditingValue`、`commitChanges` 都不
+在意自己開在哪一筆記錄上），而完全沒碰到真 campaign 的一輪根本不需要還原才算正確。#274 之所以替
+`media-document-mailing` 保留「先找」的順序，是因為那一列**不存檔**（它把表單 discard 掉再把記錄讀回來
+當證據）；在這一列，那個順序本身就是風險來源。兩列現在共用同一個 seam（`fixture_mailing`），`borrow`
+參數就是各自回答這個問題的地方，來源仍記在 `extra["mailing_source"]`。
+
+因為這一列什麼都不借，`editable_mailing_id` 就不能用來找自己留下的 scratch mailing（它會遞回一筆
+campaign）：改用 `scratch_mailing_id`，以 `=like` 從開頭比對 `SCRATCH_NAME_PREFIX`（所以只是**提到**那串
+字的真 campaign 不算命中），並同樣以 `EDITABLE_MAILING_STATES` 設界——reclaim 到一筆 designer 會 render
+成 readonly 的列，讀起來和「fixture 沒撐過欄位」一模一樣。順手補掉同一個窗口裡的兩件事：**每一個出口都
+會把自己的 seed 收掉**（body 是在第一次 navigate 之前用 RPC 寫的，而瀏覽器那半邊四個出口有三個是放棄
+路徑，還原以前只掛在存過檔的那一條），以及離開前**把表單 discard 乾淨**（Odoo 表單會在 `beforeunload`
+與沒有設條件的 `visibilitychange` 上把髒掉的編輯器存回去，#263 是 To-do 表單上的同一個機制，而
+`run_check` 是在 handler **回傳之後**才關 session——那時存下去的既不在任何讀數裡，還會把剛做完的還原再
+蓋掉）。
+
 
 落差報告最終彙整為：
 
