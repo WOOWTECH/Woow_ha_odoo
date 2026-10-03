@@ -102,8 +102,9 @@ Writing: `readonly-iframe` creates one scratch `mail.template` and deletes it on
 `src` and `data-original-src`; `media-document-mailing` creates one public
 document `ir.attachment`, writes one mailing's `body_arch`, and **creates that
 mailing** when the database has no draft or queued one (#274) -- deleted under
-`--cleanup`, while a mailing it borrowed instead has both fields written back
-and is never deleted;
+`--cleanup`, as is a scratch mailing an earlier surface or run left behind,
+while a mailing it borrowed instead has both fields written back and is never
+deleted;
 `media-document-todo` and `media-image-todo` each create one public
 `ir.attachment` and one scratch `project.task` holding the element that came
 from it. **All four media checks build everything they measure** (#266, #274),
@@ -393,6 +394,14 @@ def marker_for(run_id: str) -> str:
     return "%s %s" % (MARKER_PREFIX, run_id)
 
 
+# Every scratch record this driver makes is named with this, run id appended.
+# It is a prefix and not just a convention because #274 reads it back: a
+# `mailing.mailing` whose subject starts with it is this driver's own litter from
+# an earlier surface or run, to be deleted rather than treated as a borrowed
+# record and so preserved forever.
+SCRATCH_NAME_PREFIX = "WOOW scratch (delete me) "
+
+
 def scratch_task_name(run_id: str) -> str:
     """The scratch to-do's name: this run's, and disposable.
 
@@ -400,7 +409,7 @@ def scratch_task_name(run_id: str) -> str:
     because #235's checks read that record's stored `src` and this write would
     be read as their result.
     """
-    return "WOOW scratch (delete me) %s" % run_id
+    return SCRATCH_NAME_PREFIX + run_id
 
 
 # --- #239's two fixtures (#266) -----------------------------------------------
@@ -2565,7 +2574,9 @@ def do_media_document_mailing(side, run_id: str, *, mailing_id=None, cleanup=Fal
     never deleted, because #266's lesson is that a check which deletes what it
     did not create is how the next run ends up with nothing to measure.
     `--mailing-id` keeps its meaning: reuse this one, do not create, do not
-    delete.
+    delete. A scratch mailing an earlier surface or run left behind is
+    **reclaimed** rather than borrowed, so it does not become permanent litter
+    no `--cleanup` can reach.
 
     `--cleanup` removes what this run made and restores what it borrowed.
     """
@@ -2590,16 +2601,33 @@ def do_media_document_mailing(side, run_id: str, *, mailing_id=None, cleanup=Fal
         raise
 
 
+# The scratch mailing's sender, used only where the ORM's own precompute cannot
+# reach a value (see `create_fixture_mailing`). `.invalid` is reserved by
+# RFC 2606 and so is certainly unroutable, which matters not at all for a draft
+# that is deleted without being sent -- but a required field needs *something*,
+# and an address that could reach somebody is not it.
+SCRATCH_MAILING_EMAIL_FROM = "woow-scratch@woow.invalid"
+
+
 def create_fixture_mailing(side, run_id: str) -> dict[str, Any]:
     """A draft mailing of this run's own, for a database that carries none.
 
-    **`subject` is the only field this has to pass.** Every other `required=True`
-    field on `mailing.mailing` carries a default or a stored `precompute`
-    compute, and `mailing_model_id`'s own default is
-    `mass_mailing.model_mailing_list` -- the very record #271's hand seeding
-    searched for. It is passed anyway when that search finds it, so the create
-    does not rest on a module data ref resolving, and omitted when it does not,
-    so the field's default still gets its turn.
+    **`subject` is the only field whose value this invents.** `mailing_model_id`
+    is required with a default of `mass_mailing.model_mailing_list` -- the very
+    record #271's hand seeding searched for -- so it is passed when that search
+    finds it, so the create does not rest on a module data ref resolving, and
+    omitted when it does not, so the field's own default still gets its turn.
+    `state`, `schedule_type` and `mailing_type` have plain defaults.
+
+    **`email_from` is the one required field whose precompute can come back
+    empty**, and a required stored field is `NOT NULL` in Postgres
+    (`fields.apply_required`), so that would be an `IntegrityError` rather than
+    an odd record. With no `mail_server_id` the compute resolves to
+    `create_uid.email_formatted or env.user.email_formatted`
+    (`mailing.py:260-275`), and `email_formatted` is **False** for a user whose
+    partner has no email -- which is exactly the fresh or catch-up database this
+    seed exists for. The compute is left to do its job wherever it can: the
+    fallback is passed only when the value it would reach is empty.
 
     **The state is read back rather than assumed**, the way `seed_media_task`
     reads its description back. The body field is
@@ -2614,6 +2642,10 @@ def create_fixture_mailing(side, run_id: str) -> dict[str, Any]:
                          [[["model", "=", "mailing.list"]]], {"limit": 1})
     if model_ids:
         values["mailing_model_id"] = model_ids[0]
+    [user] = side.rpc("res.users", "read",
+                      [[current_user_id(side)], ["email_formatted"]])
+    if not user.get("email_formatted"):
+        values["email_from"] = SCRATCH_MAILING_EMAIL_FROM
     mailing_id = side.rpc("mailing.mailing", "create", [values])
     try:
         [record] = side.rpc("mailing.mailing", "read",
@@ -2633,7 +2665,7 @@ def create_fixture_mailing(side, run_id: str) -> dict[str, Any]:
 def seed_document_mailing_fixture(side, run_id: str, mailing_id) -> dict[str, Any]:
     """The whole fixture for `media-document-mailing`, and where it came from.
 
-    Three ways to a mailing, and which one it was decides what `--cleanup` does:
+    Four ways to a mailing, and which one it was decides what `--cleanup` does:
 
     - **`--mailing-id` named one**: reuse it, do not look, do not create, do not
       delete -- and do not second-guess its state, because the operator chose
@@ -2641,6 +2673,16 @@ def seed_document_mailing_fixture(side, run_id: str, mailing_id) -> dict[str, An
     - **a draft or queued mailing is on the database**: borrow it. Its
       `body_arch` is overwritten and is written back; the row itself is never
       deleted.
+    - **the one it found is this driver's own scratch row**, named with
+      `SCRATCH_NAME_PREFIX` by an earlier surface or an earlier run that ran
+      without `--cleanup`: **reclaim** it. This is not a nicety. A run of
+      `--surface both` without `--cleanup` leaves the ingress surface's scratch
+      mailing behind, the public surface's search then finds it, and reading
+      that as "borrowed" would restore *this run's own* fixture body while
+      recording `body_restored: true` -- evidence that says a real campaign was
+      put back when nothing was borrowed -- and would make the row permanent,
+      because every later run would read it the same way and no `--cleanup`
+      would ever delete it.
     - **nothing is**: create one (#274) and delete it under `--cleanup`.
 
     Everything after the first `create` is guarded, as in `seed_media_task` and
@@ -2662,16 +2704,20 @@ def seed_document_mailing_fixture(side, run_id: str, mailing_id) -> dict[str, An
     not take.
     """
     source = "found" if mailing_id is None else "given"
+    scratch = None
     if mailing_id is None:
         mailing_id = editable_mailing_id(side)
-    created = None
+        if mailing_id is not None:
+            scratch = reclaimable_scratch_mailing(side, mailing_id)
+            if scratch is not None:
+                source = "reclaimed"
     if mailing_id is None:
         source = "created"
-        created = create_fixture_mailing(side, run_id)
-        mailing_id = created["id"]
+        scratch = create_fixture_mailing(side, run_id)
+        mailing_id = scratch["id"]
     extra: dict[str, Any] = {"mailing_id": mailing_id, "mailing_source": source,
                              "fixture": {}}
-    fixture: dict[str, Any] = {"mailing_id": mailing_id, "created_mailing": created,
+    fixture: dict[str, Any] = {"mailing_id": mailing_id, "scratch_mailing": scratch,
                                "attachment": None, "before": {}, "extra": extra}
     try:
         attachment = create_fixture_attachment(side, run_id, document=True)
@@ -2681,13 +2727,16 @@ def seed_document_mailing_fixture(side, run_id: str, mailing_id) -> dict[str, An
             "attachment_name": attachment["name"],
             "href": "/web/content/%d" % attachment["id"],
         }
-        if created is not None:
+        if scratch is not None:
             # Beside the attachment, because the two are the same kind of thing
-            # now: rows this run made, which a later reader may have to find.
+            # now: rows this run will remove, which a later reader may have to
+            # find. `mailing_reclaimed` separates the row this run made from the
+            # one an earlier run left, since only the first is news.
             extra["fixture"].update({
-                "mailing_id": created["id"],
-                "mailing_subject": created["subject"],
-                "mailing_state": created["state"],
+                "mailing_id": scratch["id"],
+                "mailing_subject": scratch["subject"],
+                "mailing_state": scratch["state"],
+                "mailing_reclaimed": source == "reclaimed",
             })
         before = side.rpc("mailing.mailing", "read",
                           [[mailing_id], ["body_arch", "body_html"]])[0]
@@ -2700,9 +2749,38 @@ def seed_document_mailing_fixture(side, run_id: str, mailing_id) -> dict[str, An
                     mailing_document_body_value(run_id, attachment))
     except BaseException:
         _restore_borrowed_mailing_body(side, fixture, extra)
-        _remove_document_mailing_fixture(side, fixture)
+        removed = _remove_document_mailing_fixture(side, fixture)
+        if not all(removed.values()):
+            # There is no record to put this in: `run_check` discards a
+            # handler's return value when it raises, so `extra` -- and with it
+            # `fixture_removed` -- never reaches the evidence from here. The
+            # console is the only place a failed compensation can still name
+            # what it left on the host, and leaving it unsaid is the very thing
+            # `_remove_document_mailing_fixture` reports outcomes to avoid.
+            print("media-document-mailing left a fixture behind: %s" % json.dumps({
+                "attachment_id": (fixture.get("attachment") or {}).get("id"),
+                "mailing_id": (fixture.get("scratch_mailing") or {}).get("id"),
+                "removed": removed,
+            }, sort_keys=True), file=sys.stderr)
         raise
     return fixture
+
+
+def reclaimable_scratch_mailing(side, mailing_id: int) -> dict[str, Any] | None:
+    """This driver's own scratch mailing, or `None` for somebody's real one.
+
+    The subject is the whole test, and it is sound because this check is the
+    only thing in the repository that ever creates a `mailing.mailing`: a
+    subject starting with `SCRATCH_NAME_PREFIX` was written by an earlier
+    surface or an earlier run of *this* check. Such a row is deleted rather than
+    preserved -- see `seed_document_mailing_fixture` for why reading it as
+    borrowed is worse than it sounds.
+    """
+    [record] = side.rpc("mailing.mailing", "read", [[mailing_id], ["subject", "state"]])
+    if not (record.get("subject") or "").startswith(SCRATCH_NAME_PREFIX):
+        return None
+    return {"id": mailing_id, "subject": record.get("subject"),
+            "state": record.get("state")}
 
 
 def _restore_mailing_body(side, mailing_id: int, before: Mapping[str, Any]) -> None:
@@ -2731,14 +2809,16 @@ def _remove_fixture_mailing(side, mailing_id: int) -> bool:
 def _restore_borrowed_mailing_body(side, fixture: Mapping[str, Any], extra) -> None:
     """Write a borrowed mailing's body back, and never a scratch one's.
 
-    This is the distinction #274 turns on. A row this run **made** is deleted,
-    so writing its old value back first would put `body_restored: true` in a
-    record where nothing was borrowed -- and that field is the only reading
-    saying a real campaign's body was put back. A row this run **borrowed** must
-    be restored and must not be deleted. `before` is empty until it has been
-    read, which is the one case where there is nothing to put back at all.
+    This is the distinction #274 turns on. A row this run **made** -- or
+    reclaimed from an earlier run of the same check, which is the same thing for
+    this purpose -- is deleted, so writing its old value back first would put
+    `body_restored: true` in a record where nothing was borrowed, and that field
+    is the only reading saying a real campaign's body was put back. A row this
+    run **borrowed** must be restored and must not be deleted. `before` is empty
+    until it has been read, which is the one case where there is nothing to put
+    back at all.
     """
-    if fixture.get("created_mailing") is not None or not fixture.get("before"):
+    if fixture.get("scratch_mailing") is not None or not fixture.get("before"):
         return
     try:
         _restore_mailing_body(side, fixture["mailing_id"], fixture["before"])
@@ -2748,7 +2828,7 @@ def _restore_borrowed_mailing_body(side, fixture: Mapping[str, Any], extra) -> N
 
 
 def _remove_document_mailing_fixture(side, fixture: Mapping[str, Any]) -> dict[str, bool]:
-    """Remove what this run made: the attachment, and the mailing if it made one.
+    """Remove what this run owns: the attachment, and the mailing if it owns one.
 
     Each removal is reported rather than swallowed, for
     `remove_website_fixture_page`'s reason -- a silent `except` reads as
@@ -2760,9 +2840,9 @@ def _remove_document_mailing_fixture(side, fixture: Mapping[str, Any]) -> dict[s
     attachment = fixture.get("attachment")
     if attachment:
         removed.update(_remove_fixture_attachment(side, attachment))
-    created = fixture.get("created_mailing")
-    if created:
-        removed["mailing"] = _remove_fixture_mailing(side, created["id"])
+    scratch = fixture.get("scratch_mailing")
+    if scratch:
+        removed["mailing"] = _remove_fixture_mailing(side, scratch["id"])
     return removed
 
 

@@ -194,6 +194,28 @@
   delete, and do not second-guess the state the operator named. Which of the
   three it was is now a reading of its own, `extra["mailing_source"]`
   (`given` / `found` / `created`).
+- **A scratch mailing an earlier surface or run left behind is *reclaimed*, not
+  borrowed.** Without this, `--surface both` without `--cleanup` had the ingress
+  surface leave its scratch mailing, the public surface's `search` find it, and
+  the run record it as `found`: it would then restore *this run's own* fixture
+  body while reporting `body_restored: true` -- evidence saying a real campaign
+  was put back when nothing was borrowed -- and the row would be permanent,
+  because every later run would read it the same way and no `--cleanup` could
+  reach it. The test is the subject's `SCRATCH_NAME_PREFIX`, which is sound
+  because this check is the only thing in the repository that creates a
+  `mailing.mailing`; a real campaign whose subject merely *mentions* the words
+  keeps every protection a borrowed row has.
+- **`email_from` is the one required field whose precompute can come back
+  empty**, and a required stored field is `NOT NULL` in Postgres
+  (`fields.apply_required`), so that would be an `IntegrityError` on the create
+  rather than an odd record. With no `mail_server_id` the compute resolves to
+  `create_uid.email_formatted or env.user.email_formatted`
+  (`mailing.py:260-275`), and `email_formatted` is `False` for a user whose
+  partner has no email -- exactly the fresh or catch-up database this seed
+  exists for, so #274's fix would have failed in its own headline case. The
+  compute is left to do its job wherever it can and an unroutable
+  `.invalid` placeholder is passed only where the value it would reach is
+  empty.
 - Two smaller things the same seam fixes. The created row's `state` is **read
   back** and the row removed if it is not one of `EDITABLE_MAILING_STATES` --
   the designer's body field is `readonly="state in ('sending','done')"`, so a
@@ -203,9 +225,12 @@
   guard, where they were below it. `run_check` discards a handler's return
   value when it raises, so a failure in any of those three used to leave a
   public `ir.attachment` on the host with nothing in the evidence naming it --
-  the trap #266's review caught twice in the other checks. `mailing-editable`
-  (#238) still writes a mailing it did not create, deliberately and
-  out of this scope: that check's subject *is* a real mailing's body.
+  the trap #266's review caught twice in the other checks. A compensating
+  removal that *itself* fails now prints what it left to stderr, because
+  `run_check` discards the handler's return value on a raise and the evidence
+  can carry no `fixture_removed` from there. `mailing-editable` (#238) still
+  writes a mailing it did not create, deliberately and out of this scope: that
+  check's subject *is* a real mailing's body.
 - **A generic literal rewrite reached an ORM *search pattern*, so the media
   dialog's Documents tab listed every generated asset bundle** (#271, found by
   #266's run beside #239's document line and filed separately because it is not
