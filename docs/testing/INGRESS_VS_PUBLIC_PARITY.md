@@ -1285,6 +1285,34 @@ check 的那一半（也就是本來就存在的那一半）還在。id 與結�
 條路徑唯一出現的地方；而 reclaim 的結果也沒辦法搭 `fixture_removed` 的車，因為 reclaim 早在 seeder 任何
 一步會失敗之前就跑完了。
 
+**#279（2026-10-03）：`body_html_inlined` 會因為 reclaim 來的列上一輪留下的標記而讀成 `true`。** 由 #277
+的審查找到，但不是 #277 帶進來的——這個讀數是 #276 的。它問的是「第 8 條規則到底有沒有跑」，而它當初問
+的方式是「讀回來的 `body_html` 裡有 `marker_for(run_id)`」。`--run-id` 整趟只有一個值，`--surface both`
+又是拿同一個資料庫跑兩個 surface，所以不帶 `--cleanup` 時：ingress surface 建了 scratch mailing M、存檔，
+`body_html` 裡留著這一輪的標記；public surface 的 `scratch_mailing_id` 把同一列 M reclaim 回來（這是設計
+如此，subject 就是這一輪的）；若 public 這一次的存檔只寫了 `body_arch`、`body_html` 根本沒被 inline，那個
+欄位仍帶著 ingress surface 的值和一模一樣的標記，於是記成 `true`。同一輪 run id 下重跑**同一個** surface
+也是一樣的結果。
+
+修法是把標記判成**新出現的**：在讀回來的值裡，而且不在 `fixture["before"]["body_html"]` 裡——那個值
+seeder 在寫 `body_arch` 之前就已經讀過，所以不用多一次 RPC。把打進去的標記改成每個 surface 各自一組是另
+一個選項，而它**不是**修法：它只解掉跨 surface 的那一半，同一 surface 重跑的那一半還在，而且會動到其他讀
+數拿來比對的值。讀數本身其他部分都不變，仍然是**只記不判**（理由同 `_media_verdict`），所以沒有任何判定
+因此移動；它守的是讀者用來分辨「inline 過，而且是 root-relative」與「根本沒 inline」的那份證據——
+`stored_verdict(False)` 是 `CLEAN`，空的 `body_html` 自己就會拿到一個 pass。
+
+代價是明寫出來的：**在 reclaim 來的那一列上，這個讀數不論那一次存檔怎麼走都是 `false`**（標記在存檔之前
+就已經在欄位裡了）。對一個「職責是拒絕假 pass」的讀數來說，這是該往的那個方向——「inline 過」才是需要證
+據的那個主張——而新記下的 `extra["body_html_marker_before"]`（在讀 `before` 的地方一起讀）就是用來分辨兩
+種 `false` 的：「這次存檔沒有 inline」與「標記本來就在，這一列說不了話」。想在那一列拿到正面讀數，就帶
+`--cleanup`，或給它自己的 run id。至於「在種 `body_arch` 的同時把 `body_html` 清掉」——那會讓那一列的兩
+邊讀數都成立，這裡刻意不做，但不是因為做不到（掛在 `fixture["scratch_mailing"]` 上就只會碰到這個 driver
+自己的垃圾）：那種寫法改的是**寫入**，連帶改掉 `stored["mailing.mailing.body_html"]`，而那一個是
+`stored_verdict` 會**判定**的——同一份殘值的「被判定」那一半，正是 #279 劃在範圍外的東西。那一半是真的、
+不是假想：在一列 reclaim 來的 mailing 上，若第二次存檔只寫了 `body_arch` 而沒有 inline，public surface 記
+下的 `PREFIX-STORED` 或 `CLEAN` 可能是 ingress surface 留下的值，而不是這次存檔寫的任何東西。那一半該另開
+一張票。
+
 
 落差報告最終彙整為：
 
