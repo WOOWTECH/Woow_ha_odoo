@@ -1177,6 +1177,19 @@ delta 不相等只是先後順序的產物（第一輪建的 visitor 列第二�
 包含兩個 document 行——那裡它結構上是 `None`，而漏掉那個 key 的記錄無法和「這個 key 還不存在的時候
 量的」區分開。
 
+**#274（2026-10-03）補上第四個 media check 唯一還在「找」的那一半，schema 仍然不變。**
+`media-document-mailing` 以前自己建 attachment、但只 `search` 一筆 `state in ('draft','in_queue')`
+的 mailing，所以在沒有草稿 mailing 的資料庫上只會記 `NOT-RUN`（#271 那一輪在 `catchup164b` 上量到，
+run `WOOW-MARKUP-20261003T123902Z`，只能用 `odoo shell` 手動補一筆才跑得起來）。現在**找不到就自己
+建一筆草稿 mailing**，subject 用 `scratch_task_name`（`WOOW scratch (delete me) <run id>`）、建完把
+`state` 讀回來確認落在 `EDITABLE_MAILING_STATES`（designer 的 body 欄在 `sending`／`done` 下是
+readonly），記在 `extra["fixture"]` 的 `mailing_id`／`mailing_subject`／`mailing_state`，`--cleanup`
+連它一起刪、刪的結果記在 `fixture_removed.mailing`。**借來的那一筆不一樣**：只還原 `body_arch`／
+`body_html`（`body_restored`）、**絕不刪除**——#266 的教訓就是「刪掉不是自己建的東西」會讓下一輪沒東西
+可量。`--mailing-id` 的語意不變（指定這一筆：不找、不建、不刪，也不檢查它的 state）。記錄多一個
+`extra` 讀數 `mailing_source`（`given`／`found`／`created`），因為「量的是誰的資料」是讀記錄的人要先
+知道的事。
+
 
 落差報告最終彙整為：
 

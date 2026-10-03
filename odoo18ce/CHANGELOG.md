@@ -160,6 +160,52 @@
   not rewritten. No image change and no version bump.
 
 ### Fixed
+- **`media-document-mailing` could not run on a database with no draft
+  mailing** (#274, found by #271's Live run). It built its own attachment and
+  only *looked up* its mailing -- `editable_mailing_id`, a `search` for
+  `state in ('draft','in_queue')` with `limit=1` -- so it was the one member of
+  the media family still resting on a record it did not create, which is
+  precisely what #266 moved the other three away from. `odoo_parity` happens to
+  carry a draft mailing, so every recorded run had found one; #271's run was
+  pointed at `catchup164b`, where `mass_mailing` had been installed minutes
+  earlier, and the first attempt recorded
+  `{"verdict": "NOT-RUN", "notes": "no mailing.mailing in state draft or
+  in_queue on this database"}`. That run seeded a mailing by hand over
+  `odoo shell` and passed, which is the only thing that stopped it being
+  unattended -- and a fixture made by hand is not named after the run, not
+  removed by `--cleanup`, and in no record's `fixture` block.
+- The check now **creates** a draft mailing when the database has none, named
+  the way every other scratch record here is
+  (`WOOW scratch (delete me) <run id>`), recorded under `extra["fixture"]`
+  beside the attachment with its id, subject and state, and deleted under
+  `--cleanup` with the outcome in `fixture_removed.mailing`. `subject` is the
+  only field the create has to pass: every other `required=True` field on
+  `mailing.mailing` has a default or a stored `precompute` compute, and
+  `mailing_model_id`'s default is `mass_mailing.model_mailing_list` -- the very
+  record #271's hand seeding searched for, passed anyway when the search finds
+  it so the create does not rest on a module data ref resolving.
+- **The distinction the fix is about is "restore what I borrowed" against
+  "delete what I made".** A mailing this run created is deleted and *not*
+  restored -- writing its old body back would put `body_restored: true` in a
+  record where nothing was borrowed. A mailing it found is restored and *never*
+  deleted, because #266's own lesson is that a check which deletes what it did
+  not create is how the next run ends up with nothing to measure. `--mailing-id`
+  keeps its meaning exactly: reuse this one, do not look, do not create, do not
+  delete, and do not second-guess the state the operator named. Which of the
+  three it was is now a reading of its own, `extra["mailing_source"]`
+  (`given` / `found` / `created`).
+- Two smaller things the same seam fixes. The created row's `state` is **read
+  back** and the row removed if it is not one of `EDITABLE_MAILING_STATES` --
+  the designer's body field is `readonly="state in ('sending','done')"`, so a
+  row outside those two would give the check a readonly screen that reads like
+  a fixture which did not survive its field; and the attachment `create`, the
+  `before` read and the `body_arch` write now sit **inside** the seeder's
+  guard, where they were below it. `run_check` discards a handler's return
+  value when it raises, so a failure in any of those three used to leave a
+  public `ir.attachment` on the host with nothing in the evidence naming it --
+  the trap #266's review caught twice in the other checks. `mailing-editable`
+  (#238) still writes a mailing it did not create, deliberately and
+  out of this scope: that check's subject *is* a real mailing's body.
 - **A generic literal rewrite reached an ORM *search pattern*, so the media
   dialog's Documents tab listed every generated asset bundle** (#271, found by
   #266's run beside #239's document line and filed separately because it is not
