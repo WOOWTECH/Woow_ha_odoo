@@ -439,7 +439,9 @@ def test_every_flow_s_extra_keys_stay_clear_of_the_record_s_own():
             # #266's two fixture-building media checks
             "fixture", "fixture_removed", "element_after_select", "operand",
             "replace_control_present", "replace_control_visible",
-            "replace_control_found_in", "discarded", "read_back_error"}
+            "replace_control_found_in", "discarded", "read_back_error",
+            # #274's reading: where the mailing came from
+            "mailing_source"}
     assert not (used & markup.RESERVED_RECORD_KEYS)
 
 
@@ -828,6 +830,9 @@ CLEANUP_NAMES = (
     "remove_media_task", "_remove_media_todo_quietly", "_leave_media_todo",
     "remove_website_fixture_page", "_leave_website_media",
     "_remove_fixture_attachment", "_restore_mailing_body",
+    # #274: the document mailing check now removes a mailing it made, and
+    # restores one it borrowed -- two outcomes, so two names.
+    "_remove_document_mailing_fixture", "_restore_borrowed_mailing_body",
 )
 
 SEEDING_FLOWS = {
@@ -880,11 +885,14 @@ def test_a_fixture_building_check_cannot_leave_its_fixture_behind(check):
             "%s's %s path removes nothing it created" % (handler.__name__, where))
 
 
-@pytest.mark.parametrize("seeder", [markup.seed_media_task, markup.seed_website_fixture_page])
+@pytest.mark.parametrize("seeder", [markup.seed_media_task, markup.seed_website_fixture_page,
+                                   markup.seed_document_mailing_fixture])
 def test_a_seeder_that_raises_half_way_removes_what_it_already_made(seeder):
-    """Both seeders raise *after* a `create`: `seed_media_task` when the image
+    """All three raise *after* a `create`: `seed_media_task` when the image
     attachment has no `image_src`, `seed_website_fixture_page` when
-    `website.new_page` returns no url. The row already exists at that point."""
+    `website.new_page` returns no url, `seed_document_mailing_fixture` when the
+    attachment or the body write fails on a mailing it has already made (#274).
+    The row already exists at that point."""
     source = inspect.getsource(seeder)
     assert "except BaseException:" in source
     assert source.index("create_fixture_attachment(") < source.index("except BaseException:")
@@ -1017,3 +1025,376 @@ def test_the_document_operand_probe_takes_the_dialog_as_a_parameter():
     assert "spec.dialog" in markup._DOCUMENT_OPERAND_PROBE
     source = inspect.getsource(markup._document_mailing_after_seeding)
     assert "LEGACY_DOCUMENT_SELECTOR" in source
+
+
+# --- #274: the last media check that did not build what it measures -----------
+#
+# `media-document-mailing` built its attachment and only *looked up* its
+# mailing, so on a database with no draft mailing -- a fresh install, a
+# catch-up database, the local add-on's own -- it returned `NOT-RUN` with
+# nothing measured. #271's Live run hit exactly that on `catchup164b`, where
+# `mass_mailing` had been installed minutes earlier, and had to seed a mailing
+# by hand over `odoo shell`: the one thing that stopped that run being
+# unattended.
+#
+# What this section pins is #266's lesson in both directions. A record the run
+# **made** is deleted; a record it **borrowed** is restored and never deleted.
+# A check that deletes what it did not create is how the next run ends up with
+# nothing to measure, and a check that restores what it is about to delete
+# reports a borrowed body that nobody borrowed.
+
+
+class FakeRoot:
+    """No unsaved-changes bar, and nothing to discard.
+
+    The browser half has no static tests at all (the module says so); these
+    tests are about the writes, and `_document_mailing_leaving` asks the page
+    one question before it makes any.
+    """
+
+    def locator(self, selector):
+        return self
+
+    def count(self):
+        return 0
+
+
+class FakeEnv:
+    """Only what the seam reads off it: the login `current_user_id` looks up."""
+
+    login = "parity@woow.invalid"
+
+
+class FakeSide:
+    """The driver's RPC seam, with a toy database behind it.
+
+    The seeding and cleanup split is a *sequence of writes*, and an assertion on
+    the source would pin its spelling rather than its behaviour -- "`unlink` was
+    never reached for a mailing this run did not create" is the property. Every
+    step the seeder and the leaving function take goes through `side.rpc`, so
+    this is their whole surface.
+    """
+
+    def __init__(self, mailings=None, create_state="draft", fail_attachment=False,
+                 fail_write=False, fail_unlink=False, user_email="parity@woow.invalid"):
+        self.mailings = {key: dict(value) for key, value in (mailings or {}).items()}
+        self.attachments = {}
+        self.models = {"mailing.list": 11}
+        self.create_state = create_state
+        self.fail_attachment = fail_attachment
+        self.fail_write = fail_write
+        self.fail_unlink = fail_unlink
+        self.user_email = user_email
+        self.calls = []
+        self.root = FakeRoot()
+        self.env = FakeEnv()
+        self._next_id = 100
+
+    def rpc(self, model, method, args, kwargs=None):
+        kwargs = kwargs or {}
+        self.calls.append((model, method, args, kwargs))
+        return getattr(self, "_%s_%s" % (model.replace(".", "_"), method))(args, kwargs)
+
+    def did(self, model, method):
+        return [call for call in self.calls if call[0] == model and call[1] == method]
+
+    def _new_id(self):
+        self._next_id += 1
+        return self._next_id
+
+    def _mailing_mailing_search(self, args, kwargs):
+        states = next(clause[2] for clause in args[0] if clause[0] == "state")
+        found = [key for key, record in sorted(self.mailings.items())
+                 if record.get("state") in states]
+        return found[:kwargs.get("limit", len(found))]
+
+    def _mailing_mailing_create(self, args, kwargs):
+        record = {"body_arch": False, "body_html": False}
+        record.update(args[0])
+        # What the server made, which is not necessarily what was asked for.
+        record["state"] = self.create_state
+        key = self._new_id()
+        self.mailings[key] = record
+        return key
+
+    def _mailing_mailing_read(self, args, kwargs):
+        return [dict({"id": key}, **{field: self.mailings[key].get(field, False)
+                                     for field in args[1]}) for key in args[0]]
+
+    def _mailing_mailing_write(self, args, kwargs):
+        if self.fail_write:
+            raise RuntimeError("the body could not be written")
+        for key in args[0]:
+            self.mailings[key].update(args[1])
+        return True
+
+    def _mailing_mailing_unlink(self, args, kwargs):
+        if self.fail_unlink:
+            raise RuntimeError("the mailing could not be unlinked")
+        for key in args[0]:
+            del self.mailings[key]
+        return True
+
+    def _res_users_search(self, args, kwargs):
+        wanted = next(clause[2] for clause in args[0] if clause[0] == "login")
+        return [2] if wanted == self.env.login else []
+
+    def _res_users_read(self, args, kwargs):
+        return [{"id": key, "email_formatted": self.user_email} for key in args[0]]
+
+    def _ir_model_search(self, args, kwargs):
+        wanted = next(clause[2] for clause in args[0] if clause[0] == "model")
+        found = self.models.get(wanted)
+        return [found] if found else []
+
+    def _ir_attachment_create(self, args, kwargs):
+        if self.fail_attachment:
+            raise RuntimeError("the attachment could not be created")
+        key = self._new_id()
+        self.attachments[key] = dict(args[0])
+        return key
+
+    def _ir_attachment_read(self, args, kwargs):
+        return [{"id": key, "checksum": "abc123",
+                 "mimetype": self.attachments[key].get("mimetype"),
+                 "image_src": False} for key in args[0]]
+
+    def _ir_attachment_unlink(self, args, kwargs):
+        if self.fail_unlink:
+            raise RuntimeError("the attachment could not be unlinked")
+        for key in args[0]:
+            del self.attachments[key]
+        return True
+
+
+RUN = "WOOW-MARKUP-20261003T123902Z"
+BORROWED = "<div class=\"o_layout\"><p>a real campaign</p></div>"
+
+
+def seed_document_mailing(side, mailing_id=None):
+    return markup.seed_document_mailing_fixture(side, RUN, mailing_id)
+
+
+def leave(side, fixture, **kwargs):
+    return markup._document_mailing_leaving(
+        side, fixture, fixture["extra"], "/screen",
+        pictures=None, notes="", **kwargs)
+
+
+def test_a_database_with_no_draft_mailing_gets_one_this_run_made():
+    """#274's reading, and the check's own premise: the search that did not find
+    a mailing is satisfied by what the seed leaves behind."""
+    side = FakeSide()
+    assert markup.editable_mailing_id(side) is None
+    fixture = seed_document_mailing(side)
+    assert fixture["scratch_mailing"] is not None
+    mailing_id = fixture["mailing_id"]
+    assert markup.editable_mailing_id(side) == mailing_id
+    # Named after the run, the way `live-tier.md` asks of every writing step.
+    assert side.mailings[mailing_id]["subject"] == markup.scratch_task_name(RUN)
+    assert RUN in side.mailings[mailing_id]["subject"]
+
+
+def test_the_mailing_this_run_made_is_recorded_beside_the_attachment():
+    """`extra["fixture"]` is what a later reader consults to know what is on the
+    host, and #271's hand-seeded mailing was in no record at all."""
+    side = FakeSide()
+    fixture = seed_document_mailing(side)
+    recorded = fixture["extra"]["fixture"]
+    assert recorded["mailing_id"] == fixture["mailing_id"]
+    assert recorded["mailing_subject"] == markup.scratch_task_name(RUN)
+    assert recorded["mailing_state"] in markup.EDITABLE_MAILING_STATES
+    assert recorded["attachment_id"] == fixture["attachment"]["id"]
+    assert fixture["extra"]["mailing_source"] == "created"
+
+
+def test_a_mailing_this_run_made_is_deleted_and_not_restored():
+    side = FakeSide()
+    fixture = seed_document_mailing(side)
+    outcome = leave(side, fixture, cleanup=True)
+    assert outcome["extra"]["fixture_removed"] == {"attachment": True, "mailing": True}
+    assert not side.mailings and not side.attachments
+    # Restoring a row that is being deleted would report a borrowed body nobody
+    # borrowed, which is the reading `body_restored` exists to give.
+    assert "body_restored" not in outcome["extra"]
+
+
+def test_a_borrowed_mailing_is_restored_and_never_deleted():
+    """#266's own lesson: a check that deletes what it did not create is how the
+    next run ends up with nothing to measure."""
+    side = FakeSide(mailings={4: {"state": "draft", "subject": "Real campaign",
+                                  "body_arch": BORROWED, "body_html": BORROWED}})
+    fixture = seed_document_mailing(side)
+    assert fixture["scratch_mailing"] is None
+    assert fixture["mailing_id"] == 4
+    assert fixture["extra"]["mailing_source"] == "found"
+    # The fixture block is what this run made, and it made no mailing here.
+    assert "mailing_id" not in fixture["extra"]["fixture"]
+    assert side.mailings[4]["body_arch"] != BORROWED, "the seed overwrote the body"
+
+    outcome = leave(side, fixture, cleanup=True)
+    assert side.mailings[4]["body_arch"] == BORROWED
+    assert side.mailings[4]["body_html"] == BORROWED
+    assert outcome["extra"]["body_restored"] is True
+    assert outcome["extra"]["fixture_removed"] == {"attachment": True}
+    assert not side.did("mailing.mailing", "unlink")
+
+
+def test_mailing_id_still_means_reuse_this_one_and_nothing_else():
+    """`--mailing-id`'s meaning is unchanged by #274: do not look, do not
+    create, do not delete -- and do not second-guess the state the operator
+    named, which is why this one is `done`."""
+    side = FakeSide(mailings={9: {"state": "done", "subject": "Sent",
+                                  "body_arch": BORROWED, "body_html": BORROWED}})
+    fixture = seed_document_mailing(side, mailing_id=9)
+    assert fixture["mailing_id"] == 9 and fixture["scratch_mailing"] is None
+    assert fixture["extra"]["mailing_source"] == "given"
+    assert not side.did("mailing.mailing", "create")
+    assert not side.did("mailing.mailing", "search")
+
+    outcome = leave(side, fixture, cleanup=True)
+    assert 9 in side.mailings
+    assert side.mailings[9]["body_arch"] == BORROWED
+    assert outcome["extra"]["fixture_removed"] == {"attachment": True}
+
+
+def test_a_mailing_that_came_back_uneditable_is_removed_rather_than_measured():
+    """The row the seed makes has to satisfy the predicate the search applies:
+    the designer's body field is `readonly="state in ('sending','done')"`, so a
+    check driven against one of those would measure a readonly screen and read
+    like a fixture that did not survive its field."""
+    side = FakeSide(create_state="sending")
+    with pytest.raises(RuntimeError, match="state"):
+        seed_document_mailing(side)
+    assert not side.mailings, "the row it made is still on the host"
+    assert not side.attachments
+
+
+def test_a_seed_that_fails_after_making_the_mailing_removes_it():
+    """`run_check` discards a handler's return value when it raises, so a row
+    left behind here would be on the host with nothing in the evidence naming
+    it -- the trap #266's review caught twice."""
+    side = FakeSide(fail_attachment=True)
+    with pytest.raises(RuntimeError):
+        seed_document_mailing(side)
+    assert not side.mailings
+
+
+def test_the_states_the_seed_must_satisfy_are_the_search_s_own():
+    """One constant, so the row the seed makes cannot drift away from the row
+    the lookup would have accepted."""
+    assert markup.EDITABLE_MAILING_STATES == ("draft", "in_queue")
+    assert "EDITABLE_MAILING_STATES" in inspect.getsource(markup.editable_mailing_id)
+    assert "EDITABLE_MAILING_STATES" in inspect.getsource(markup.create_fixture_mailing)
+
+
+def test_the_seeded_body_is_what_keeps_the_theme_chooser_off_the_screen():
+    """The one thing that could stand between a brand-new mailing and the
+    editable, and the reason it does not. The chooser is appended only when
+    `value === "" || value === blankEditable`
+    (`mass_mailing_html_field.js:520-534`), and the value it reads is the
+    `body_arch` the seeder has already written -- so a mailing this run created
+    reaches the same screen as one it borrowed. That holds only while the seeded
+    body is a non-empty `.o_layout`, which is this half of the premise."""
+    body = markup.mailing_document_body_value(RUN, ATTACHMENT)
+    assert body.startswith('<div class="o_layout">')
+    assert markup.document_link_markup(ATTACHMENT) in body
+
+
+@pytest.mark.parametrize("check", sorted(MEDIA_FLOWS))
+def test_no_media_check_gives_up_because_the_database_had_no_record(check):
+    """#266 moved three of the four off records they did not create, #274 the
+    fourth. All four now build their screen, so none of them can report "there
+    was nothing here to measure" on a database that is merely fresh."""
+    source = "".join(inspect.getsource(flow) for flow in MEDIA_FLOWS[check])
+    assert "on this database" not in source
+
+
+# --- #274's three review findings ---------------------------------------------
+
+
+def test_the_scratch_mailing_carries_a_sender_when_the_orm_cannot_reach_one():
+    """`email_from` is the one required field whose precompute can come back
+    empty: with no `mail_server_id` it resolves to
+    `create_uid.email_formatted or env.user.email_formatted`
+    (`mailing.py:260-275`), and `email_formatted` is False for a user whose
+    partner has no email -- the fresh or catch-up database this seed exists for.
+    A required stored field is `NOT NULL` in Postgres (`fields.apply_required`),
+    so that is an `IntegrityError` on the create, not an odd record."""
+    side = FakeSide(user_email=False)
+    fixture = seed_document_mailing(side)
+    assert (side.mailings[fixture["mailing_id"]]["email_from"]
+            == markup.SCRATCH_MAILING_EMAIL_FROM)
+    # Unroutable on purpose: the draft is deleted without being sent, and an
+    # address that could reach somebody is not what a placeholder is for.
+    assert markup.SCRATCH_MAILING_EMAIL_FROM.endswith(".invalid")
+
+
+def test_the_orm_keeps_its_own_sender_wherever_it_has_one():
+    """The fallback is a fallback. Where the compute can reach a value, the row
+    this seed makes is the row the form would have made."""
+    side = FakeSide(user_email="someone@woow.invalid")
+    fixture = seed_document_mailing(side)
+    assert "email_from" not in side.mailings[fixture["mailing_id"]]
+
+
+def test_a_scratch_mailing_an_earlier_run_left_is_reclaimed_not_borrowed():
+    """The trap in `--surface both` without `--cleanup`: the ingress surface
+    leaves its scratch mailing, the public surface's search finds it, and
+    reading that as borrowed would restore *this run's own* fixture body while
+    recording `body_restored: true` -- and would make the row permanent, because
+    every later run would read it the same way and no `--cleanup` could ever
+    delete it."""
+    earlier = markup.scratch_task_name("WOOW-MARKUP-20261003T010101Z")
+    side = FakeSide(mailings={5: {"state": "draft", "subject": earlier,
+                                  "body_arch": "<p>an earlier fixture</p>",
+                                  "body_html": False}})
+    fixture = seed_document_mailing(side)
+    assert fixture["mailing_id"] == 5
+    assert fixture["extra"]["mailing_source"] == "reclaimed"
+    assert fixture["extra"]["fixture"]["mailing_id"] == 5
+    assert fixture["extra"]["fixture"]["mailing_reclaimed"] is True
+
+    outcome = leave(side, fixture, cleanup=True)
+    assert 5 not in side.mailings
+    assert outcome["extra"]["fixture_removed"] == {"attachment": True, "mailing": True}
+    assert "body_restored" not in outcome["extra"]
+
+
+def test_a_real_mailing_is_not_reclaimed_by_a_subject_that_merely_looks_like_one():
+    """The reclaim test is the prefix, so a real campaign that happens to
+    mention the words keeps every protection a borrowed row has."""
+    mentions = "Re: " + markup.SCRATCH_NAME_PREFIX + "what is this?"
+    side = FakeSide(mailings={6: {"state": "draft", "subject": mentions,
+                                  "body_arch": BORROWED, "body_html": BORROWED}})
+    fixture = seed_document_mailing(side)
+    assert fixture["extra"]["mailing_source"] == "found"
+    assert fixture["scratch_mailing"] is None
+    leave(side, fixture, cleanup=True)
+    assert side.mailings[6]["body_arch"] == BORROWED
+
+
+def test_the_name_the_seed_writes_is_the_name_the_reclaim_reads():
+    """A round trip, so the two halves cannot drift apart: whatever
+    `scratch_task_name` writes, `reclaimable_scratch_mailing` must recognise."""
+    assert markup.scratch_task_name(RUN).startswith(markup.SCRATCH_NAME_PREFIX)
+    side = FakeSide(mailings={3: {"state": "draft",
+                                  "subject": markup.scratch_task_name(RUN)}})
+    assert markup.reclaimable_scratch_mailing(side, 3) == {
+        "id": 3, "subject": markup.scratch_task_name(RUN), "state": "draft"}
+
+
+def test_a_compensation_that_could_not_remove_its_rows_says_so(capsys):
+    """`run_check` discards a handler's return value when it raises, so `extra`
+    -- and with it `fixture_removed` -- never reaches the evidence from the
+    seeder. A silent `except` would then read as "removed" for a public
+    attachment and a mailing still on the host, which is the trap
+    `_remove_document_mailing_fixture` reports outcomes to avoid."""
+    side = FakeSide(fail_write=True, fail_unlink=True)
+    with pytest.raises(RuntimeError, match="body could not be written"):
+        seed_document_mailing(side)
+    said = capsys.readouterr().err
+    assert "media-document-mailing left a fixture behind" in said
+    assert str(next(iter(side.mailings))) in said
+    assert str(next(iter(side.attachments))) in said
+    assert '"mailing": false' in said and '"attachment": false' in said

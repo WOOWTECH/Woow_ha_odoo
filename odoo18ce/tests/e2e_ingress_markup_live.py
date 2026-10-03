@@ -53,6 +53,9 @@ whose pure helpers this module reuses rather than copies.
                         the toolbar is hidden outright for a media carrying a
                         non-image `data-mimetype` -- which the dialog's own
                         `createElements` always stamps on a document (#266).
+                        It builds its **mailing** as well when the database
+                        carries no draft or queued one -- `odoo_parity` happens
+                        to, and a fresh install does not (#274).
     mailing-readonly    #238 line 3. A *sent* mailing's body: the legacy
                         editor's readonly iframe. Reads only, so it runs first.
     mailing-editable    #238 lines 1 and 2. The mail designer, and the two
@@ -97,14 +100,18 @@ Writing: `readonly-iframe` creates one scratch `mail.template` and deletes it on
 `media-image-website` creates one public image `ir.attachment` and one
 `website.page` whose arch carries that attachment's own `image_src` in **both**
 `src` and `data-original-src`; `media-document-mailing` creates one public
-document `ir.attachment` and writes one mailing's `body_arch`;
+document `ir.attachment`, writes one mailing's `body_arch`, and **creates that
+mailing** when the database has no draft or queued one (#274) -- deleted under
+`--cleanup`, as is a scratch mailing an earlier surface or run left behind,
+while a mailing it borrowed instead has both fields written back and is never
+deleted;
 `media-document-todo` and `media-image-todo` each create one public
 `ir.attachment` and one scratch `project.task` holding the element that came
-from it. **All four media checks build what they measure** (#266), because none
-of them could measure anything on this database otherwise: #243's run made its
-image and document fixtures by hand and cleaned them up, and the only things
-left on the record are a static module asset and a website logo, which no
-dialog lists. `--cleanup` removes all four. Each marker names its run, so a
+from it. **All four media checks build everything they measure** (#266, #274),
+because none of them could measure anything on this database otherwise: #243's
+run made its image and document fixtures by hand and cleaned them up, and the
+only things left on the record are a static module asset and a website logo,
+which no dialog lists. `--cleanup` removes all four. Each marker names its run, so a
 later reader can tell whose text it is. Every other check reads only. The
 boundary is ADR 0012.
 
@@ -387,6 +394,14 @@ def marker_for(run_id: str) -> str:
     return "%s %s" % (MARKER_PREFIX, run_id)
 
 
+# Every scratch record this driver makes is named with this, run id appended.
+# It is a prefix and not just a convention because #274 reads it back: a
+# `mailing.mailing` whose subject starts with it is this driver's own litter from
+# an earlier surface or run, to be deleted rather than treated as a borrowed
+# record and so preserved forever.
+SCRATCH_NAME_PREFIX = "WOOW scratch (delete me) "
+
+
 def scratch_task_name(run_id: str) -> str:
     """The scratch to-do's name: this run's, and disposable.
 
@@ -394,7 +409,7 @@ def scratch_task_name(run_id: str) -> str:
     because #235's checks read that record's stored `src` and this write would
     be read as their result.
     """
-    return "WOOW scratch (delete me) %s" % run_id
+    return SCRATCH_NAME_PREFIX + run_id
 
 
 # --- #239's two fixtures (#266) -----------------------------------------------
@@ -993,9 +1008,16 @@ def sent_mailing_id(side) -> int | None:
     return ids[0] if ids else None
 
 
+# The two states in which the mail designer's body field is editable; its
+# `readonly` is `state in ('sending','done')`. One constant, because #274 makes
+# this driver *create* such a row and a seed that drifted away from the lookup's
+# own predicate would hand the check a readonly designer.
+EDITABLE_MAILING_STATES = ("draft", "in_queue")
+
+
 def editable_mailing_id(side) -> int | None:
     ids = side.rpc("mailing.mailing", "search",
-                   [[["state", "in", ["draft", "in_queue"]]]], {"limit": 1})
+                   [[["state", "in", list(EDITABLE_MAILING_STATES)]]], {"limit": 1})
     return ids[0] if ids else None
 
 
@@ -1215,7 +1237,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         sub.add_argument("--run-id", required=True, help="the marker the records are named with")
         sub.add_argument("--surface", default="both", choices=["ingress", "public", "both"])
         sub.add_argument("--task-id", type=int, help="reuse a to-do instead of finding or creating one")
-        sub.add_argument("--mailing-id", type=int, help="reuse a mailing instead of finding one")
+        sub.add_argument("--mailing-id", type=int,
+                         help="reuse a mailing instead of finding or creating one")
         sub.add_argument("--cleanup", action="store_true",
                          help="delete what this check created before it returns")
         sub.add_argument("--headed", action="store_true")
@@ -2538,51 +2561,226 @@ def do_media_document_mailing(side, run_id: str, *, mailing_id=None, cleanup=Fal
     would make is outside it and is covered by the host reading the evidence
     takes afterwards. Saying which of the three answers which window is the
     point -- a read-back alone would not have covered the close.
-    `--cleanup` restores both fields and removes the attachment.
+
+    **It builds its mailing too, and the two outcomes are not the same** (#274).
+    This was the one member of the family that still *looked up* a record it
+    needed -- `odoo_parity` happens to carry a draft mailing, so every recorded
+    run found one, and the gap appeared the moment the check was pointed
+    anywhere else: #271's run, on a `catchup164b` where `mass_mailing` had been
+    installed minutes earlier, got `NOT-RUN` and had to seed a mailing by hand
+    over `odoo shell`. A mailing this check **made** is named after the run,
+    recorded in `extra["fixture"]` beside the attachment, and **deleted** under
+    `--cleanup`; a mailing it **borrowed** has both fields written back and is
+    never deleted, because #266's lesson is that a check which deletes what it
+    did not create is how the next run ends up with nothing to measure.
+    `--mailing-id` keeps its meaning: reuse this one, do not create, do not
+    delete. A scratch mailing an earlier surface or run left behind is
+    **reclaimed** rather than borrowed, so it does not become permanent litter
+    no `--cleanup` can reach.
+
+    `--cleanup` removes what this run made and restores what it borrowed.
     """
-    if mailing_id is None:
-        mailing_id = editable_mailing_id(side)
-    if mailing_id is None:
-        return {"pictures": None, "notes":
-                "no mailing.mailing in state draft or in_queue on this database"}
-    attachment = create_fixture_attachment(side, run_id, document=True)
-    before = side.rpc("mailing.mailing", "read", [[mailing_id], ["body_arch", "body_html"]])[0]
-    extra: dict[str, Any] = {
-        "mailing_id": mailing_id,
-        "fixture": {
-            "attachment_id": attachment["id"],
-            "attachment_name": attachment["name"],
-            "href": "/web/content/%d" % attachment["id"],
-        },
-        "body_arch_before": redact(before.get("body_arch") or "", {}),
-    }
-    # Seeded over RPC for `do_mailing_editable`'s reason: the value under test is
-    # then exactly the measured one, and the check does not also depend on the
-    # designer's own insertion working.
-    write_field(side, "mailing.mailing", mailing_id, "body_arch",
-                mailing_document_body_value(run_id, attachment))
+    fixture = seed_document_mailing_fixture(side, run_id, mailing_id)
+    extra = fixture["extra"]
+    screen = "/odoo/mailing.mailing/%d (mail designer, document)" % fixture["mailing_id"]
     try:
-        return _document_mailing_after_seeding(
-            side, mailing_id, attachment, before, extra, cleanup=cleanup)
+        return _document_mailing_after_seeding(side, fixture, extra, cleanup=cleanup)
     except Exception as error:
-        try:
-            _restore_mailing_body(side, mailing_id, before)
-            extra["body_restored"] = True
-        except Exception:  # noqa: BLE001 -- the session itself may be gone
-            extra["body_restored"] = False
+        _restore_borrowed_mailing_body(side, fixture, extra)
         if cleanup:
-            extra["fixture_removed"] = _remove_fixture_attachment(side, attachment)
-        return {"screen": "/odoo/mailing.mailing/%d (mail designer, document)" % mailing_id,
-                "pictures": None, "stored": {}, "extra": extra,
+            extra["fixture_removed"] = _remove_document_mailing_fixture(side, fixture)
+        return {"screen": screen, "pictures": None, "stored": {}, "extra": extra,
                 "notes": "%s: %s" % (type(error).__name__,
                                      adapter.sanitize_diagnostic(str(error))[:300])}
     except BaseException:
         try:
-            _restore_mailing_body(side, mailing_id, before)
-            _remove_fixture_attachment(side, attachment)
+            _restore_borrowed_mailing_body(side, fixture, extra)
+            _remove_document_mailing_fixture(side, fixture)
         except Exception:  # noqa: BLE001 -- the session itself may be gone
             pass
         raise
+
+
+# The scratch mailing's sender, used only where the ORM's own precompute cannot
+# reach a value (see `create_fixture_mailing`). `.invalid` is reserved by
+# RFC 2606 and so is certainly unroutable, which matters not at all for a draft
+# that is deleted without being sent -- but a required field needs *something*,
+# and an address that could reach somebody is not it.
+SCRATCH_MAILING_EMAIL_FROM = "woow-scratch@woow.invalid"
+
+
+def create_fixture_mailing(side, run_id: str) -> dict[str, Any]:
+    """A draft mailing of this run's own, for a database that carries none.
+
+    **`subject` is the only field whose value this invents.** `mailing_model_id`
+    is required with a default of `mass_mailing.model_mailing_list` -- the very
+    record #271's hand seeding searched for -- so it is passed when that search
+    finds it, so the create does not rest on a module data ref resolving, and
+    omitted when it does not, so the field's own default still gets its turn.
+    `state`, `schedule_type` and `mailing_type` have plain defaults.
+
+    **`email_from` is the one required field whose precompute can come back
+    empty**, and a required stored field is `NOT NULL` in Postgres
+    (`fields.apply_required`), so that would be an `IntegrityError` rather than
+    an odd record. With no `mail_server_id` the compute resolves to
+    `create_uid.email_formatted or env.user.email_formatted`
+    (`mailing.py:260-275`), and `email_formatted` is **False** for a user whose
+    partner has no email -- which is exactly the fresh or catch-up database this
+    seed exists for. The compute is left to do its job wherever it can: the
+    fallback is passed only when the value it would reach is empty.
+
+    **The state is read back rather than assumed**, the way `seed_media_task`
+    reads its description back. The body field is
+    `readonly="state in ('sending','done')"`, so a row outside
+    `EDITABLE_MAILING_STATES` would give this check a readonly designer and read
+    exactly like a fixture that did not survive its field. The row is removed
+    when that happens: `run_check` discards a handler's return value on a raise,
+    so a leftover would be on the host with nothing in the evidence naming it.
+    """
+    values: dict[str, Any] = {"subject": scratch_task_name(run_id)}
+    model_ids = side.rpc("ir.model", "search",
+                         [[["model", "=", "mailing.list"]]], {"limit": 1})
+    if model_ids:
+        values["mailing_model_id"] = model_ids[0]
+    [user] = side.rpc("res.users", "read",
+                      [[current_user_id(side)], ["email_formatted"]])
+    if not user.get("email_formatted"):
+        values["email_from"] = SCRATCH_MAILING_EMAIL_FROM
+    mailing_id = side.rpc("mailing.mailing", "create", [values])
+    try:
+        [record] = side.rpc("mailing.mailing", "read",
+                            [[mailing_id], ["state", "subject"]])
+        if record.get("state") not in EDITABLE_MAILING_STATES:
+            raise RuntimeError(
+                "the scratch mailing came back in state %r, which the mail designer "
+                "renders readonly; this check needs one of %s" % (
+                    record.get("state"), ", ".join(EDITABLE_MAILING_STATES)))
+    except BaseException:
+        _remove_fixture_mailing(side, mailing_id)
+        raise
+    return {"id": mailing_id, "subject": record.get("subject"),
+            "state": record.get("state")}
+
+
+def seed_document_mailing_fixture(side, run_id: str, mailing_id) -> dict[str, Any]:
+    """The whole fixture for `media-document-mailing`, and where it came from.
+
+    Four ways to a mailing, and which one it was decides what `--cleanup` does:
+
+    - **`--mailing-id` named one**: reuse it, do not look, do not create, do not
+      delete -- and do not second-guess its state, because the operator chose
+      the row.
+    - **a draft or queued mailing is on the database**: borrow it. Its
+      `body_arch` is overwritten and is written back; the row itself is never
+      deleted.
+    - **the one it found is this driver's own scratch row**, named with
+      `SCRATCH_NAME_PREFIX` by an earlier surface or an earlier run that ran
+      without `--cleanup`: **reclaim** it. This is not a nicety. A run of
+      `--surface both` without `--cleanup` leaves the ingress surface's scratch
+      mailing behind, the public surface's search then finds it, and reading
+      that as "borrowed" would restore *this run's own* fixture body while
+      recording `body_restored: true` -- evidence that says a real campaign was
+      put back when nothing was borrowed -- and would make the row permanent,
+      because every later run would read it the same way and no `--cleanup`
+      would ever delete it.
+    - **nothing is**: create one (#274) and delete it under `--cleanup`.
+
+    Everything after the first `create` is guarded, as in `seed_media_task` and
+    `seed_website_fixture_page`: `run_check` discards a handler's return value
+    when it raises, so a step failing in here would otherwise leave a public
+    `ir.attachment` -- and now a mailing beside it -- on the host with nothing in
+    the evidence naming them. The restore is in that path too, because the body
+    write is the last step and a borrowed row must not keep this run's body just
+    because the step after it failed.
+
+    **The screen is the same whichever way the mailing arrived**, which is what
+    makes a created one measurable rather than merely present. The designer's
+    theme chooser -- the one thing that could have stood between a brand-new
+    mailing and the editable -- is appended only when
+    `value === "" || value === blankEditable`
+    (`mass_mailing_html_field.js:520-534`), and the value it reads is the
+    `body_arch` this seeder has already written: an `.o_layout` div in all three
+    cases. The chooser is still handled in the browser half, for a seed that did
+    not take.
+    """
+    source = "found" if mailing_id is None else "given"
+    scratch = None
+    if mailing_id is None:
+        mailing_id = editable_mailing_id(side)
+        if mailing_id is not None:
+            scratch = reclaimable_scratch_mailing(side, mailing_id)
+            if scratch is not None:
+                source = "reclaimed"
+    if mailing_id is None:
+        source = "created"
+        scratch = create_fixture_mailing(side, run_id)
+        mailing_id = scratch["id"]
+    extra: dict[str, Any] = {"mailing_id": mailing_id, "mailing_source": source,
+                             "fixture": {}}
+    fixture: dict[str, Any] = {"mailing_id": mailing_id, "scratch_mailing": scratch,
+                               "attachment": None, "before": {}, "extra": extra}
+    try:
+        attachment = create_fixture_attachment(side, run_id, document=True)
+        fixture["attachment"] = attachment
+        extra["fixture"] = {
+            "attachment_id": attachment["id"],
+            "attachment_name": attachment["name"],
+            "href": "/web/content/%d" % attachment["id"],
+        }
+        if scratch is not None:
+            # Beside the attachment, because the two are the same kind of thing
+            # now: rows this run will remove, which a later reader may have to
+            # find. `mailing_reclaimed` separates the row this run made from the
+            # one an earlier run left, since only the first is news.
+            extra["fixture"].update({
+                "mailing_id": scratch["id"],
+                "mailing_subject": scratch["subject"],
+                "mailing_state": scratch["state"],
+                "mailing_reclaimed": source == "reclaimed",
+            })
+        before = side.rpc("mailing.mailing", "read",
+                          [[mailing_id], ["body_arch", "body_html"]])[0]
+        fixture["before"] = before
+        extra["body_arch_before"] = redact(before.get("body_arch") or "", {})
+        # Seeded over RPC for `do_mailing_editable`'s reason: the value under test
+        # is then exactly the measured one, and the check does not also depend on
+        # the designer's own insertion working.
+        write_field(side, "mailing.mailing", mailing_id, "body_arch",
+                    mailing_document_body_value(run_id, attachment))
+    except BaseException:
+        _restore_borrowed_mailing_body(side, fixture, extra)
+        removed = _remove_document_mailing_fixture(side, fixture)
+        if not all(removed.values()):
+            # There is no record to put this in: `run_check` discards a
+            # handler's return value when it raises, so `extra` -- and with it
+            # `fixture_removed` -- never reaches the evidence from here. The
+            # console is the only place a failed compensation can still name
+            # what it left on the host, and leaving it unsaid is the very thing
+            # `_remove_document_mailing_fixture` reports outcomes to avoid.
+            print("media-document-mailing left a fixture behind: %s" % json.dumps({
+                "attachment_id": (fixture.get("attachment") or {}).get("id"),
+                "mailing_id": (fixture.get("scratch_mailing") or {}).get("id"),
+                "removed": removed,
+            }, sort_keys=True), file=sys.stderr)
+        raise
+    return fixture
+
+
+def reclaimable_scratch_mailing(side, mailing_id: int) -> dict[str, Any] | None:
+    """This driver's own scratch mailing, or `None` for somebody's real one.
+
+    The subject is the whole test, and it is sound because this check is the
+    only thing in the repository that ever creates a `mailing.mailing`: a
+    subject starting with `SCRATCH_NAME_PREFIX` was written by an earlier
+    surface or an earlier run of *this* check. Such a row is deleted rather than
+    preserved -- see `seed_document_mailing_fixture` for why reading it as
+    borrowed is worse than it sounds.
+    """
+    [record] = side.rpc("mailing.mailing", "read", [[mailing_id], ["subject", "state"]])
+    if not (record.get("subject") or "").startswith(SCRATCH_NAME_PREFIX):
+        return None
+    return {"id": mailing_id, "subject": record.get("subject"),
+            "state": record.get("state")}
 
 
 def _restore_mailing_body(side, mailing_id: int, before: Mapping[str, Any]) -> None:
@@ -2600,9 +2798,58 @@ def _remove_fixture_attachment(side, attachment: Mapping[str, Any]) -> dict[str,
         return {"attachment": False}
 
 
-def _document_mailing_after_seeding(side, mailing_id, attachment, before, extra,
+def _remove_fixture_mailing(side, mailing_id: int) -> bool:
+    try:
+        side.rpc("mailing.mailing", "unlink", [[mailing_id]])
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _restore_borrowed_mailing_body(side, fixture: Mapping[str, Any], extra) -> None:
+    """Write a borrowed mailing's body back, and never a scratch one's.
+
+    This is the distinction #274 turns on. A row this run **made** -- or
+    reclaimed from an earlier run of the same check, which is the same thing for
+    this purpose -- is deleted, so writing its old value back first would put
+    `body_restored: true` in a record where nothing was borrowed, and that field
+    is the only reading saying a real campaign's body was put back. A row this
+    run **borrowed** must be restored and must not be deleted. `before` is empty
+    until it has been read, which is the one case where there is nothing to put
+    back at all.
+    """
+    if fixture.get("scratch_mailing") is not None or not fixture.get("before"):
+        return
+    try:
+        _restore_mailing_body(side, fixture["mailing_id"], fixture["before"])
+        extra["body_restored"] = True
+    except Exception:  # noqa: BLE001 -- the session itself may be gone
+        extra["body_restored"] = False
+
+
+def _remove_document_mailing_fixture(side, fixture: Mapping[str, Any]) -> dict[str, bool]:
+    """Remove what this run owns: the attachment, and the mailing if it owns one.
+
+    Each removal is reported rather than swallowed, for
+    `remove_website_fixture_page`'s reason -- a silent `except` reads as
+    "removed" for a fixture still on the host. A borrowed mailing gets no key at
+    all, because "could not be removed" and "was never mine to remove" are
+    different readings and a reader checking the host needs to tell them apart.
+    """
+    removed: dict[str, bool] = {}
+    attachment = fixture.get("attachment")
+    if attachment:
+        removed.update(_remove_fixture_attachment(side, attachment))
+    scratch = fixture.get("scratch_mailing")
+    if scratch:
+        removed["mailing"] = _remove_fixture_mailing(side, scratch["id"])
+    return removed
+
+
+def _document_mailing_after_seeding(side, fixture, extra,
                                     *, cleanup=False) -> dict[str, Any]:
     """The browser half of `do_media_document_mailing`."""
+    mailing_id = fixture["mailing_id"]
     screen = "/odoo/mailing.mailing/%d (mail designer, document)" % mailing_id
     side.goto("/odoo/mailing.mailing/%d" % mailing_id)
     side.wait_webclient()
@@ -2613,7 +2860,7 @@ def _document_mailing_after_seeding(side, mailing_id, attachment, before, extra,
     frame = next((handle.content_frame() for handle in handles if handle.content_frame()), None)
     extra["rendered_iframe"] = frame is not None
     if frame is None:
-        return _document_mailing_leaving(side, mailing_id, attachment, before, extra, screen,
+        return _document_mailing_leaving(side, fixture, extra, screen,
                                          cleanup=cleanup, pictures=None, notes=(
             "the mail designer rendered no iframe; look at the generic HTML location's "
             "\"src\": \"/ rewrite of /web/bundle JSON before this check's own subject"))
@@ -2629,7 +2876,7 @@ def _document_mailing_after_seeding(side, mailing_id, attachment, before, extra,
 
     document = frame.locator(MAILING_EDITABLE + " " + DOCUMENT_LINK).first
     if not document.count():
-        return _document_mailing_leaving(side, mailing_id, attachment, before, extra, screen,
+        return _document_mailing_leaving(side, fixture, extra, screen,
                                          cleanup=cleanup, pictures=None, notes=(
             "the designer's editable held no %s; the seeded body_arch did not survive the "
             "field" % DOCUMENT_LINK))
@@ -2676,7 +2923,7 @@ def _document_mailing_after_seeding(side, mailing_id, attachment, before, extra,
         document.dblclick(force=True)
     side.settle(2000)
     if not side.root.locator(MEDIA_DIALOG).count():
-        return _document_mailing_leaving(side, mailing_id, attachment, before, extra, screen,
+        return _document_mailing_leaving(side, fixture, extra, screen,
                                          cleanup=cleanup, pictures=None, notes=(
             "neither %s (present: %s, visible: %s) nor a double-click reopened the legacy "
             "media dialog on the document link" % (REPLACE_LEGACY,
@@ -2685,11 +2932,11 @@ def _document_mailing_after_seeding(side, mailing_id, attachment, before, extra,
     extra["dialog"] = reading
     pictures, notes = _media_verdict(reading, side)
     close_media_dialog(side)
-    return _document_mailing_leaving(side, mailing_id, attachment, before, extra, screen,
+    return _document_mailing_leaving(side, fixture, extra, screen,
                                      cleanup=cleanup, pictures=pictures, notes=notes)
 
 
-def _document_mailing_leaving(side, mailing_id, attachment, before, extra, screen,
+def _document_mailing_leaving(side, fixture, extra, screen,
                               *, cleanup, pictures, notes) -> dict[str, Any]:
     """Leave the designer, read the two fields back, and restore.
 
@@ -2713,7 +2960,7 @@ def _document_mailing_leaving(side, mailing_id, attachment, before, extra, scree
     stored: dict[str, Any] = {}
     try:
         after = side.rpc("mailing.mailing", "read",
-                         [[mailing_id], ["body_arch", "body_html"]])[0]
+                         [[fixture["mailing_id"]], ["body_arch", "body_html"]])[0]
         stored = {
             "mailing.mailing.body_arch": after.get("body_arch"),
             "mailing.mailing.body_html": after.get("body_html"),
@@ -2721,12 +2968,8 @@ def _document_mailing_leaving(side, mailing_id, attachment, before, extra, scree
     except Exception as error:  # noqa: BLE001
         extra["read_back_error"] = type(error).__name__
     if cleanup:
-        try:
-            _restore_mailing_body(side, mailing_id, before)
-            extra["body_restored"] = True
-        except Exception:  # noqa: BLE001
-            extra["body_restored"] = False
-        extra["fixture_removed"] = _remove_fixture_attachment(side, attachment)
+        _restore_borrowed_mailing_body(side, fixture, extra)
+        extra["fixture_removed"] = _remove_document_mailing_fixture(side, fixture)
     return {"screen": screen, "pictures": pictures, "stored": stored,
             "extra": extra, "notes": notes}
 
