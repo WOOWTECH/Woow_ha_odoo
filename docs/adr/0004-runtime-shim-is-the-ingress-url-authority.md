@@ -1529,3 +1529,102 @@ refused the match and returned without waiting, which made that transport readin
 **void** rather than negative. The marker now carries the pair as well as the run
 id. Evidence, including the void attempt:
 `docs/testing/evidence/2026-10-02-issue-265/`.
+
+## Postscript (2026-10-02, #271, a literal that is a search pattern)
+
+Every rule this record has added since #166 rests on one unstated assumption:
+that a string literal opening `"/web/` in an asset bundle is an **address**.
+Almost all of them are. `DocumentSelector.attachmentsDomain`'s is not -- it is
+the `=like` operand of an ORM domain, with the getter's own comment saying why
+(`All assets begin with '/web/assets/', see _get_asset_template_url()`). nginx's
+`sub_filter` is a byte-level substring search and cannot tell the two apart, so
+it prefixed the search pattern too, the exclusion became
+`NOT (url =like '<prefix>/web/assets/%')`, that matched no stored `url`, and the
+`'|' ['url', '=', null]` beside it let every generated bundle through. The
+measured result is in the postscript above: 30 tiles against 1, a getter 383
+bytes against 320.
+
+**The decision.** A string literal that is a **search pattern must not be
+prefixed**, and the rule is general: it applies to any literal whose operand
+position makes it a pattern rather than a URL, not only to ORM domains and not
+only to this location.
+
+**The fix taken: an explicit counter-rule per site.** Two `sub_filter` lines,
+one per quote style, each its own pattern spelled as its own replacement. Their
+only job is to claim those bytes before a generic rule can: `sub_filter` tracks
+one match attempt at a time, so the pattern starting at the earlier byte wins
+and the inner `"/web/` never gets a turn; and because two patterns starting at
+the *same* byte go by written order (#158), the counter-rules are written ahead
+of the generic ones so the fix holds under either half. `sub_filter` never
+rescans what it wrote, so what they emit is final.
+
+**Why not the other option, a narrower generic rule.** Because the measurement
+says how many sites the class actually has, and it is two. Six pattern literals
+exist in the three `attachmentsDomain` getters Odoo 18 ships in the two media
+dialogs; only two are reached by any rule this location carries -- the
+double- and single-quoted `/web/assets/%` of the two `DocumentSelector`s.
+`/html_editor/shape/%` and `/%/static/%` are reached by nothing, and
+`/web_editor/shape/%` survives because the rule needs `/web/` and
+`/web_editor/` has `_` where the rule has `/`. Narrowing `"/web/` to exclude
+`/web/assets/` would be a change with a far larger blast radius than the defect:
+`/web/assets/...` is also a genuine address that the generic rule is there to
+prefix (`loadBundle` asks for one by that path), so the narrowing would have to
+distinguish operand positions -- which is exactly what a byte-level substring
+filter cannot do. Two targeted rules are a smaller and more honest statement
+than one generic rule carrying an exception it cannot actually express.
+
+**Identity and not a cleverer spelling.** Splitting the literal
+(`"/web"+"/assets/%"`) would survive the generic rule the same way, and it was
+rejected: the Live probe's reading is `domain.includes("/web/assets/")`, so the
+evidence that this is fixed is "the literal is present and carries no prefix".
+A spelling that made that field read `false` would be a worse answer to the same
+question.
+
+**The three literals no rule reaches are captured and served anyway.** Five
+`attachmentsDomain` getters are now fixtures, and
+`test_ingress_media_dialog_domain.py` serves all five through a **real nginx**
+carrying this location's own rule set, in both directions: with the fix every
+one of the six literals must leave the gateway byte-identical, and with this
+issue's own rules removed the two document literals must be shown gaining a
+prefix. So a future generic rule that starts claiming one of the three turns
+that test red instead of silently changing which attachments a picker lists. The
+same file executes the consequence rather than asserting it -- each getter is
+run, the domain it built is read against stored `ir.attachment` rows through a
+port of Odoo's own `normalize_domain` and the two `_condition_to_sql` NULL
+rules, and the Documents tab must list the document alone as served and the
+document plus every bundle when the literal is prefixed.
+
+**One site the measurement found and the issue did not.**
+`html_editor/.../file_documents_selector.js` is a third `attachmentsDomain`, the
+compatibility override for the `/file` command, whose own header says the file
+is no longer used. It carries three of the six literals -- which is why a bundle
+holds a shape literal three times and not twice -- and spells no
+`/web/assets/%` of its own: it inherits the document getter's through
+`super.attachmentsDomain`, so the counter-rule covers it with nothing of its
+own. The `attachment.image_src.startsWith("/html_editor/shape/")` comparisons in
+the same neighbourhood are **not** domain literals, no rule reaches them, and
+nothing here touches them.
+
+**Nothing about URL rewriting changes.** Every literal the generic rules exist
+for keeps its prefix, including a real `/web/assets/...` address in the same
+response; a Static-tier test serves a sample carrying a pattern literal and two
+addresses side by side and requires exactly the two addresses to gain a prefix.
+Nothing is stored either way -- a search domain travels in a request body -- and
+the Public origin was always right, which is why this ships without a Release.
+The divergence is registered as `G-09` in the parity plan's section 11 at
+`minor`; #239's severity and its `PARITY` verdict are unchanged.
+
+**Measured on a real host, through the local build.** 2026-10-03, add-on
+`local_odoo18ce` at `0.4.10-202610031232`, database `catchup164b`, Ingress only,
+run `WOOW-MARKUP-20261003T124016Z`: `served_domain_asset_exclusion_prefixed`
+**`false`** with `served_domain_has_web_assets_literal` still `true`, the getter
+**320** bytes where the Released 0.4.10 served **383** the day before, and the
+Documents tab listing **1** tile and selecting it. 320 is also the length of the
+captured fixture and the number #266 read on the Public origin, so the two tiers
+agree on one figure. The run read the add-on's own prefix length off the
+Supervisor -- **63** -- so 383 minus 320 was exactly one prefix insertion and
+nothing else. The other half is measured over that database's own rows: 18
+`ir.attachment` bundles, **all 18** excluded by the unprefixed clause and **none**
+by the prefixed one, which is why the tab would have held 19 tiles. No Release
+was cut, by the decision above. Evidence:
+`docs/testing/evidence/2026-10-03-issue-271/`.

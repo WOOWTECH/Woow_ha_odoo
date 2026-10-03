@@ -160,6 +160,89 @@
   not rewritten. No image change and no version bump.
 
 ### Fixed
+- **A generic literal rewrite reached an ORM *search pattern*, so the media
+  dialog's Documents tab listed every generated asset bundle** (#271, found by
+  #266's run beside #239's document line and filed separately because it is not
+  #239's rule). `DocumentSelector.attachmentsDomain` excludes those bundles with
+  `!['url', '=like', '/web/assets/%']`, naming the reason in its own comment --
+  and that is a string literal in an ORM domain, living in the same bundle as
+  the URL literals the Ingress asset location has prefixed since #166. nginx's
+  `sub_filter` is a byte-level substring search with no idea what a literal is
+  *for*, so it prefixed this one too; the exclusion then read
+  `NOT (url =like '<prefix>/web/assets/%')`, which matches no stored `url`
+  because every bundle attachment is `/web/assets/...` in the database, and the
+  `'|' ['url', '=', null]` beside it let all of them through. Under Ingress the
+  first page of 30 tiles filled with `mass_mailing.assets_wysiwyg.min.js` and
+  its siblings while the Public origin listed the one document; on a database
+  with more than 30 bundles a user's own files were unreachable without a
+  search. Nothing was stored -- a search domain travels in a request body.
+- The fix is **two counter-rules, one per quote style**, each its own pattern
+  spelled as its own replacement: the job is to claim those bytes before a
+  generic rule can. `sub_filter` tracks one match attempt at a time, so the
+  pattern starting at the earlier byte wins and the inner `"/web/` never gets a
+  turn; the rules are also written *ahead* of the generic ones, which is the
+  other half of the same rule (#158: two patterns starting at the same byte go
+  by written order). Identity rather than a cleverer spelling, because the Live
+  probe's reading is `domain.includes("/web/assets/")` -- the evidence that this
+  is fixed is "the literal is present and carries no prefix", and a split
+  spelling would make that field read `false`.
+- Why not a narrower generic rule, which is the other option ADR 0004's
+  2026-10-02 postscript had to choose between: the measurement says the class
+  has **two** sites today, and `/web/assets/...` is also a genuine address the
+  generic rule is there to prefix (`loadBundle` asks for one by that path), so
+  narrowing would have to distinguish operand positions -- which is exactly
+  what a substring filter cannot do.
+- **Six pattern literals measured, not the four the issue named, and a third
+  selector found.** Quote style turns out to be per *site*, not per file -- the
+  legacy `web_editor` image selector writes its two shape literals
+  *double*-quoted while writing `/%/static/%` single-quoted -- and
+  `html_editor`'s `FileDocumentsSelector`, the compatibility override for the
+  `/file` command, carries three of the six, which is why a bundle holds a shape
+  literal three times and not twice. Only the two `/web/assets/%` are reached by
+  any shipped rule: `/html_editor/shape/%` and `/%/static/%` are reached by
+  nothing, and `/web_editor/shape/%` survives because the rule needs `/web/` and
+  `/web_editor/` has `_` where the rule has `/`. Every count is per bundle in
+  `odoo18ce/tests/fixtures/bundles/README.md`, derived from the pinned package
+  through Odoo's own serve path and checked by reproducing #239's and #240's
+  tables row for row first.
+- **Measured on the test host through a local build, with no Release**
+  (2026-10-03, `local_odoo18ce` `0.4.10-202610031232`, database `catchup164b`,
+  Ingress only, run `WOOW-MARKUP-20261003T124016Z`;
+  `docs/testing/evidence/2026-10-03-issue-271/`). The fix only moves the Ingress
+  side and the Public reading was already taken by #266 the day before, so the
+  local build is the whole verification and no version was bumped.
+  `media-document-mailing` read `served_domain_asset_exclusion_prefixed`
+  **`false`** with `served_domain_has_web_assets_literal` still `true`, the
+  getter **320** bytes against the **383** the Released 0.4.10 served, and the
+  Documents tab listing **1** tile and selecting it. 320 is also the captured
+  fixture's length and the number #266 read on the Public origin, so the Static
+  and Live tiers agree on one figure; the add-on's own prefix length came back
+  from the Supervisor as **63**, so 383 minus 320 was exactly one insertion.
+  `stored_verdict` `CLEAN` on `body_arch` and `body_html`, 0 prefixes each, the
+  designer discarded and the fields read back; ambient `website.track` and
+  `website.visitor` deltas **0** over 1 navigation.
+- The other half is measured over that database's own rows rather than inferred:
+  **18** `ir.attachment` bundles, **all 18** excluded by the unprefixed clause
+  and **none** by the prefixed one, and no stored `url` carrying a prefix at
+  all. That is why the tab would have held 19 tiles there and held 1.
+- One gap the run found in the driver, recorded rather than fixed because #271's
+  brief puts driver changes out of scope: `media-document-mailing` builds its
+  own attachment but **looks up** the mailing, so it returns `NOT-RUN` on any
+  database with no draft mailing -- invisible on `odoo_parity`, where one
+  happens to exist. It is the only thing that stopped this run being unattended.
+- `test_ingress_media_dialog_domain.py` serves all five captured getters through
+  a **real nginx** carrying this location's own rule set, in both directions:
+  with the fix every one of the six literals must leave the gateway
+  byte-identical, and with this issue's own rules removed the two document
+  literals must be shown gaining a prefix. So a future generic rule that starts
+  claiming one of the three left alone turns that test red instead of silently
+  changing which attachments a picker lists. The consequence is executed rather
+  than asserted -- each getter is run, the domain it built is read against
+  stored `ir.attachment` rows through a port of Odoo's own `normalize_domain`
+  and the two `_condition_to_sql` NULL rules, and the tab must list the document
+  alone as served and the document plus every bundle when the literal is
+  prefixed. A sixth test serves a pattern literal and two real addresses side by
+  side and requires exactly the two addresses to gain a prefix.
 - **The peer snapshot never focused its receiving session, which is why nothing had
   ever been delivered to it** (#265, the third defect #243's run exposed in this
   driver). No view that shows `project.task.description` sets
