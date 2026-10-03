@@ -441,7 +441,10 @@ def test_every_flow_s_extra_keys_stay_clear_of_the_record_s_own():
             "replace_control_present", "replace_control_visible",
             "replace_control_found_in", "discarded", "read_back_error",
             # #274's reading: where the mailing came from
-            "mailing_source"}
+            "mailing_source",
+            # #276: did `commitChanges` inline `body_html` at all
+            "body_html_inlined", "save_visible", "typing_error", "save_incomplete",
+            "help_restored"}
     assert not (used & markup.RESERVED_RECORD_KEYS)
 
 
@@ -820,8 +823,73 @@ def test_the_document_check_reads_the_two_mailing_fields_back_into_stored():
     source = inspect.getsource(markup._document_mailing_leaving)
     assert '"mailing.mailing.body_arch"' in source
     assert '"mailing.mailing.body_html"' in source
-    assert "DISCARD_BUTTON" in source
+    assert "_discard_unsaved_form(" in source
+    assert "DISCARD_BUTTON" in inspect.getsource(markup._discard_unsaved_form)
     assert "return {" in source and '"stored": stored' in source
+
+
+def test_both_mailing_checks_leave_the_form_clean_behind_them():
+    """`run_check` closes the session *after* the handler returns, and an Odoo
+    form persists a dirty editor on `beforeunload`. Both mailing checks click
+    inside the designer's editable, so both have to leave through the discard --
+    the editable one too (#276), because `--mailing-id` is still a real campaign
+    and the typing is deliberate there."""
+    for leaving in (markup._document_mailing_leaving, markup._mailing_editable_leaving):
+        assert "_discard_unsaved_form(" in inspect.getsource(leaving), leaving.__name__
+
+
+# Every handler that types into a form and then writes a record back. The
+# recovery paths matter more than the success path, not less: the typing is
+# already done when a later step fails, so the form is certainly dirty.
+RESTORING_HANDLERS = (markup.do_mailing_editable, markup.do_media_document_mailing,
+                      markup.do_codeview)
+
+
+@pytest.mark.parametrize("handler", RESTORING_HANDLERS, ids=lambda f: f.__name__)
+def test_a_handler_that_restores_a_record_discards_before_it_does(handler):
+    """A restore the session's own `beforeunload` then undoes is worse than no
+    restore, because the record says `body_restored` / `help_restored` is true.
+
+    `run_check` closes the session after the handler has returned -- outside
+    every reading -- and an Odoo form persists a dirty editor on `beforeunload`
+    and on an ungated `visibilitychange` (#263 is the same mechanism on the To-do
+    form). So the discard belongs on **both** recovery paths of every handler
+    that puts a record back, and the success path's own exit, and a review of
+    #276 found all three handlers leaving one of them open.
+    """
+    source = inspect.getsource(handler)
+    ordinary, interrupted = source.split("except BaseException:")
+    # On the name the outer handler binds, not on `except Exception`: each of
+    # these paths has a nested `except Exception` of its own guarding the restore.
+    ordinary = ordinary.split("except Exception as error:")[-1]
+    for where, body in (("except Exception", ordinary),
+                        ("except BaseException", interrupted)):
+        assert "_discard_unsaved_form(" in body, (
+            "%s's %s path restores a record without leaving the form clean"
+            % (handler.__name__, where))
+
+
+def test_the_codeview_check_leaves_the_real_action_s_form_clean():
+    """The one of the three that writes a record it can neither delete nor
+    rebuild: `ir.actions.act_window.help` on a real action. The discard has to
+    come after the read-back -- which is the reading -- and before the restore."""
+    source = inspect.getsource(markup._codeview_after_seeding)
+    assert source.index('read_field(side, "ir.actions.act_window"') \
+        < source.index("_discard_unsaved_form(") < source.index("if cleanup:")
+
+
+def test_a_body_html_the_save_never_inlined_is_not_a_pass():
+    """Building the row makes `False` the baseline for `body_html`, and an empty
+    field is `CLEAN` -- correctly, since there is no prefix in it. So a save that
+    stored `body_arch` and never inlined `body_html` would score `PARITY` for the
+    one field this check exists to measure: rule 8's, the one that leaves the
+    installation with the mail. The marker the designer **typed** is the
+    discriminator, because it is not in the RPC-seeded value."""
+    assert markup.stored_verdict(False) == (markup.CLEAN, 0)
+    assert markup.stored_verdict("") == (markup.CLEAN, 0)
+    source = inspect.getsource(markup._mailing_after_seeding)
+    assert '"body_html_inlined"' in source
+    assert 'marker_for(run_id) in (after.get("body_html")' in source
 
 
 # Anything that undoes part of a fixture. A handler's error path has to name at
@@ -831,8 +899,9 @@ CLEANUP_NAMES = (
     "remove_website_fixture_page", "_leave_website_media",
     "_remove_fixture_attachment", "_restore_mailing_body",
     # #274: the document mailing check now removes a mailing it made, and
-    # restores one it borrowed -- two outcomes, so two names.
-    "_remove_document_mailing_fixture", "_restore_borrowed_mailing_body",
+    # restores one it borrowed -- two outcomes, so two names. #276 gives the
+    # editable check the same pair.
+    "_remove_mailing_fixture", "_restore_borrowed_mailing_body",
 )
 
 SEEDING_FLOWS = {
@@ -848,6 +917,11 @@ SEEDING_FLOWS = {
     "media-document-mailing": (markup.do_media_document_mailing,
                                markup._document_mailing_after_seeding,
                                markup._document_mailing_leaving),
+    # #276: the one writing check outside the media family that builds a record
+    # before its first navigation, and so has the same trap.
+    "mailing-editable": (markup.do_mailing_editable,
+                         markup._mailing_after_seeding,
+                         markup._mailing_editable_leaving),
 }
 
 
@@ -855,12 +929,12 @@ SEEDING_FLOWS = {
 def test_a_fixture_building_check_cannot_leave_its_fixture_behind(check):
     """Every exit from a seeding check goes through its one leaving function.
 
-    This is the trap and not a tidiness rule. All four create their fixture
+    This is the trap and not a tidiness rule. All five create their fixture
     *before* the first navigation, and `run_check` **discards a handler's return
     value when it raises** -- so a step failing between the seed and the verdict
-    leaves a public `ir.attachment`, and a scratch to-do or a `website.page`
-    beside it, on the host with nothing in the evidence naming them. Two of the
-    four were written exactly that way and a review caught it.
+    leaves a public `ir.attachment`, and a scratch to-do, a `website.page` or a
+    `mailing.mailing` beside it, on the host with nothing in the evidence naming
+    them. Two of them were written exactly that way and a review caught it.
     """
     handler, browser_half, leaving = SEEDING_FLOWS[check]
 
@@ -1103,9 +1177,26 @@ class FakeSide:
         return self._next_id
 
     def _mailing_mailing_search(self, args, kwargs):
-        states = next(clause[2] for clause in args[0] if clause[0] == "state")
-        found = [key for key, record in sorted(self.mailings.items())
-                 if record.get("state") in states]
+        """The two searches this driver makes: by state, and by state and subject.
+
+        The subject clause is spelled `=like` with a trailing `%` (#276), and
+        that spelling is asserted rather than worked around: a `like` or an
+        `ilike` would match a real campaign whose subject merely *contains* the
+        scratch words, which is the one thing a reclaim must not do.
+        """
+        clauses = {clause[0]: clause for clause in args[0]}
+        states = clauses["state"][2]
+        subject = clauses.get("subject")
+        if subject is not None:
+            assert subject[1] == "=like" and subject[2].endswith("%"), subject
+        found = []
+        for key, record in sorted(self.mailings.items()):
+            if record.get("state") not in states:
+                continue
+            if subject is not None and not (
+                    record.get("subject") or "").startswith(subject[2][:-1]):
+                continue
+            found.append(key)
         return found[:kwargs.get("limit", len(found))]
 
     def _mailing_mailing_create(self, args, kwargs):
@@ -1286,6 +1377,10 @@ def test_the_states_the_seed_must_satisfy_are_the_search_s_own():
     assert markup.EDITABLE_MAILING_STATES == ("draft", "in_queue")
     assert "EDITABLE_MAILING_STATES" in inspect.getsource(markup.editable_mailing_id)
     assert "EDITABLE_MAILING_STATES" in inspect.getsource(markup.create_fixture_mailing)
+    # #276's scratch search answers the same predicate: a reclaimed row the
+    # designer renders readonly reads exactly like a fixture that did not
+    # survive its field.
+    assert "EDITABLE_MAILING_STATES" in inspect.getsource(markup.scratch_mailing_id)
 
 
 def test_the_seeded_body_is_what_keeps_the_theme_chooser_off_the_screen():
@@ -1389,7 +1484,7 @@ def test_a_compensation_that_could_not_remove_its_rows_says_so(capsys):
     -- and with it `fixture_removed` -- never reaches the evidence from the
     seeder. A silent `except` would then read as "removed" for a public
     attachment and a mailing still on the host, which is the trap
-    `_remove_document_mailing_fixture` reports outcomes to avoid."""
+    `_remove_mailing_fixture` reports outcomes to avoid."""
     side = FakeSide(fail_write=True, fail_unlink=True)
     with pytest.raises(RuntimeError, match="body could not be written"):
         seed_document_mailing(side)
@@ -1398,3 +1493,201 @@ def test_a_compensation_that_could_not_remove_its_rows_says_so(capsys):
     assert str(next(iter(side.mailings))) in said
     assert str(next(iter(side.attachments))) in said
     assert '"mailing": false' in said and '"attachment": false' in said
+
+
+# --- #276: the editable check builds its own mailing and borrows nothing -------
+#
+# The same two halves as #274, on the one check #274 left alone -- and the
+# decision is **not** the same one. `mailing-editable` types in the designer and
+# clicks save, because #238's whole subject is the save seam: `body_arch` through
+# `getEditingValue`, and `body_html`, which `commitChanges` inlines separately.
+# A run therefore stored this run's marker body in *both* fields of a mailing
+# somebody else made, and `--cleanup` is optional. So this check creates its own
+# mailing and borrows nothing unless `--mailing-id` names one: nothing measured
+# is lost, because the designer, `getEditingValue` and `commitChanges` do not
+# care which record they are on.
+
+
+def seed_editable_mailing(side, mailing_id=None):
+    return markup.seed_editable_mailing_fixture(side, RUN, mailing_id)
+
+
+def leave_editable(side, fixture, **kwargs):
+    return markup._mailing_editable_leaving(
+        side, fixture, fixture["extra"], "/screen",
+        pictures=None, stored={}, notes="", **kwargs)
+
+
+def test_a_database_with_no_mailing_at_all_gets_one_the_editable_check_made():
+    """#276's reading: on a fresh install, a catch-up database or the local
+    add-on's own, this check recorded `NOT-RUN` and measured nothing."""
+    side = FakeSide()
+    fixture = seed_editable_mailing(side)
+    mailing_id = fixture["mailing_id"]
+    assert fixture["scratch_mailing"] is not None
+    assert fixture["extra"]["mailing_source"] == "created"
+    assert side.mailings[mailing_id]["subject"] == markup.scratch_task_name(RUN)
+    # The body the designer will open on, seeded over RPC so the measured value
+    # is exactly the seeded one.
+    assert side.mailings[mailing_id]["body_arch"] == markup.mailing_body_value(RUN)
+    assert fixture["extra"]["fixture"]["mailing_id"] == mailing_id
+    assert fixture["extra"]["fixture"]["mailing_reclaimed"] is False
+
+
+def test_the_editable_check_does_not_save_over_a_real_campaign():
+    """The decision this issue owns, and the reason it differs from #274's.
+
+    This check *saves*: a borrowed row would keep this run's marker body in both
+    `body_arch` and `body_html` -- the field that leaves the installation with
+    the mail -- if the run were killed between the save and the restore, or taken
+    without `--cleanup`, which is optional. So a real draft on the database is
+    left exactly as it was found, and the check builds its own row beside it.
+    """
+    side = FakeSide(mailings={4: {"state": "draft", "subject": "Real campaign",
+                                  "body_arch": BORROWED, "body_html": BORROWED}})
+    fixture = seed_editable_mailing(side)
+    assert fixture["mailing_id"] != 4
+    assert fixture["extra"]["mailing_source"] == "created"
+    assert side.mailings[4]["body_arch"] == BORROWED
+    assert side.mailings[4]["body_html"] == BORROWED
+
+    outcome = leave_editable(side, fixture, cleanup=True)
+    assert 4 in side.mailings and side.mailings[4]["body_arch"] == BORROWED
+    assert fixture["mailing_id"] not in side.mailings
+    assert outcome["extra"]["fixture_removed"] == {"mailing": True}
+    # Nothing was borrowed, so nothing may report a borrowed body put back.
+    assert "body_restored" not in outcome["extra"]
+
+
+def test_the_editable_check_reclaims_a_scratch_mailing_it_left_behind():
+    """`--cleanup` is optional, so a run without it leaves this check's scratch
+    mailing on the database -- and `--surface both` leaves the ingress surface's
+    for the public surface to find. Reclaiming it is what stops a row per run
+    accumulating under a name no `--cleanup` would ever reach, because this
+    check no longer searches for anything else."""
+    earlier = markup.scratch_task_name("WOOW-MARKUP-20261003T010101Z")
+    side = FakeSide(mailings={5: {"state": "draft", "subject": earlier,
+                                  "body_arch": "<p>an earlier fixture</p>",
+                                  "body_html": False}})
+    fixture = seed_editable_mailing(side)
+    assert fixture["mailing_id"] == 5
+    assert fixture["extra"]["mailing_source"] == "reclaimed"
+    assert fixture["extra"]["fixture"]["mailing_reclaimed"] is True
+    assert not side.did("mailing.mailing", "create")
+
+    outcome = leave_editable(side, fixture, cleanup=True)
+    assert 5 not in side.mailings
+    assert outcome["extra"]["fixture_removed"] == {"mailing": True}
+    assert "body_restored" not in outcome["extra"]
+
+
+def test_a_real_campaign_is_never_reclaimed_by_a_subject_that_merely_looks_like_one():
+    """The search is `=like` on the prefix and the read-back repeats the test, so
+    a real campaign that happens to quote the words is not deleted. It is not
+    borrowed either: this check builds its own."""
+    mentions = "Re: " + markup.SCRATCH_NAME_PREFIX + "what is this?"
+    side = FakeSide(mailings={6: {"state": "draft", "subject": mentions,
+                                  "body_arch": BORROWED, "body_html": BORROWED}})
+    fixture = seed_editable_mailing(side)
+    assert fixture["mailing_id"] != 6
+    assert fixture["extra"]["mailing_source"] == "created"
+    leave_editable(side, fixture, cleanup=True)
+    assert side.mailings[6]["body_arch"] == BORROWED
+
+
+def test_mailing_id_is_the_one_way_the_editable_check_still_borrows():
+    """The operator named the row, so it is reused, not created, not deleted --
+    and its two fields are written back, which is the whole reason the restore
+    stays in this check at all."""
+    side = FakeSide(mailings={9: {"state": "done", "subject": "Sent",
+                                  "body_arch": BORROWED, "body_html": BORROWED}})
+    fixture = seed_editable_mailing(side, mailing_id=9)
+    assert fixture["mailing_id"] == 9 and fixture["scratch_mailing"] is None
+    assert fixture["extra"]["mailing_source"] == "given"
+    assert not side.did("mailing.mailing", "create")
+    assert not side.did("mailing.mailing", "search")
+    assert side.mailings[9]["body_arch"] != BORROWED, "the seed overwrote the body"
+
+    outcome = leave_editable(side, fixture, cleanup=True)
+    assert 9 in side.mailings
+    assert side.mailings[9]["body_arch"] == BORROWED
+    assert side.mailings[9]["body_html"] == BORROWED
+    assert outcome["extra"]["body_restored"] is True
+    assert not side.did("mailing.mailing", "unlink")
+    assert outcome["extra"]["fixture_removed"] == {}
+
+
+def test_a_borrowed_mailing_is_restored_even_when_the_check_gave_up_early():
+    """Three of the browser half's four exits are give-up paths, and the body was
+    seeded over RPC *before* the first navigation. A `--cleanup` run that gave up
+    at the iframe used to leave this run's marker body in `body_arch`, because the
+    restore sat only on the path that had saved."""
+    side = FakeSide(mailings={9: {"state": "draft", "subject": "Real campaign",
+                                  "body_arch": BORROWED, "body_html": BORROWED}})
+    fixture = seed_editable_mailing(side, mailing_id=9)
+    outcome = leave_editable(side, fixture, cleanup=True)
+    assert side.mailings[9]["body_arch"] == BORROWED
+    assert outcome["extra"]["body_restored"] is True
+
+
+def test_the_two_mailing_checks_differ_only_in_whether_they_borrow():
+    """One seam, and the decision each check makes on it. The document check does
+    not save, so borrowing a draft costs its owner a `body_arch` this run writes
+    back; the editable check saves, so it builds its own."""
+    real = {4: {"state": "draft", "subject": "Real campaign",
+                "body_arch": BORROWED, "body_html": BORROWED}}
+    borrowing = markup.fixture_mailing(FakeSide(mailings=dict(real)), RUN, None, borrow=True)
+    assert (borrowing["mailing_id"], borrowing["source"]) == (4, "found")
+    assert borrowing["scratch"] is None
+
+    building = markup.fixture_mailing(FakeSide(mailings=dict(real)), RUN, None, borrow=False)
+    assert building["source"] == "created" and building["mailing_id"] != 4
+    assert building["scratch"] is not None
+
+
+def test_the_scratch_search_reads_the_name_the_seed_writes():
+    """The round trip the reclaim rests on, now that it is a `search` and not a
+    read of whatever the state search happened to return first."""
+    side = FakeSide(mailings={
+        3: {"state": "draft", "subject": "Real campaign"},
+        4: {"state": "done", "subject": markup.scratch_task_name(RUN)},
+        5: {"state": "draft", "subject": markup.scratch_task_name(RUN)},
+    })
+    # Not the real campaign, and not a scratch row the designer would render
+    # readonly: the state bound is the lookup's own.
+    assert markup.scratch_mailing_id(side) == 5
+    assert markup.scratch_mailing_id(FakeSide()) is None
+
+
+def test_a_seed_that_fails_after_making_the_editable_mailing_removes_it():
+    """`run_check` discards a handler's return value when it raises, so the row
+    would be on the host with nothing in the evidence naming it."""
+    side = FakeSide(fail_write=True)
+    with pytest.raises(RuntimeError, match="body could not be written"):
+        seed_editable_mailing(side)
+    assert not side.mailings
+
+
+def test_an_editable_seed_that_could_not_remove_its_mailing_says_so(capsys):
+    """The console is the only place left: `extra` never reaches the evidence
+    from a seeder that raises."""
+    side = FakeSide(fail_write=True, fail_unlink=True)
+    with pytest.raises(RuntimeError, match="body could not be written"):
+        seed_editable_mailing(side)
+    said = capsys.readouterr().err
+    assert "mailing-editable left a fixture behind" in said
+    assert str(next(iter(side.mailings))) in said
+    assert '"mailing": false' in said
+
+
+def test_the_editable_check_gives_up_on_no_database_of_its_own():
+    """The `NOT-RUN` sentence #276 is about, gone from both halves."""
+    source = (inspect.getsource(markup.do_mailing_editable)
+              + inspect.getsource(markup._mailing_after_seeding))
+    assert "on this database" not in source
+
+
+def test_the_editable_check_declares_the_rows_it_now_creates():
+    """`read_only_first` orders on this flag and the register describes the
+    check by it; the check wrote before #276 and creates a row now."""
+    assert markup.CHECKS["mailing-editable"]["writes"] is True
