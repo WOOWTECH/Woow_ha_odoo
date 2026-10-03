@@ -301,14 +301,70 @@
   which is in no RPC-seeded value; it is recorded and not judged, because a
   verdict there would make this check's `PARITY` turn on a mechanism that is not
   its subject.
-- One thing the review found that is **not** fixed here: a *reclaimed* scratch
-  mailing's body links the public `ir.attachment` an **earlier** run created, and
-  that attachment is in no fixture dict the reclaiming run holds, so nothing
-  removes it. It predates #276 -- #274's reclaim is where it starts -- and the
-  two mailing checks now sharing one scratch-subject prefix only adds a second
-  way to reach it. Filed as #277 with the shape of the fix; the docstrings and
-  the module's "`--cleanup` removes all five" now name the gap instead of
-  implying it does not exist.
+- One thing the review found that is not fixed in #276 itself: a *reclaimed*
+  scratch mailing's body links the public `ir.attachment` an **earlier** run
+  created, and that attachment is in no fixture dict the reclaiming run holds, so
+  nothing removes it. It predates #276 -- #274's reclaim is where it starts --
+  and the two mailing checks now sharing one scratch-subject prefix only adds a
+  second way to reach it. Filed as #277 and fixed in the entry below.
+- **A reclaim deleted the mailing and stranded the attachment its body linked**
+  (#277). `--cleanup` removed two things: `fixture["attachment"]`, the attachment
+  *this* run created, and the scratch `mailing.mailing`, whoever made it. So a
+  run of `media-document-mailing` taken without `--cleanup` left scratch mailing
+  M carrying `<a href="/web/content/<A>" ...>` for the public attachment A it
+  had created; a later run reclaimed M, deleted it, and A survived -- reachable
+  from nothing, because a fixture attachment is only ever named in the `fixture`
+  block of the run that made it. The one-check case is #274's; #276 added the
+  second way to reach it, since both mailing checks now write the same
+  `SCRATCH_NAME_PREFIX` subject and so `mailing-editable` can reclaim a row
+  `media-document-mailing` left.
+- The litter is host hygiene and not a misreading: a stranded `public=True`
+  attachment named `woow-document-fixture-<run id>.txt` is listed **first** by
+  the media dialog's own `order: 'id desc'` -- exactly the property
+  `create_fixture_attachment` relies on -- so an old run's leftover is what the
+  next run's tile list shows until that run creates its own. Nothing is
+  misjudged either way, because every media check reads the tile it built *by
+  name*.
+- The fix reads the ids out of the body it is about to overwrite.
+  `reclaimable_scratch_mailing` now reads `body_arch` in the same call as the
+  subject test -- the last moment that value says anything, because the seeder's
+  own body write replaces the href and the delete takes the row -- and
+  `reclaim_stranded_attachments` takes `/web/content/(\d+)` out of it and unlinks
+  those rows. **The bound is `scratch_mailing`'s own `body_arch`, and it is what
+  makes reading ids out of markup sound**: only a row whose subject carried
+  `SCRATCH_NAME_PREFIX` has that key, so the body is this driver's own fixture
+  body and the ids in it are this driver's. A row this run created carries no
+  body, and a row it borrowed -- `found`, or named by `--mailing-id` -- has no
+  `scratch_mailing` dict at all, so neither a real campaign's attachments nor a
+  real company's can reach the list.
+- **The removal goes with the reclaim and not with `--cleanup`**, which is the
+  asymmetry the fix turns on and the second half of the leak. `--cleanup` asks
+  "leave the host as this run found it", and for a row this run made that is the
+  whole question; these attachments are an *earlier* run's, already abandoned,
+  and the seeding destroys the only handle on them whatever the flag says. A
+  reclaim without `--cleanup` therefore left a mailing that no longer named the
+  attachment, and the next `--cleanup` run read a body naming nothing and deleted
+  the row -- stranding it exactly as before. It is also the first step inside the
+  seeder's guard, ahead of the attachment this run builds, because every step
+  below it can fail and the compensation that follows deletes the reclaimed row
+  the ids are read from.
+- Two details are deliberate. The pattern is **unanchored**, because the litter
+  was left by a check that *saves* and #238's whole subject is that a save may
+  store the href prefixed. And the ids are filtered through a `search` before the
+  `unlink`, because unlinking an id that is already gone is a `MissingError` and
+  a body naming a deleted attachment is reachable -- it is what a run whose
+  mailing unlink failed leaves behind, and failing a reclaim over litter that is
+  already gone would keep the live litter alive.
+- Scoping the subject prefix per check was the alternative and is **not** the
+  fix: it addresses only the cross-check half and leaves the one-check case,
+  which is the one that already existed. The ids and the outcome are recorded in
+  `extra["fixture"]` (`reclaimed_attachment_ids`,
+  `reclaimed_attachments_removed`) and the seeders' compensation path prints both
+  when the removal came back `false` -- `run_check` discards a handler's return
+  value on a raise, so that console line is the only place they can appear from
+  there, and the reclaim's outcome cannot ride in `fixture_removed` because the
+  reclaim ran before anything in the seeder could fail. The module's
+  "`--cleanup` removes all five" no longer declares a gap beside it.
 - **A generic literal rewrite reached an ORM *search pattern*, so the media
   dialog's Documents tab listed every generated asset bundle** (#271, found by
   #266's run beside #239's document line and filed separately because it is not

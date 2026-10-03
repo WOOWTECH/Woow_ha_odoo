@@ -1250,6 +1250,12 @@ class FakeSide:
                  "mimetype": self.attachments[key].get("mimetype"),
                  "image_src": False} for key in args[0]]
 
+    def _ir_attachment_search(self, args, kwargs):
+        """The id filter #277's reclaim makes, so a dangling href is dropped
+        rather than raising the `MissingError` a real `unlink` would."""
+        wanted = next(clause[2] for clause in args[0] if clause[0] == "id")
+        return [key for key in sorted(self.attachments) if key in wanted]
+
     def _ir_attachment_unlink(self, args, kwargs):
         if self.fail_unlink:
             raise RuntimeError("the attachment could not be unlinked")
@@ -1474,9 +1480,14 @@ def test_the_name_the_seed_writes_is_the_name_the_reclaim_reads():
     `scratch_task_name` writes, `reclaimable_scratch_mailing` must recognise."""
     assert markup.scratch_task_name(RUN).startswith(markup.SCRATCH_NAME_PREFIX)
     side = FakeSide(mailings={3: {"state": "draft",
-                                  "subject": markup.scratch_task_name(RUN)}})
+                                  "subject": markup.scratch_task_name(RUN),
+                                  "body_arch": "<p>an earlier fixture</p>"}})
+    # `body_arch` comes back in the same call as the test, because this is the
+    # last moment it says anything: the seeder's body write replaces the href it
+    # carries and the delete takes the row (#277).
     assert markup.reclaimable_scratch_mailing(side, 3) == {
-        "id": 3, "subject": markup.scratch_task_name(RUN), "state": "draft"}
+        "id": 3, "subject": markup.scratch_task_name(RUN), "state": "draft",
+        "body_arch": "<p>an earlier fixture</p>"}
 
 
 def test_a_compensation_that_could_not_remove_its_rows_says_so(capsys):
@@ -1691,3 +1702,275 @@ def test_the_editable_check_declares_the_rows_it_now_creates():
     """`read_only_first` orders on this flag and the register describes the
     check by it; the check wrote before #276 and creates a row now."""
     assert markup.CHECKS["mailing-editable"]["writes"] is True
+
+
+# --- #277: a reclaim deletes the attachments the reclaimed body links ----------
+#
+# `--cleanup` removed the attachment *this* run created and the scratch mailing,
+# whoever made it. So a run taken without `--cleanup` left mailing M whose
+# `body_arch` links public attachment A, and the next run reclaimed and deleted
+# M -- stranding A, which is in no fixture dict any run holds afterwards. A
+# scratch row's body is only ever this driver's own fixture body, so the
+# attachment ids in it are this driver's and removing them keeps "delete what
+# the driver made" true.
+
+EARLIER = "WOOW-MARKUP-20261003T010101Z"
+
+
+def earlier_document_body(attachment_id, **overrides):
+    """The body an earlier run's `media-document-mailing` left on its scratch row."""
+    attachment = dict(ATTACHMENT, id=attachment_id, **overrides)
+    return markup.mailing_document_body_value(EARLIER, attachment)
+
+
+def scratch_with_document(attachment_id, body=None):
+    """A FakeSide carrying that earlier run's litter: the mailing and its attachment."""
+    side = FakeSide(mailings={5: {
+        "state": "draft", "subject": markup.scratch_task_name(EARLIER),
+        "body_arch": body if body is not None else earlier_document_body(attachment_id),
+        "body_html": False}})
+    side.attachments[attachment_id] = {"name": "woow-document-fixture-old.txt",
+                                       "mimetype": "text/plain", "public": True}
+    return side
+
+
+def test_a_reclaimed_mailing_s_attachment_goes_with_it():
+    """The one-check case, which predates #276: run the document check without
+    `--cleanup`, run it again, and the public attachment the first run's body
+    links must not survive the second run's reclaim. It goes with the **reclaim**
+    and not with the cleanup, so it is already gone when the seed returns."""
+    side = scratch_with_document(77)
+    fixture = seed_document_mailing(side)
+    assert fixture["extra"]["mailing_source"] == "reclaimed"
+    assert fixture["attachment"]["id"] != 77, "this run built its own"
+    assert 77 not in side.attachments
+    assert fixture["extra"]["fixture"]["reclaimed_attachments_removed"] is True
+
+    outcome = leave(side, fixture, cleanup=True)
+    assert 5 not in side.mailings
+    # The reclaim is not part of this run's fixture, so it is not in the key
+    # that reports what the cleanup removed.
+    assert outcome["extra"]["fixture_removed"] == {"attachment": True, "mailing": True}
+    assert not side.attachments, "the earlier run's attachment is still on the host"
+
+
+def test_a_run_without_cleanup_still_takes_the_reclaimed_attachment():
+    """**The half `--cleanup` cannot own**, and the review of the first cut of
+    this fix is where it came from. The seeder's body write replaces the only
+    href naming the stranded row and runs whatever the flag says, so a reclaim
+    without `--cleanup` left a mailing that no longer named the attachment -- and
+    the next `--cleanup` run then read a body naming nothing and deleted the row,
+    stranding it for good. `--cleanup` asks "leave the host as this run found
+    it"; an earlier run's abandoned litter is not an answer to that question."""
+    side = scratch_with_document(77)
+    fixture = seed_document_mailing(side)
+    outcome = leave(side, fixture, cleanup=False)
+    assert 77 not in side.attachments
+    # Everything this run owns is still there, which is what no `--cleanup` means.
+    assert 5 in side.mailings
+    assert fixture["attachment"]["id"] in side.attachments
+    assert "fixture_removed" not in outcome["extra"]
+
+
+def test_the_reclaim_runs_before_the_attachment_this_run_builds():
+    """It is the first step inside the seeder's guard, because every step after
+    it can fail and the compensation deletes the reclaimed row -- taking the
+    body those ids are read from with it."""
+    side = scratch_with_document(77)
+    side.fail_attachment = True
+    with pytest.raises(RuntimeError, match="attachment could not be created"):
+        seed_document_mailing(side)
+    assert 77 not in side.attachments
+    assert not side.mailings, "the reclaimed row was still deleted"
+
+
+def test_the_editable_check_reclaiming_the_other_check_s_mailing_takes_its_attachment():
+    """#276's half: both mailing checks now write the same `SCRATCH_NAME_PREFIX`
+    subject, so `mailing-editable` can reclaim a row `media-document-mailing`
+    left -- and it builds no attachment of its own to confuse the reading."""
+    side = scratch_with_document(77)
+    fixture = seed_editable_mailing(side)
+    assert fixture["mailing_id"] == 5
+    assert fixture["extra"]["mailing_source"] == "reclaimed"
+
+    assert 77 not in side.attachments, "the reclaim took it, not the cleanup"
+    outcome = leave_editable(side, fixture, cleanup=True)
+    assert outcome["extra"]["fixture_removed"] == {"mailing": True}
+    assert not side.attachments and 5 not in side.mailings
+
+
+def test_the_ids_are_read_off_the_reclaim_and_not_off_the_seeded_body():
+    """The bound is `scratch_mailing`'s own `body_arch`, which only
+    `reclaimable_scratch_mailing` sets. `fixture["before"]` is the same value for
+    a reclaim, but it is *not* the same thing: it is read for a borrowed row too,
+    and reading somebody's campaign for attachment ids is the one thing this must
+    never do."""
+    body = '<a href="/web/content/77?download=true"></a>'
+    assert markup.reclaimed_attachment_ids(
+        {"scratch_mailing": {"id": 5, "body_arch": body}}) == [77]
+    assert markup.reclaimed_attachment_ids({"before": {"body_arch": body}}) == []
+    # A row this run created: `create_fixture_mailing` returns no body at all.
+    assert markup.reclaimed_attachment_ids({"scratch_mailing": {"id": 5}}) == []
+
+
+def test_the_ids_a_reclaim_will_delete_are_in_the_record():
+    """`extra["fixture"]` is what a later reader consults to know what this run
+    is answerable for -- and the only place the ids appear when the unlink comes
+    back false."""
+    side = scratch_with_document(77)
+    fixture = seed_document_mailing(side)
+    assert fixture["extra"]["fixture"]["reclaimed_attachment_ids"] == [77]
+    assert fixture["extra"]["fixture"]["mailing_reclaimed"] is True
+
+
+def test_a_reclaimed_body_naming_two_attachments_loses_both():
+    """The body is read for ids rather than for the one id this driver's template
+    writes, because a reclaimed row's body is whatever an earlier run of *either*
+    mailing check left in it."""
+    side = scratch_with_document(77, body=(
+        '<div class="o_layout"><p>%s</p><p>%s</p><p>%s</p></div>' % (
+            markup.marker_for(EARLIER),
+            markup.document_link_markup(dict(ATTACHMENT, id=77)),
+            markup.document_link_markup(dict(ATTACHMENT, id=78)))))
+    side.attachments[78] = {"name": "woow-document-fixture-older.txt",
+                            "mimetype": "text/plain", "public": True}
+    fixture = seed_document_mailing(side)
+    assert fixture["extra"]["fixture"]["reclaimed_attachment_ids"] == [77, 78]
+    leave(side, fixture, cleanup=True)
+    assert not side.attachments
+
+
+def test_a_borrowed_campaign_s_own_attachments_are_never_unlinked():
+    """The whole reason the scan is bounded by the reclaim. A real campaign's
+    body links a real company's real attachments; this driver deletes what it
+    made, and it did not make those."""
+    body = ('<div class="o_layout"><p>our newsletter</p>'
+            '<a href="/web/content/77?download=true">the price list</a></div>')
+    side = FakeSide(mailings={4: {"state": "draft", "subject": "Real campaign",
+                                  "body_arch": body, "body_html": body}})
+    side.attachments[77] = {"name": "price-list.pdf", "mimetype": "application/pdf"}
+    fixture = seed_document_mailing(side)
+    assert fixture["extra"]["mailing_source"] == "found"
+    # Not in the record either: `extra["fixture"]` says what this run will
+    # delete, and naming somebody's price list there is its own wrong reading.
+    assert "reclaimed_attachment_ids" not in fixture["extra"]["fixture"]
+
+    outcome = leave(side, fixture, cleanup=True)
+    assert 77 in side.attachments
+    assert outcome["extra"]["fixture_removed"] == {"attachment": True}
+    assert "reclaimed_attachments" not in outcome["extra"]["fixture_removed"]
+    assert side.mailings[4]["body_arch"] == body
+
+
+def test_a_mailing_the_operator_named_keeps_its_attachments():
+    """`--mailing-id`'s meaning is unchanged: do not look, do not create, do not
+    delete -- and that reaches the rows its body links as well as the row."""
+    body = ('<div class="o_layout"><p>sent</p>'
+            '<a href="/web/content/77?download=true">the price list</a></div>')
+    side = FakeSide(mailings={9: {"state": "done", "subject": "Sent",
+                                  "body_arch": body, "body_html": body}})
+    side.attachments[77] = {"name": "price-list.pdf", "mimetype": "application/pdf"}
+    fixture = seed_document_mailing(side, mailing_id=9)
+    assert "reclaimed_attachment_ids" not in fixture["extra"]["fixture"]
+    outcome = leave(side, fixture, cleanup=True)
+    assert 77 in side.attachments
+    assert "reclaimed_attachments" not in outcome["extra"]["fixture_removed"]
+
+
+def test_a_mailing_this_run_made_names_no_reclaimed_attachment():
+    """A created row's body is empty when it is read, so there is nothing to
+    scan -- and a key saying "nothing to remove" would read as a removal."""
+    side = FakeSide()
+    fixture = seed_document_mailing(side)
+    assert "reclaimed_attachment_ids" not in fixture["extra"]["fixture"]
+    outcome = leave(side, fixture, cleanup=True)
+    assert outcome["extra"]["fixture_removed"] == {"attachment": True, "mailing": True}
+
+
+def test_a_href_whose_attachment_is_already_gone_does_not_block_the_reclaim():
+    """The dangling case is reachable: `_remove_mailing_fixture` unlinks the
+    attachment before the mailing and reports each separately, so a run whose
+    mailing unlink failed left exactly this -- a body linking an id that no
+    longer exists. Unlinking a missing id is a `MissingError`, which would make
+    the reclaim fail for litter that is already gone, so the ids are filtered
+    through a search first."""
+    side = scratch_with_document(77)
+    del side.attachments[77]
+    fixture = seed_document_mailing(side)
+    assert fixture["extra"]["fixture"]["reclaimed_attachments_removed"] is True
+    assert all(77 not in call[2][0] for call in side.did("ir.attachment", "unlink"))
+    outcome = leave(side, fixture, cleanup=True)
+    assert outcome["extra"]["fixture_removed"] == {"attachment": True, "mailing": True}
+    assert 5 not in side.mailings
+
+
+def test_a_reclaimed_attachment_that_could_not_be_removed_is_reported_not_swallowed():
+    """`remove_website_fixture_page`'s reason, and `_remove_mailing_fixture`'s:
+    a silent `except` reads as "removed" for a public attachment still on the
+    host."""
+    side = scratch_with_document(77)
+    side.fail_unlink = True
+    fixture = seed_document_mailing(side)
+    assert fixture["extra"]["fixture"]["reclaimed_attachments_removed"] is False
+    assert fixture["extra"]["fixture"]["reclaimed_attachment_ids"] == [77]
+    assert 77 in side.attachments
+    # The seed itself is unaffected: the litter is not what this check measures.
+    assert side.mailings[5]["body_arch"] == markup.mailing_document_body_value(
+        RUN, fixture["attachment"])
+
+
+def test_a_seeder_that_could_not_remove_a_reclaimed_attachment_names_it(capsys):
+    """`extra` -- and with it `fixture_removed` -- never reaches the evidence from
+    a seeder that raises, so the ids have to be on the console or nowhere."""
+    side = scratch_with_document(77)
+    side.fail_write = True
+    side.fail_unlink = True
+    with pytest.raises(RuntimeError, match="body could not be written"):
+        seed_document_mailing(side)
+    said = capsys.readouterr().err
+    assert "media-document-mailing left a fixture behind" in said
+    assert '"reclaimed_attachment_ids": [77]' in said
+    assert '"reclaimed_attachments_removed": false' in said
+
+
+def test_a_failed_reclaim_is_named_even_when_the_fixture_came_off_cleanly(capsys):
+    """`removed` cannot carry the reclaim's outcome -- the reclaim ran before
+    anything in the seeder could fail -- so the console condition reads it from
+    the record instead. Otherwise a compensation whose mailing and attachment
+    came off cleanly would say nothing at all about the public attachment it
+    could not remove, and `extra` never reaches the evidence from a seeder."""
+    side = scratch_with_document(77)
+    extra = {"fixture": {"reclaimed_attachment_ids": [77],
+                         "reclaimed_attachments_removed": False}}
+    fixture = {"mailing_id": 5, "scratch_mailing": dict(side.mailings[5], id=5),
+               "attachment": None, "before": {}, "extra": extra}
+    markup._abandon_mailing_fixture(side, fixture, extra, "media-document-mailing")
+    assert 5 not in side.mailings, "the row itself came off cleanly"
+    said = capsys.readouterr().err
+    assert '"reclaimed_attachment_ids": [77]' in said
+    assert '"reclaimed_attachments_removed": false' in said
+    assert '"mailing": true' in said
+
+
+def test_the_scan_reads_an_href_the_designer_rewrote_under_the_prefix():
+    """The litter this reclaim finds was left by a check that *saves*, and the
+    whole subject of #238 is that the save may store the href prefixed. The id
+    is found inside the longer path for the same reason the pattern is not
+    anchored."""
+    side = scratch_with_document(77, body=(
+        '<div class="o_layout"><p>%s</p>'
+        '<a class="o_image" href="/abcd1234_odoo/web/content/77?download=true"></a>'
+        '</div>' % markup.marker_for(EARLIER)))
+    fixture = seed_document_mailing(side)
+    assert fixture["extra"]["fixture"]["reclaimed_attachment_ids"] == [77]
+    leave(side, fixture, cleanup=True)
+    assert not side.attachments
+
+
+def test_the_module_no_longer_declares_a_gap_in_what_cleanup_removes():
+    """The docstring said `--cleanup` "removes all five, with one gap", and the
+    gap was this. A reader takes that paragraph as the account of what a run
+    leaves behind, so it is wrong in either direction."""
+    writing = markup.__doc__.split("Writing:")[1].split("**The ambient")[0]
+    assert "with one gap" not in writing
+    assert "reclaimed" in writing and "#277" in writing

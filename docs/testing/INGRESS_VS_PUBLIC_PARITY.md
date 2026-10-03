@@ -1239,10 +1239,51 @@ campaign）：改用 `scratch_mailing_id`，以 `=like` 從開頭比對 `SCRATCH
 designer 裡**打進去**的標記（RPC 種下的值裡沒有它），只記不判：在那裡下判定會讓這一列的 `PARITY` 取決於
 不是它主題的機制。
 
-審查還找到一件**沒有**在這裡修的：被 reclaim 的 scratch mailing，body 裡連的是**更早那一輪**建的 public
+審查還找到一件沒有在 #276 裡修的：被 reclaim 的 scratch mailing，body 裡連的是**更早那一輪**建的 public
 `ir.attachment`，而那一筆不在這一輪任何 fixture dict 裡，所以沒人刪得掉。它早於 #276（#274 的 reclaim
-就是起點），兩個 mailing check 共用同一個 scratch subject 前綴只是多了一條到得了那裡的路。已開 #277 並
-寫下修法形狀；docstring 與模組開頭的「`--cleanup` 把五個都收掉」現在明寫這個缺口。
+就是起點），兩個 mailing check 共用同一個 scratch subject 前綴只是多了一條到得了那裡的路。已開 #277，
+並於下一段修掉。
+
+**#277（2026-10-03）：reclaim 刪掉了 mailing，卻留下它 body 連著的 attachment。** `--cleanup` 收的是兩
+樣東西——`fixture["attachment"]`（**這一輪**建的那一筆）和 scratch `mailing.mailing`（不論誰建的）。所以
+`media-document-mailing` 不帶 `--cleanup` 跑完會留下 scratch mailing M，它的 `body_arch` 裡帶著自己建的
+public attachment A 的 `<a href="/web/content/<A>" ...>`；之後帶 `--cleanup` 的一輪 reclaim 掉 M 並刪
+除，A 就活下來而且**再也沒人找得到**——fixture attachment 只在建它那一輪的 `fixture` 區塊裡有名字。單一
+check 的那一半是 #274 的；#276 只是多開了第二條路（兩列現在寫同一個 `SCRATCH_NAME_PREFIX` subject，
+`mailing-editable` 於是可以 reclaim 掉 `media-document-mailing` 留下的列）。
+
+這是宿主衛生問題，不是讀數錯誤：一筆殘留的 `public=True`、名為
+`woow-document-fixture-<run id>.txt` 的 attachment，會被 media dialog 自己的 `order: 'id desc'` 排在**第
+一個**（那正是 `create_fixture_attachment` 倚賴的性質），所以下一輪在建自己的 fixture 之前，tile 列表第一
+格看到的就是舊一輪的垃圾。判定不會因此跑掉：每個 media check 都是**按名字**讀自己建的那一格。
+
+修法是在覆蓋 body 之前先把 id 讀出來：`reclaimable_scratch_mailing` 現在和 subject 判定同一個 call 一起
+讀 `body_arch`（那是這個值最後還能說話的時刻——seeder 自己的 body 寫入會換掉那個 href，刪除則把整列帶
+走），`reclaim_stranded_attachments` 從裡面取出 `/web/content/(\d+)` 並 unlink。**界線是
+`scratch_mailing` 自己的 `body_arch`，這也是「從 markup 讀 id」之所以站得住的原因**：只有 subject 帶著
+`SCRATCH_NAME_PREFIX` 的列才有這個 key，所以 body 只會是這個 driver 自己的 fixture body；這一輪自己建的
+列根本沒有 body，而**借**來的列（`found`，或 `--mailing-id` 指定的）連 `scratch_mailing` 這個 dict 都沒
+有——真 campaign 的 body、人家公司的 attachment，兩者都進不了這份清單。
+
+**刪除跟著 reclaim，而不是跟著 `--cleanup`**，這個不對稱就是修法的重點，也是這個洩漏的另一半：
+`--cleanup` 問的是「把宿主還原成這一輪看到的樣子」，對這一輪自己建的列來說那就是全部的問題；但這些
+attachment 是**更早那一輪**的、已經被丟掉的東西，而 seeding 不管旗標怎麼下都會把唯一的把手毀掉。所以
+不帶 `--cleanup` 的 reclaim 會留下一列「已經不指名那個 attachment」的 mailing，下一輪帶 `--cleanup` 的
+跑法讀到的 body 什麼都沒指，把列刪掉——結果和修之前一樣是殘留。它同時也是 seeder guard 裡的第一步（排在
+這一輪自己要建的 attachment 之前），因為它下面每一步都可能失敗，而隨之而來的補償會把 id 所在的那一列刪
+掉。
+
+另外兩個細節是刻意的：pattern 不從開頭錨定（留下垃圾的那一列會**存檔**，而 #238 的主題本來就是存檔可能
+把 href 帶上前綴存下去）；id 在 `unlink` 之前先過一次 `search`——unlink 一個已經不存在的 id 是
+`MissingError`，而「body 指著一筆已刪的 attachment」是到得了的狀態（某一輪 mailing unlink 失敗後留下的
+就是這個樣子），為了已經不在的垃圾讓 reclaim 失敗，等於讓還在的垃圾活下來。
+
+把 subject 前綴改成每個 check 各自一組是另一個選項，而它**不是**修法：那只解掉跨 check 的那一半，單一
+check 的那一半（也就是本來就存在的那一半）還在。id 與結果都記在 `extra["fixture"]`
+（`reclaimed_attachment_ids`、`reclaimed_attachments_removed`），seeder 的補償路徑在刪除回報 `false` 時
+會把兩者都印到 stderr——`run_check` 在 handler raise 時會丟掉它的回傳值，所以那條 console 訊息是它們從那
+條路徑唯一出現的地方；而 reclaim 的結果也沒辦法搭 `fixture_removed` 的車，因為 reclaim 早在 seeder 任何
+一步會失敗之前就跑完了。
 
 
 落差報告最終彙整為：

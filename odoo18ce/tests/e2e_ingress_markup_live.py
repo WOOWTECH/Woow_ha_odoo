@@ -121,10 +121,12 @@ run made its image and document fixtures by hand and cleaned them up, and the
 only things left on the record are a static module asset and a website logo,
 which no dialog lists. `mailing-editable` builds its mailing for the other half
 of the same rule (#276): it measures a **save**, so the record it saves over must
-not be somebody's campaign. `--cleanup` removes all five, with one gap: the
-public attachment an earlier run's *reclaimed* mailing links to is in no fixture
-dict the reclaiming run holds, and is #277. Each marker names its run, so a
-later reader can tell whose text it is. Every other check reads only. The
+not be somebody's campaign. `--cleanup` removes all five. A *reclaimed*
+mailing's own litter goes with the reclaim instead, whatever the flag says: the
+public attachment an earlier run's body links is in no fixture dict the
+reclaiming run holds, and the seeding replaces the href that names it, so the
+ids are read and unlinked as the row is taken over (#277). Each marker names its
+run, so a later reader can tell whose text it is. Every other check reads only. The
 boundary is ADR 0012.
 
 **The ambient rows a run leaves are counted by the run** (#256, #264): each
@@ -1161,15 +1163,21 @@ def reclaimable_scratch_mailing(side, mailing_id: int) -> dict[str, Any] | None:
     row is deleted rather than preserved; see `fixture_mailing` for why reading it
     as borrowed is worse than it sounds.
 
-    What a reclaim does **not** reach is the public `ir.attachment` an earlier
-    run's body links to: it is in no fixture dict this run holds. That is #277,
-    and it predates #276.
+    A reclaim reaches the public `ir.attachment` that row's body links as well
+    as the row: it is in no fixture dict this run holds, so if the reclaim did
+    not remove it nothing ever would (#277). **`body_arch` is read here, in the
+    same call as the test**, because this is the last moment it says anything:
+    the seeder's own body write replaces the href, and the delete takes the row.
+    See `reclaimed_attachment_ids`, which is the only reader of the value, and
+    `extra["fixture"]` for what reaches the evidence -- the body itself does not,
+    for `redact`'s reason.
     """
-    [record] = side.rpc("mailing.mailing", "read", [[mailing_id], ["subject", "state"]])
+    [record] = side.rpc("mailing.mailing", "read",
+                        [[mailing_id], ["subject", "state", "body_arch"]])
     if not (record.get("subject") or "").startswith(SCRATCH_NAME_PREFIX):
         return None
     return {"id": mailing_id, "subject": record.get("subject"),
-            "state": record.get("state")}
+            "state": record.get("state"), "body_arch": record.get("body_arch")}
 
 
 def fixture_mailing(side, run_id: str, mailing_id, *, borrow: bool) -> dict[str, Any]:
@@ -1239,6 +1247,84 @@ def _remove_fixture_attachment(side, attachment: Mapping[str, Any]) -> dict[str,
         return {"attachment": False}
 
 
+# The attachment hrefs a fixture body carries, which is the only handle a
+# reclaim has on the rows an earlier run's body links (#277). Deliberately not
+# anchored at the start: that litter was left by a check which *saves*, and
+# #238's whole subject is that a save may store the href prefixed --
+# `/<token>/web/content/77` names attachment 77 as surely as `/web/content/77`.
+FIXTURE_ATTACHMENT_HREF = re.compile(r"/web/content/(\d+)")
+
+
+def reclaimed_attachment_ids(fixture: Mapping[str, Any]) -> list[int]:
+    """The attachments a reclaimed scratch mailing's body links, and no others (#277).
+
+    Until this, `--cleanup` removed `fixture["attachment"]` -- the attachment
+    *this* run created -- and the scratch mailing, whoever made it. So a run
+    taken without `--cleanup` left a mailing whose `body_arch` links a public
+    `ir.attachment`, the next run reclaimed and deleted that mailing, and the
+    attachment survived in no fixture dict any run holds: a fixture attachment is
+    only ever reachable through the `fixture` block of the run that made it.
+
+    **The bound is `scratch_mailing`'s own `body_arch`, and it is what makes
+    reading ids out of markup sound.** That key is set only by
+    `reclaimable_scratch_mailing`, so the body read here is a row whose subject
+    carried `SCRATCH_NAME_PREFIX` -- this driver's own fixture body, whose
+    attachment ids are this driver's. A row this run **created** comes from
+    `create_fixture_mailing`, which returns no body, and a row this run
+    **borrowed** -- `found`, or named by `--mailing-id` -- has no
+    `scratch_mailing` dict at all: neither can reach this list, which is what
+    keeps a real campaign's attachments out of it.
+    """
+    body = str((fixture.get("scratch_mailing") or {}).get("body_arch") or "")
+    return sorted({int(found) for found in FIXTURE_ATTACHMENT_HREF.findall(body)})
+
+
+def reclaim_stranded_attachments(side, fixture: Mapping[str, Any], extra) -> None:
+    """Delete the litter a reclaimed body links, at the moment the reclaim strands it.
+
+    **Not under `--cleanup`, and the asymmetry with the rest of the fixture is
+    the point.** `--cleanup` answers "leave the host as this run found it", and
+    for a row this run made that is the whole question. These attachments are an
+    *earlier* run's, already abandoned, and the seeding destroys the only handle
+    on them whatever the flag says: the body write below replaces the href, and
+    the row itself goes at the next `--cleanup` run, which by then reads a body
+    naming nothing. So a run without the flag would strand them exactly as
+    before this fix. This is the first step inside the seeder's guard for the
+    same reason -- everything after it can fail, and the compensation deletes the
+    reclaimed row.
+
+    Both the ids and the outcome are recorded, in the `extra["fixture"]` block a
+    later reader consults to know what this run is answerable for. A removal that
+    failed must say so for `_remove_mailing_fixture`'s reason: a silent `except`
+    reads as "removed" for a public attachment still on the host.
+    """
+    stranded = reclaimed_attachment_ids(fixture)
+    if not stranded:
+        return
+    extra["fixture"]["reclaimed_attachment_ids"] = stranded
+    extra["fixture"]["reclaimed_attachments_removed"] = (
+        _remove_reclaimed_attachments(side, stranded)["reclaimed_attachments"])
+
+
+def _remove_reclaimed_attachments(side, ids: Sequence[int]) -> dict[str, bool]:
+    """Unlink the rows a reclaimed body links, through a search that proves they exist.
+
+    `unlink` on an id that is already gone is a `MissingError`, and that case is
+    reachable rather than theoretical: this module unlinks a fixture attachment
+    before its mailing and reports the two separately, so a run whose mailing
+    unlink failed left exactly this -- a body naming an attachment that no longer
+    exists. Letting that fail the reclaim would keep live litter alive over
+    litter that is already gone.
+    """
+    try:
+        live = side.rpc("ir.attachment", "search", [[["id", "in", list(ids)]]])
+        if live:
+            side.rpc("ir.attachment", "unlink", [live])
+        return {"reclaimed_attachments": True}
+    except Exception:  # noqa: BLE001
+        return {"reclaimed_attachments": False}
+
+
 def _remove_fixture_mailing(side, mailing_id: int) -> bool:
     try:
         side.rpc("mailing.mailing", "unlink", [[mailing_id]])
@@ -1276,6 +1362,10 @@ def _remove_mailing_fixture(side, fixture: Mapping[str, Any]) -> dict[str, bool]
     "removed" for a fixture still on the host. A borrowed mailing gets no key at
     all, because "could not be removed" and "was never mine to remove" are
     different readings and a reader checking the host needs to tell them apart.
+
+    The litter a *reclaimed* row's body links is not here but in
+    `reclaim_stranded_attachments` (#277), which runs whether or not this does:
+    the seeding strands those rows under either flag.
     """
     removed: dict[str, bool] = {}
     attachment = fixture.get("attachment")
@@ -1306,12 +1396,22 @@ def _abandon_mailing_fixture(side, fixture: Mapping[str, Any], extra,
     """
     _restore_borrowed_mailing_body(side, fixture, extra)
     removed = _remove_mailing_fixture(side, fixture)
-    if not all(removed.values()):
-        print("%s left a fixture behind: %s" % (check, json.dumps({
+    # The reclaim (#277) ran before anything in the seeder could fail, so its
+    # outcome is not in `removed` -- and a failure there is the same kind of news:
+    # a public attachment still on the host that no later run can name.
+    reclaimed = (extra.get("fixture") or {}).get("reclaimed_attachments_removed")
+    if reclaimed is False or not all(removed.values()):
+        said: dict[str, Any] = {
             "attachment_id": (fixture.get("attachment") or {}).get("id"),
             "mailing_id": (fixture.get("scratch_mailing") or {}).get("id"),
             "removed": removed,
-        }, sort_keys=True)), file=sys.stderr)
+        }
+        stranded = reclaimed_attachment_ids(fixture)
+        if stranded:
+            said["reclaimed_attachment_ids"] = stranded
+            said["reclaimed_attachments_removed"] = reclaimed
+        print("%s left a fixture behind: %s" % (
+            check, json.dumps(said, sort_keys=True)), file=sys.stderr)
 
 
 def onboarding_todo_id(side) -> int | None:
@@ -2778,6 +2878,9 @@ def seed_editable_mailing_fixture(side, run_id: str, mailing_id) -> dict[str, An
                 "mailing_state": scratch["state"],
                 "mailing_reclaimed": chosen["source"] == "reclaimed",
             }
+            # #277, and first because every step below it can fail while the
+            # compensation deletes the row these ids live in.
+            reclaim_stranded_attachments(side, fixture, extra)
         before = side.rpc("mailing.mailing", "read",
                           [[mailing_id], ["body_arch", "body_html"]])[0]
         fixture["before"] = before
@@ -3041,24 +3144,28 @@ def seed_document_mailing_fixture(side, run_id: str, mailing_id) -> dict[str, An
     fixture: dict[str, Any] = {"mailing_id": mailing_id, "scratch_mailing": scratch,
                                "attachment": None, "before": {}, "extra": extra}
     try:
-        attachment = create_fixture_attachment(side, run_id, document=True)
-        fixture["attachment"] = attachment
-        extra["fixture"] = {
-            "attachment_id": attachment["id"],
-            "attachment_name": attachment["name"],
-            "href": "/web/content/%d" % attachment["id"],
-        }
         if scratch is not None:
-            # Beside the attachment, because the two are the same kind of thing
-            # now: rows this run will remove, which a later reader may have to
-            # find. `mailing_reclaimed` separates the row this run made from the
-            # one an earlier run left, since only the first is news.
+            # Beside the attachment below, because the two are the same kind of
+            # thing now: rows this run will remove, which a later reader may have
+            # to find. `mailing_reclaimed` separates the row this run made from
+            # the one an earlier run left, since only the first is news.
             extra["fixture"].update({
                 "mailing_id": scratch["id"],
                 "mailing_subject": scratch["subject"],
                 "mailing_state": scratch["state"],
                 "mailing_reclaimed": source == "reclaimed",
             })
+            # #277, and ahead of the attachment this run builds: every step
+            # below can fail, and the compensation that follows deletes the
+            # reclaimed row whose body these ids are read from.
+            reclaim_stranded_attachments(side, fixture, extra)
+        attachment = create_fixture_attachment(side, run_id, document=True)
+        fixture["attachment"] = attachment
+        extra["fixture"].update({
+            "attachment_id": attachment["id"],
+            "attachment_name": attachment["name"],
+            "href": "/web/content/%d" % attachment["id"],
+        })
         before = side.rpc("mailing.mailing", "read",
                           [[mailing_id], ["body_arch", "body_html"]])[0]
         fixture["before"] = before
