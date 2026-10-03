@@ -1314,6 +1314,34 @@ seeder 在寫 `body_arch` 之前就已經讀過，所以不用多一次 RPC。�
 一張票。
 
 
+**#280（2026-10-03）：`_discard_unsaved_form` 沒辦法回報一次失敗的 discard，而且那一下 click 沒有界。**
+由 #277 的審查找到，程式是 #276 與其審查 commit 的（原本的 #281 是同一個函式的另一半，一起修：timeout 就
+掛在第一半正在改寫回報方式的那一下 click 上）。那個函式把每一種例外都吞掉，而且只會寫
+`extra["discarded"] = True`，docstring 又把**沒有**這個 key 定義成「這個頁面沒有東西要 discard」——於是
+`UNSAVED` 命中、`discard.click()` 逾時（按鈕上蓋著 modal、頁面不再回應）的那一列記錄，讀起來和一張本來就
+乾淨的表單一模一樣。那在 #276 的審查替三個 handler 補上這個呼叫的那幾條路徑上最要緊：錯誤路徑上打字早就
+做完了，表單**一定**是髒的，而緊接著的那一步就是還原，照樣寫下 `body_restored: true`（`do_codeview` 是
+`help_restored: true`），即使 `run_check` 自己的 `side.close()` 會在那張還是髒的表單上觸發 `beforeunload`，
+把這一輪的標記 body 原封不動蓋回去。現在是三種讀數而不是兩種：沒有 key（沒東西要 discard）、`true`
+（discard 成功）、`false`（`UNSAVED` 命中而表單沒有變乾淨——click 失敗、settle 失敗，或連 discard 按鈕都
+找不到），還原自己的讀數於是對得起來。`_remove_mailing_fixture` 逐一回報每次刪除就是同一個理由（一個靜
+默的 `except` 讀起來等於「刪掉了」），而 `e2e_collab_peer_snapshot_live` 的 `discard_quietly` 早就回報這一
+對。讀不到的頁面（frame 已經換掉、context 已經關掉）仍然不加 key：那時候連「有沒有東西要 discard」都不知
+道，和「discard 失敗」不是同一個讀數。
+
+另一半是**那一下 click 本來沒有界**：這個 driver 從頭到尾沒有呼叫 `set_default_timeout`（`TIMEOUT` 只會明
+寫給 `wait_for`），所以 `discard.click()` 吃的是 Playwright 的 30 秒預設。`do_codeview` 的
+`except BaseException` 會先 discard、再用 RPC 把真的 `ir.actions.act_window.help` 寫回去——順序是對的（那
+正是不讓 `beforeunload` 蓋掉還原的原因）——於是操作者按下 Ctrl+C 之後，那 30 秒整整卡在中斷與那筆記錄唯一
+一次還原之間；窗口裡的第二次 Ctrl+C 是 `KeyboardInterrupt`，`_discard_unsaved_form` 的 `except Exception`
+接不到，handler 自己的 `except Exception` 也接不到，標記文字就留在那個 action 上，沒有任何東西還原它。現在
+click 明寫 `timeout=DISCARD_TIMEOUT`（2 秒；按鈕在點之前已經確認存在，頁面也是本機的），既把等待收短，也
+把第二次中斷能落下的窗口收短；中斷真的落下時，`discarded: false` 已經寫進 `extra` 才往外拋。另外兩個
+handler 的錯誤路徑共用同一個函式，所以同一個界也跟著套上。全域 `set_default_timeout` 會動到這個 driver 的
+每一個等待，不是修法；「失敗的 discard 之後要不要跳過還原」也不是——還原仍然要試，那是那筆記錄唯一的機
+會，所以這一票改的是讀數，不是順序。
+
+
 落差報告最終彙整為：
 
 ```

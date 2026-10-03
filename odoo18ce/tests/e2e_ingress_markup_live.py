@@ -676,6 +676,14 @@ VIEWER_IFRAME = HTML_FIELD + " iframe"
 SAVE_BUTTON = ".o_form_button_save"
 DISCARD_BUTTON = ".o_form_button_cancel"
 UNSAVED = ".o_form_status_indicator_buttons:not(.invisible)"
+# The discard click's own bound. No `set_default_timeout` is applied anywhere in
+# this driver -- `TIMEOUT` is only ever passed explicitly -- so a click with no
+# `timeout=` takes Playwright's 30 s default, and `do_codeview`'s interrupt path
+# spends them between the operator's Ctrl+C and the only restore a real
+# `ir.actions.act_window.help` is going to get (#280). The button is asserted
+# present before the click and the page is local, so a couple of seconds is
+# generous.
+DISCARD_TIMEOUT = 2_000
 DIALOG = ".o_dialog .modal-content"
 PICTURES = "img"
 
@@ -723,18 +731,33 @@ def _discard_unsaved_form(side, extra) -> None:
     measured and one nobody could have.
 
     Reported in `extra["discarded"]` rather than silently, because "the form was
-    dirty on the way out" is a reading about the screen; a page with nothing to
-    discard adds no key.
+    dirty on the way out" is a reading about the screen. Three readings, not two
+    (#280): no key at all for a page with nothing to discard, `true` for a
+    discard that came off, and `false` once `UNSAVED` has matched and the form
+    did not come clean -- a modal over the button, a page that stopped
+    responding, no discard button to click. Without that third reading a failed
+    discard is indistinguishable from an already-clean form, while the step after
+    it still stamps `body_restored` / `help_restored` over a write this run's own
+    `beforeunload` can put straight back. `discard_quietly` in
+    `e2e_collab_peer_snapshot_live` reports the same pair for the same reason.
     """
     try:
-        if side.root.locator(UNSAVED).count():
-            discard = side.root.locator(DISCARD_BUTTON).first
-            if discard.count():
-                discard.click()
-                side.settle(2000)
-                extra["discarded"] = True
-    except Exception:  # noqa: BLE001 -- nothing to discard
-        pass
+        if not side.root.locator(UNSAVED).count():
+            return
+    except Exception:  # noqa: BLE001 -- a frame that cannot be read is no reading
+        return
+    # `UNSAVED` matched, so from here on the form is known to be dirty and the
+    # only reading that may say otherwise is a discard that actually came off.
+    extra["discarded"] = False
+    try:
+        discard = side.root.locator(DISCARD_BUTTON).first
+        if not discard.count():
+            return
+        discard.click(timeout=DISCARD_TIMEOUT)
+        side.settle(2000)
+    except Exception:  # noqa: BLE001 -- the reading stays `false`
+        return
+    extra["discarded"] = True
 
 
 def wait_for_editable(side, selector: str = EDITABLE) -> bool:

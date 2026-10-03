@@ -605,6 +605,49 @@
   scope and which is real rather than hypothetical, since on a reclaimed row the
   public surface's `PREFIX-STORED` or `CLEAN` can be the ingress surface's
   leftover value. That half wants an issue of its own.
+- **`_discard_unsaved_form` could not report a discard that failed, and its
+  click was unbounded** (#280, with #281 folded into it -- both defects are in
+  that one function, and the timeout belongs on the very click whose reporting
+  the other half restructures; found by the review of #277, and the code is
+  #276's and its review commit's). The function swallowed every exception and
+  only ever wrote `extra["discarded"] = True`, while its docstring made the
+  **absence** of the key mean "a page with nothing to discard". So `UNSAVED`
+  matching and `discard.click()` timing out -- a modal over the button, a page
+  that stopped responding -- recorded exactly what an already-clean form does.
+  That reading matters most on the recovery paths #276's review added the call
+  to: the typing is already done when a later step fails, so the form is
+  *certainly* dirty, and the step after the discard is the restore, which still
+  stamps `body_restored: true` (`help_restored: true` in `do_codeview`) even
+  though `run_check`'s own `side.close()` can fire `beforeunload` on the
+  still-dirty form and write this run's marker body straight back over it.
+- There are now three readings rather than two: no key for a page with nothing
+  to discard, `true` for a discard that came off, and `false` once `UNSAVED` has
+  matched and the form did not come clean -- a click that failed, a `settle` that
+  failed, or no discard button to click at all. The restore's own reading is then
+  checkable against it. This is the trap `_remove_mailing_fixture` already
+  reports each removal to avoid, and the pair `discard_quietly` in
+  `e2e_collab_peer_snapshot_live` has always reported. A page that cannot be read
+  at all (a frame that navigated away, a context that closed) still adds no key:
+  there "was there anything to discard" is unknown, which is not the same reading
+  as a discard that failed.
+- The click now passes an explicit `timeout=DISCARD_TIMEOUT` (2 s; it is a local
+  click on a button already asserted present). No `set_default_timeout` is
+  applied anywhere in this driver -- `TIMEOUT` is only ever passed explicitly to
+  `wait_for` -- so the click took Playwright's 30 s default, and `do_codeview`'s
+  `except BaseException` runs the discard *ahead* of the RPC that puts a real
+  `ir.actions.act_window.help` back. On Ctrl+C mid-check those 30 s sat between
+  the interrupt and the only restore that record was going to get, and a second
+  Ctrl+C inside the window raises `KeyboardInterrupt`, which neither the
+  discard's `except Exception` nor the handler's own catches -- leaving the marker
+  text on that action with nothing restoring it. The bound shortens both the wait
+  and that window, the other two handlers' recovery paths share the same function
+  and so the same bound, and an interrupt that does land now leaves
+  `discarded: false` in the record on its way out. A global
+  `set_default_timeout` is **not** the fix -- it would change every wait in the
+  driver -- and neither is skipping the restore after a failed discard: it is
+  still the record's only chance, so what changes here is the reading and not the
+  order.
+
 
 ## 0.4.10 — 2026-10-01
 

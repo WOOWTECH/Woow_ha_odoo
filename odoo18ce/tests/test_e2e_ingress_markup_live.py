@@ -880,6 +880,147 @@ def test_the_codeview_check_leaves_the_real_action_s_form_clean():
         < source.index("_discard_unsaved_form(") < source.index("if cleanup:")
 
 
+# --- `_discard_unsaved_form`'s three readings (#280) ---------------------------
+#
+# The function has no browser-free surface of its own beyond these: a page that
+# says whether it is dirty, a button, and a click that either comes off or does
+# not. The readings are what a reader of the record checks the restore against,
+# so they are tested rather than asserted on the source.
+
+
+class DiscardLocator:
+    """One selector on `DiscardPage`, answering only what the seam asks it."""
+
+    def __init__(self, page, selector):
+        self.page = page
+        self.selector = selector
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        if self.page.unreadable:
+            raise RuntimeError("Target page, context or browser has been closed")
+        return 1 if (self.page.dirty if self.selector == markup.UNSAVED
+                     else self.page.button) else 0
+
+    def click(self, **kwargs):
+        self.page.clicks.append(kwargs)
+        if self.page.click_error is not None:
+            raise self.page.click_error
+
+
+class DiscardPage:
+    """A form page as `_discard_unsaved_form` reads it, and the side around it.
+
+    `unreadable` is the frame that navigated away or the context that closed --
+    the case where the seam cannot tell a dirty form from a clean one, and so
+    must not claim either.
+    """
+
+    def __init__(self, *, dirty=True, button=True, click_error=None,
+                 unreadable=False, settle_error=None):
+        self.dirty = dirty
+        self.button = button
+        self.click_error = click_error
+        self.unreadable = unreadable
+        self.settle_error = settle_error
+        self.clicks = []
+        self.settled = []
+
+    @property
+    def root(self):
+        return self
+
+    def locator(self, selector):
+        return DiscardLocator(self, selector)
+
+    def settle(self, ms=800):
+        self.settled.append(ms)
+        if self.settle_error is not None:
+            raise self.settle_error
+
+
+def test_a_page_with_nothing_to_discard_adds_no_key():
+    """The absence of the key is the "already clean" reading, which is why a
+    failed discard may not share it."""
+    extra = {}
+    side = DiscardPage(dirty=False)
+    markup._discard_unsaved_form(side, extra)
+    assert extra == {}
+    assert side.clicks == []
+
+
+def test_a_discard_that_came_off_reads_true():
+    extra = {}
+    side = DiscardPage()
+    markup._discard_unsaved_form(side, extra)
+    assert extra == {"discarded": True}
+    assert len(side.clicks) == 1
+
+
+def test_a_discard_whose_click_failed_reads_false():
+    """A modal over the button, a page that stopped responding: `UNSAVED`
+    matched, so the form is dirty, and the restore that follows is now
+    checkable against a reading that says the discard did not come off."""
+    extra = {}
+    markup._discard_unsaved_form(
+        DiscardPage(click_error=RuntimeError("Timeout 2000ms exceeded")), extra)
+    assert extra == {"discarded": False}
+
+
+def test_a_dirty_form_with_no_discard_button_reads_false():
+    """Same collision as the failed click: the form is dirty and nothing
+    discarded it, so it may not read like a page that was already clean."""
+    extra = {}
+    markup._discard_unsaved_form(DiscardPage(button=False), extra)
+    assert extra == {"discarded": False}
+
+
+def test_a_discard_whose_settle_failed_reads_false():
+    """The click went in but the page never came back, so whether the form is
+    clean is unknown -- and the unknown reading is the one worth checking."""
+    extra = {}
+    markup._discard_unsaved_form(DiscardPage(settle_error=RuntimeError("closed")), extra)
+    assert extra == {"discarded": False}
+
+
+def test_a_page_that_cannot_be_read_adds_no_key():
+    """Nothing was attempted and nothing is known, which is not the same
+    reading as a discard that failed."""
+    extra = {}
+    markup._discard_unsaved_form(DiscardPage(unreadable=True), extra)
+    assert extra == {}
+
+
+def test_the_discard_click_is_bounded_by_a_short_timeout():
+    """No `set_default_timeout` is applied anywhere in this driver, so a click
+    with no `timeout=` takes Playwright's 30 s default. `do_codeview`'s
+    `except BaseException` runs this discard *before* it puts a real
+    `ir.actions.act_window.help` back, so those 30 s sit between an operator's
+    Ctrl+C and the only restore that record will get -- and a second Ctrl+C
+    inside the window raises through to leave the marker text on the action.
+    """
+    side = DiscardPage()
+    markup._discard_unsaved_form(side, {})
+    assert side.clicks and "timeout" in side.clicks[0], \
+        "the discard click takes Playwright's 30 s default"
+    timeout = side.clicks[0]["timeout"]
+    assert 0 < timeout <= 5_000, timeout
+    assert timeout < markup.TIMEOUT
+
+
+def test_an_interrupt_inside_the_discard_leaves_the_failed_reading_and_propagates():
+    """The second Ctrl+C: `KeyboardInterrupt` is not an `Exception`, so it still
+    continues out of the handler -- the record keeps the reading that the
+    discard did not come off rather than nothing at all."""
+    extra = {}
+    with pytest.raises(KeyboardInterrupt):
+        markup._discard_unsaved_form(DiscardPage(click_error=KeyboardInterrupt()), extra)
+    assert extra == {"discarded": False}
+
+
 def test_a_body_html_the_save_never_inlined_is_not_a_pass():
     """Building the row makes `False` the baseline for `body_html`, and an empty
     field is `CLEAN` -- correctly, since there is no prefix in it. So a save that
