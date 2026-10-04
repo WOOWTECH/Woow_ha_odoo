@@ -930,17 +930,28 @@ class DiscardLocator:
 
 
 class DetachedFrame:
-    """The held Ingress frame after the panel re-mounted: every call raises.
+    """The held Ingress frame after the panel re-mounted.
 
-    Playwright's own shape for it -- a frame object that is still a valid
-    reference and whose every operation raises because the frame is gone.
+    The raise comes from the locator's `count()` and **not** from `locator()`,
+    which is Playwright's real shape: `Frame.locator` builds a selector object
+    without touching the browser, so it raises nothing on a frame that has gone,
+    and the detach surfaces at the first call that needs the frame to answer. A
+    fake that raised from `locator()` would pass a seam that built its locator
+    inside the `try` and read it outside.
     """
 
     def __init__(self):
-        self.locators = 0
+        self.counts = 0
 
     def locator(self, selector):
-        self.locators += 1
+        return self
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        self.counts += 1
         raise RuntimeError("Frame was detached")
 
 
@@ -1158,7 +1169,7 @@ def test_a_detached_held_frame_is_unreadable_and_not_an_already_clean_form():
     markup._discard_unsaved_form(side, extra)
     assert extra == {}
     # Asked of the held frame, which raised -- not of the clean replacement.
-    assert detached.locators == 1
+    assert detached.counts == 1
     assert side.root_reads == 0
     assert side.clicks == [] and side.waits == []
 

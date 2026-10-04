@@ -1325,10 +1325,11 @@ seeder 在寫 `body_arch` 之前就已經讀過，所以不用多一次 RPC。�
 `help_restored: true`），即使 `run_check` 自己的 `side.close()` 會在那張還是髒的表單上觸發 `beforeunload`，
 把這一輪的標記 body 原封不動蓋回去。現在是三種讀數而不是兩種：沒有 key（沒東西要 discard）、`true`
 （discard 成功）、`false`（`UNSAVED` 命中而表單沒有變乾淨——click 失敗、找不到可見的 discard 按鈕，或按
-完之後那個未存檔指示器還在），還原自己的讀數於是對得起來。緊接在後的 `settle` **不算**其中一種成因：它跑
-在指示器已經轉 hidden **之後**，這個 key 要回答的問題那時候已經有答案了，所以頁面在那段 sleep 當中關掉，
-也不能把一個已確認的 `true` 翻回「表單被留成髒的」那個讀數——那段 sleep 是為了後面還原的那通 RPC，不是
-discard 的證據。而 `true` 的意思是**表單真的乾淨了**，不是「click 沒有拋例外」：discard 之後等 `UNSAVED`
+完之後那個未存檔指示器還在），還原自己的讀數於是對得起來。當時緊接在後的那一下 `settle` **不算**其中一種
+成因：它跑在指示器已經轉 hidden **之後**，這個 key 要回答的問題那時候已經有答案了，所以頁面在那段 sleep
+當中關掉，也不能把一個已確認的 `true` 翻回「表單被留成髒的」那個讀數。（那段 sleep 當時的說法是「為了後面
+還原的那通 RPC」；#288（見下）確認沒有任何呼叫者需要它、把它拿掉了，所以這一段講的那個順序現在就是函式結
+尾本身。）而 `true` 的意思是**表單真的乾淨了**，不是「click 沒有拋例外」：discard 之後等 `UNSAVED`
 轉 hidden（記錄一乾淨，指示器就又帶上
 `invisible`，這個 selector 就不再命中，而沒有元素的 locator 算 hidden——`discard_form` 一直是這樣讀這個結
 果的），否則一次沒有生效的 discard（上面彈了 dialog、表單因記錄無效而不肯離開）仍會記成 `true`，而
@@ -1361,9 +1362,9 @@ discard 的證據。而 `true` 的意思是**表單真的乾淨了**，不是「
 函式裡：`side.root` 是 property 而不是欄位，Ingress iframe 一旦 detached 它就走
 `_find_frame(wait_s=60)`——而那正是中斷本身的情境；成功的
 discard 之後那一下 `side.settle(2000)` 又會花掉一個 8 秒的 `networkidle`，Odoo 開著的 bus 通常會讓它等到
-逾時才去睡。這兩筆在 #288（見下）之後都已經不在窗口裡了，窗口現在是多長也寫在那一段。這一票真正拿掉的是
-**三倍曝險**：seam 現在只解析 `side.root` 一次、拿到的 frame 一路用到底，而
-不是三個步驟各自去碰那個 property，所以舊碼那三次「有可能花掉一分鐘」的機會現在只剩一次。（是一分鐘、不是
+逾時才去睡。這兩筆在 #288（見下）之後都已經不在窗口裡了，窗口現在是多長、以及 seam 解析的為什麼已經不再是
+`side.root`，都寫在那一段。這一票真正拿掉的是**三倍曝險**：seam 只解析一次、拿到的 frame 一路用到底，而
+不是三個步驟各自去碰那個 property，所以舊碼那三次「有可能花掉一分鐘」的機會剩下一次。（是一分鐘、不是
 三分鐘：`_find_frame` 一有命中的 frame 就回來，完全沒有就掃完一輪 60 秒拋例外，所以一個持續 detached 的
 frame 在舊碼上也只花 60 秒一次；要花到三輪得剛好連續兩次在各自窗口的尾端重新解析成功。）
 
@@ -1446,21 +1447,35 @@ frame 的 side（什麼都還沒跑過）才退回那個會等的解析——面
 修法二：**seam 不再替呼叫者 settle。** 那一下 `side.settle(2000)` 是為了它之後那一步——還原的那通 RPC，
 「它想要頁面安靜」。它不想要：`read_field`/`write_field`、借來的 body 還原、fixture 移除、以及 document
 check 的記錄讀回，全部走 `Side.rpc`，那是從 browser context 的 request API 送出去的，碰不到 page 也碰不到
-frame。那個安靜的頁面沒有任何受益者；而它的代價是實打實的、而且落在最壞的位置。唯一一個可能跟還原搶跑的
-「頁面自己發起的寫入」，也早就被上面那個確認等過了：`Record.discard` 會 `await _askChanges()`，而它除了欄
-位的 commit 之外還會解 `this.mutex.getUnlockedDef()`
-（`web/static/src/model/relational_model/relational_model.js:209-213`），所以已經在飛的那通存檔一定在指示
-器能轉 hidden 之前就落地了。document check 的讀回也因為同一個理由**沒有**補上自己的 settle，而
-`_document_mailing_leaving` 現在把這個判斷寫在它的 docstring 裡。
+frame。那個安靜的頁面沒有任何受益者；而它的代價是實打實的、而且落在最壞的位置。
 
-於是那個窗口現在是 `<= 2 秒` + `<= 15 秒`，discard 一下就成功時則幾乎是零。seam 那三個讀數的形狀與成因一
+那段 sleep **也不是**在保護還原不被「頁面自己發起的寫入」搶跑，這一點值得講精確，因為那正是這個 seam 的全
+部主題。這種存檔有兩種。走 `model.mutex` 的那一種，上面那個確認已經等過了：`Record.discard` 會
+`await _askChanges()`，而它除了欄位的 commit 之外還會解 `this.mutex.getUnlockedDef()`
+（`relational_model.js:209-213`）——而 #263 那個**沒有條件的 `visibilitychange`** 存檔就是這一種，它是
+`root.save()`（`form_controller.js:483-496`），而 `save()` 本身就是 `mutex.exec`（`record.js:226-229`）。
+它等不到的是 `urgentSave`：那個是在 mutex **外面**直接呼叫 `_save`（`record.js:267-272`）。但 `urgentSave`
+只掛在 `beforeunload` 上（`form_controller.js:507`），而 form view 設了
+`useSendBeaconToSaveUrgently: true`（`:383`），所以那通存檔是走 `navigator.sendBeacon` 送出去、發了就不管
+的（`record.js:1014-1033`）：這一側沒有任何等待能界住它，10 秒的 sleep 只是讓那場賽跑比較不容易輸，從來不
+是不可能輸。它的窗口是 `run_check` 自己的 `side.close()`——而那正是 discard 存在的目的：讓那時候沒有東西可
+存。document check 的讀回也因為同樣的理由**沒有**補上自己的 settle，而 `_document_mailing_leaving` 現在把
+這個判斷寫在它的 docstring 裡。
+
+於是這兩個界現在就是 seam 唯一會要求的等待：`<= 2 秒` + `<= 15 秒`，discard 一下就成功時則幾乎是零。但這不
+是「在所有情況下都有界」，而且這次的註解不會再暗示它是（#280 自己的教訓）：seam 那兩個 `Locator.count()`
+都沒有 `timeout=`，因為 `count()` 本來就不等任何東西——可是它仍然需要 renderer 回答，所以在這個函式自己列
+為 `false` 成因之一的「頁面停止回應」上，這裡沒有任何東西有界，而它本來也沒有。seam 那三個讀數的形狀與成因一
 行都沒動——乾淨的頁面與讀不到的頁面都不加 key，指示器轉 hidden 才是 `true`，click 失敗、沒有可見的 discard
 按鈕、指示器始終沒清則是 `false`，`KeyboardInterrupt` 仍然往外拋、仍然留下 `discarded: false`——而 `true`
 仍然寫在「它之後不會有任何會失敗的東西」的位置，那個位置現在就是函式結尾。`DISCARD_TIMEOUT` 與
 `DISCARD_CLEAN_TIMEOUT` 的值不變，那個把第二個釘在存檔預算之上的 Static tier 測試也原封不動。這一票沒有重
 訂那個界，而且它仍然是個觀察項：那個界只能校準、永遠無法證明，所以一次會寫入的 Live run 要盯的是
 `discarded: false` 與 `body_html_inlined: true` **同時**出現——在一個存檔明明完成了 inlining 的 surface 上
-卻被記成 discard 失敗，意思就是那 15 秒太短。
+卻被記成 discard 失敗，意思就是那 15 秒太短。另一件留在原地、而且是開票而不是併進來的事：姊妹 seam
+`e2e_collab_peer_snapshot_live` 的 `discard_form` 仍然讀三次 `side.root`，所以這一票的兩半它都還有——等待
+時間那一半，以及「表單跟著 frame 一起消失時卻記成 `dirty: false`」那個讀數錯誤（#292）。`Side.root_now` 放
+在共用層上，正是那個 seam 需要的東西；但它是另一個 driver 的讀數，有自己的票。
 
 
 落差報告最終彙整為：

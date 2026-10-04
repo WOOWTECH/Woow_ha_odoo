@@ -713,8 +713,14 @@ UNSAVED = ".o_form_status_indicator_buttons:not(.invisible)"
 # `Side.settle` runs an 8 s `networkidle` that Odoo's open bus makes time out
 # before it sleeps. The resolve is now `side.root_now`, which hands back the held
 # frame and never enters that search, and the settle is gone: nothing any caller
-# does after this seam touches a page or a frame. So the interrupt window is
-# `<= 2 s` + `<= 15 s`, and about **nothing** when the discard comes off at once.
+# does after this seam touches a page or a frame. So these two are now the only
+# waits the seam asks for: `<= 2 s` + `<= 15 s`, and about **nothing** when the
+# discard comes off at once. Not a bound on the seam in every case, and this
+# comment will not imply one again: the two `count()` calls take no `timeout=`
+# because `count()` does not wait for anything, but they do need the renderer to
+# answer, so on one of the conditions this function reports `false` for -- "a page
+# that stopped responding" -- nothing here is bounded. Nothing bounded it before
+# either; what the bounds cover is every case where the page still answers.
 DISCARD_TIMEOUT = 2_000
 DISCARD_CLEAN_TIMEOUT = 15_000
 DIALOG = ".o_dialog .modal-content"
@@ -841,12 +847,25 @@ def _discard_unsaved_form(side, extra) -> None:
     # cost was real and in the worst place: `Side.settle` runs an 8 s
     # `networkidle` that Odoo's open bus makes time out and *then* sleeps, about
     # 10 s on every successful discard, all of it between an operator's Ctrl+C
-    # and the only restore that record is going to get (#288). The one
-    # page-initiated write that could have raced a restore is already waited out
-    # by the confirmation above: `Record.discard` awaits `_askChanges`, which
-    # resolves `this.mutex.getUnlockedDef()` as well as the field commits
-    # (`web/static/src/model/relational_model/relational_model.js:209-213`), so
-    # any save already in flight has landed before the indicator can clear.
+    # and the only restore that record is going to get (#288).
+    #
+    # Nor did the sleep protect the restore from a page-initiated save, which is
+    # worth being exact about because it is this seam's whole subject. There are
+    # two, and the confirmation above covers one of them: `Record.discard` awaits
+    # `_askChanges`, which resolves `this.mutex.getUnlockedDef()` as well as the
+    # field commits (`relational_model.js:209-213`), so anything that went
+    # through `model.mutex` has landed before the indicator can clear -- and
+    # `beforeVisibilityChange`, the ungated `visibilitychange` save of #263, is
+    # `root.save()` (`form_controller.js:483-496`), which does
+    # (`record.js:226-229`). The one that is not is `urgentSave`: it calls
+    # `_save` **outside** the mutex (`record.js:267-272`), so
+    # `getUnlockedDef()` returns straight past it. But it is wired to
+    # `beforeunload` only (`form_controller.js:507`), and the form view sets
+    # `useSendBeaconToSaveUrgently: true` (`:383`), so that save leaves over
+    # `navigator.sendBeacon` and is **fire-and-forget** (`record.js:1014-1033`):
+    # no wait on this side bounds it, and a 10 s sleep only made losing the race
+    # less likely, never impossible. That window is `run_check`'s own
+    # `side.close()`, which is what the discard itself exists to make empty.
     extra["discarded"] = True
 
 
@@ -3503,12 +3522,16 @@ def _document_mailing_leaving(side, fixture, extra, screen,
     read-back is an RPC through the request context, so it does not want a quiet
     page for its own sake; what it could want is time for a page-initiated save to
     land before it reads. It does not need to buy that either. When `discarded` is
-    `true` the discard's confirmation has already waited out `_askChanges`, which
-    resolves the model's mutex as well as the field commits, so any save in flight
-    had landed before the indicator cleared. When it is `false` or absent the form
-    was left dirty and no sleep makes this reading sound -- which is exactly what
-    that reading is for, and why the paragraph above bounds the check rather than
-    the session.
+    `true` the discard's confirmation has waited out `_askChanges`, which resolves
+    the model's mutex as well as the field commits, so every save that goes
+    through that mutex -- `root.save()`, which is what the ungated
+    `visibilitychange` of #263 calls -- had landed before the indicator cleared.
+    The one that does not is `urgentSave`, and no sleep bounds that one either: it
+    leaves over `navigator.sendBeacon`, fire-and-forget, in the `beforeunload` this
+    seam exists to find nothing to save. When `discarded` is `false` or absent the
+    form was left dirty and no sleep makes this reading sound -- which is exactly
+    what that reading is for, and why the paragraph above bounds the check rather
+    than the session.
     """
     _discard_unsaved_form(side, extra)
     stored: dict[str, Any] = {}
