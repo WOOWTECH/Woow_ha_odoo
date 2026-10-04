@@ -929,49 +929,73 @@ class DiscardLocator:
             raise RuntimeError("Timeout %sms exceeded" % kwargs.get("timeout"))
 
 
+class DetachedFrame:
+    """The held Ingress frame after the panel re-mounted: every call raises.
+
+    Playwright's own shape for it -- a frame object that is still a valid
+    reference and whose every operation raises because the frame is gone.
+    """
+
+    def __init__(self):
+        self.locators = 0
+
+    def locator(self, selector):
+        self.locators += 1
+        raise RuntimeError("Frame was detached")
+
+
 class DiscardPage:
     """A form page as `_discard_unsaved_form` reads it, and the side around it.
 
     `unreadable` is the frame that navigated away or the context that closed --
     the case where the seam cannot tell a dirty form from a clean one, and so
-    must not claim either.
+    must not claim either. `detached` is the sharper shape of the same case: the
+    side is *holding* a frame that has gone, while the waiting resolve would
+    answer with the replacement the panel has since mounted.
     """
 
     def __init__(self, *, dirty=True, button=True, click_error=None,
-                 unreadable=False, settle_error=None, still_dirty=False,
-                 hidden_first_button=False):
+                 unreadable=False, still_dirty=False,
+                 hidden_first_button=False, detached=None):
         self.dirty = dirty
         self.button = button
         self.click_error = click_error
         self.unreadable = unreadable
-        self.settle_error = settle_error
         # The form that never came clean: the click went in and the unsaved
         # indicator is still up when the wait runs out.
         self.still_dirty = still_dirty
         # A hidden earlier match for `DISCARD_BUTTON`, which `count()` passes and
         # a click can never reach.
         self.hidden_first_button = hidden_first_button
+        self.detached = detached
         self.clicks = []
         self.waits = []
         self.settled = []
-        # How many times the seam reached for `side.root`. On the real
-        # `IngressSide` that property re-resolves through `_find_frame(wait_s=60)`
-        # whenever the iframe is detached, so the count is a bound on how long
-        # this seam can sit in front of the restore it runs ahead of.
+        # How many times the seam reached for each of the two resolves. On the
+        # real `IngressSide`, `root` re-enters `_find_frame(wait_s=60)` whenever
+        # the held frame reports detached, so a read of it is a chance to spend a
+        # minute inside a seam that sits in front of the restore it runs ahead of;
+        # `root_now` hands the held frame back and never enters that search
+        # (#288). Both counted, because which one the seam reaches for is the
+        # difference.
         self.root_reads = 0
+        self.root_now_reads = 0
 
     @property
     def root(self):
         self.root_reads += 1
         return self
 
+    @property
+    def root_now(self):
+        self.root_now_reads += 1
+        return self.detached if self.detached is not None else self
+
     def locator(self, selector):
         return DiscardLocator(self, selector)
 
     def settle(self, ms=800):
         self.settled.append(ms)
-        if self.settle_error is not None:
-            raise self.settle_error
 
 
 def test_a_page_with_nothing_to_discard_adds_no_key():
@@ -1010,20 +1034,31 @@ def test_a_dirty_form_with_no_discard_button_reads_false():
     assert extra == {"discarded": False}
 
 
-def test_a_settle_that_failed_after_the_form_came_clean_still_reads_true():
-    """`settle` runs after the indicator has already gone hidden, so by then
-    whether the form is clean is **known** -- this reading's own question is
-    answered and a page that closes during the sleep may not reopen it. The
-    sleep is there for the restore's RPC that follows, not as evidence about the
-    discard, which is why it cannot turn a confirmed `true` back into the
-    reading that says the form was left dirty."""
+def test_the_seam_does_not_settle_on_a_caller_s_behalf():
+    """The seam used to `side.settle(2000)` after confirming, for the restore's
+    RPC "which wants the page quiet" (#288). No caller wants it: every step any
+    of them takes after this seam -- `read_field`/`write_field`, the borrowed-body
+    restore, the fixture removal, the document check's record read-back -- goes
+    through `Side.rpc`, which posts through the request context and touches
+    neither a page nor a frame. `Side.settle` runs an 8 s `networkidle` that
+    Odoo's open bus makes time out and *then* sleeps, so that was about 10 s
+    between an operator's Ctrl+C and the only restore that record gets, bought
+    for nobody."""
     extra = {}
-    side = DiscardPage(settle_error=RuntimeError("closed"))
+    side = DiscardPage()
     markup._discard_unsaved_form(side, extra)
+    assert side.settled == []
+    # And the reading is unchanged by its going: confirmed, then recorded, with
+    # nothing after the record that can fail.
     assert extra == {"discarded": True}
-    # And the order is the reason: confirmed first, slept afterwards.
     assert [wait[1].get("state") for wait in side.waits] == ["hidden"]
-    assert side.settled == [2000]
+    # Nor on any other reading: no path through the seam spends a wait made for
+    # somebody else.
+    for page in (DiscardPage(dirty=False), DiscardPage(button=False),
+                 DiscardPage(still_dirty=True), DiscardPage(unreadable=True),
+                 DiscardPage(click_error=RuntimeError("Timeout 2000ms exceeded"))):
+        markup._discard_unsaved_form(page, {})
+        assert page.settled == [], page.settled
 
 
 def test_a_page_that_cannot_be_read_adds_no_key():
@@ -1091,16 +1126,41 @@ def test_an_interrupt_inside_the_discard_leaves_the_failed_reading_and_propagate
     assert extra == {"discarded": False}
 
 
-def test_the_seam_resolves_side_root_once_and_holds_it():
-    """`side.root` is not a field, it is a property that re-resolves through
-    `_find_frame(wait_s=60)` whenever the Ingress iframe is detached
-    (`e2e_parity_shared_layers_live.py:327-339`). Three reads of it are three
-    chances to spend a minute inside a seam `do_codeview`'s interrupt path runs
-    *ahead of* the only restore a real `ir.actions.act_window.help` will get, so
-    the seam resolves it once and works through the frame it got (#288)."""
-    for page in (DiscardPage(), DiscardPage(still_dirty=True), DiscardPage(button=False)):
+def test_the_seam_resolves_the_no_wait_root_once_and_never_the_waiting_one():
+    """Neither resolve is a field: both are properties, and the waiting one
+    re-enters `_find_frame(wait_s=60)` whenever the Ingress iframe reports
+    detached. A read of it is a chance to spend a minute inside a seam
+    `do_codeview`'s interrupt path runs *ahead of* the only restore a real
+    `ir.actions.act_window.help` will get, so the seam takes `side.root_now`
+    (#288) -- and takes it once, working through the frame it got (#280)."""
+    for page in (DiscardPage(), DiscardPage(still_dirty=True), DiscardPage(button=False),
+                 DiscardPage(dirty=False)):
         markup._discard_unsaved_form(page, {})
-        assert page.root_reads == 1, page.root_reads
+        assert page.root_now_reads == 1, page.root_now_reads
+        assert page.root_reads == 0, page.root_reads
+
+
+def test_a_detached_held_frame_is_unreadable_and_not_an_already_clean_form():
+    """The third door to #280's misreading, shut at the entry read (#288).
+
+    The side is holding a frame the re-mounted panel detached, and the waiting
+    resolve would answer with the **replacement** -- whose freshly loaded
+    document has no unsaved indicator, so a zero `count()` there reads as "a page
+    with nothing to discard" and adds no key, while the dirty form sat in the
+    frame that went and its detach is exactly when `beforeunload` fires. Reaching
+    for the held frame instead, the read raises and the same absent key means
+    what it says: nothing was attempted, nothing is known."""
+    detached = DetachedFrame()
+    # `dirty=False` is the replacement frame this fake's *waiting* resolve would
+    # hand back: clean, and so an answer about the wrong document.
+    side = DiscardPage(dirty=False, detached=detached)
+    extra = {}
+    markup._discard_unsaved_form(side, extra)
+    assert extra == {}
+    # Asked of the held frame, which raised -- not of the clean replacement.
+    assert detached.locators == 1
+    assert side.root_reads == 0
+    assert side.clicks == [] and side.waits == []
 
 
 def test_the_clean_bound_covers_the_designer_s_commit_pipeline():

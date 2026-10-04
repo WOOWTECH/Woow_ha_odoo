@@ -678,14 +678,14 @@
   text on that action with nothing restoring it. The other two handlers' recovery
   paths share the same function and so the same bounds.
 - **The bounds shorten this seam's contribution to that window and not the
-  window** (#288). Two larger costs sit in it and are outside this one function:
+  window.** Two larger costs sat in it and were outside this one function:
   `side.root` is a property that re-resolves through `_find_frame(wait_s=60)`
-  whenever the Ingress iframe is detached
-  (`e2e_parity_shared_layers_live.py:327-339`) -- which is the interrupt scenario
-  itself -- and the `side.settle(2000)` after a successful discard spends an 8 s
-  `networkidle` that Odoo's open bus normally runs out before sleeping. What this
-  change does take out is the triple exposure: the seam resolves `side.root` once
-  and works through the frame it got, instead of reaching for the property at
+  whenever the Ingress iframe is detached -- which is the interrupt scenario
+  itself -- and the `side.settle(2000)` after a successful discard spent an 8 s
+  `networkidle` that Odoo's open bus normally runs out before sleeping. Both are
+  out of that window as of #288 below, which says what the window now is. What
+  *this* change takes out is the triple exposure: the seam resolves `side.root`
+  once and works through the frame it got, instead of reaching for the property at
   each of its three steps, so the old seam's three *chances* to pay a minute are
   now one. (One minute, not three: `_find_frame` returns as soon as a matching
   frame exists and raises after a single 60 s sweep when none appears, so a
@@ -759,6 +759,67 @@
   write-bounding -- `readonly-plain`, `mailing-readonly`, `media-document-mailing`'s
   `body_html` and `readonly-iframe` under `--task-id` -- are the same family by
   the other admissible correction, attribution, and are #289.
+- **The Ctrl+C-to-restore window was bounded by `side.root` and `side.settle`, not
+  by the discard's own waits** (#288, raised by review round 3 of #280 and
+  confirmed against the pinned package rather than inferred). #280 bounded the two
+  waits *inside* `_discard_unsaved_form` -- 2 s on the click, 15 s on the
+  confirmation -- and said so, that the window those bounds sit in was not
+  shortened. The two costs in it were measured and not estimated, with fake pages
+  driving the real `IngressSide._find_frame` and `Side.settle`: an Ingress frame
+  that cannot be resolved costs **exactly 120 iterations of a 500 ms wait = 60 s**
+  and then raises, which the seam's outer `except Exception` swallows into no
+  reading at all; and `settle(2000)` is an 8 s `networkidle` Odoo's open bus always
+  runs out, *then* the 2 s sleep -- **about 10 s on every successful discard**. So
+  `do_codeview`'s `except BaseException` spent up to ~87 s, and ~10 s even when
+  everything went right, between an operator's Ctrl+C and the only write that puts
+  a real `ir.actions.act_window.help` back -- with a second Ctrl+C anywhere inside
+  it raising through both catches and leaving this run's marker text on the action.
+- **`Side.root_now`: a resolve that never waits for a panel to load.** The default
+  is on the base class and is `root` itself, so the public side and the other four
+  Live drivers on this layer are byte-for-byte unchanged; `IngressSide` is the one
+  override, and it hands back the frame the side is already holding **without**
+  consulting `is_detached()` and without ever entering the waiting frame search. A
+  side that has not resolved a frame yet falls back to the waiting resolve -- a
+  panel still loading is a legitimate thing to wait for, which is why `root`, its
+  cache and `_find_frame`'s 60 s default are untouched, and why this is a second
+  property rather than a smaller `wait_s`. `_discard_unsaved_form` takes this
+  resolve for its single read, so a detached frame raises on the first locator call
+  and the existing `except` keeps the reading negative.
+- **And that is a correctness fix at the *entry* read, which is #280's misreading
+  by a third door.** With a detached held frame and a panel that has re-mounted,
+  `root` returns the **replacement** frame in no time at all; its freshly loaded
+  document has no unsaved-indicator match, so the seam returned with **no
+  `discarded` key** -- the "already clean" reading -- while the dirty form sat in
+  the frame that went, whose detach is exactly when `beforeunload` fires. Holding
+  the frame the side already has turns that into the honest "could not be read"
+  reading, which is the same absent key finally meaning what it says.
+- **The seam no longer settles on a caller's behalf.** The `side.settle(2000)` was
+  there for the step *after* the discard -- the restore's RPC, "which wants the
+  page quiet". It does not: `read_field`/`write_field`, the borrowed-body restore,
+  the fixture removal and the document check's record read-back all go through
+  `Side.rpc`, which posts through the browser context's request API and touches
+  neither a page nor a frame. The quiet page had no beneficiary, and the one
+  page-initiated write that could race a restore is already waited out by the
+  discard's own confirmation: `Record.discard` awaits `_askChanges`, which resolves
+  `this.mutex.getUnlockedDef()` as well as the field commits
+  (`web/static/src/model/relational_model/relational_model.js:209-213`), so a save
+  in flight has landed before the indicator can clear. The document check's
+  read-back is not given a `settle` of its own for that same reason, and
+  `_document_mailing_leaving` now records the judgement.
+- **So the window is `<= 2 s` + `<= 15 s`, and about nothing when the discard comes
+  off at once.** The seam's three readings are unchanged in shape and in cause --
+  no key for a clean page or a page that cannot be read, `true` once the indicator
+  has gone hidden, `false` for a failed click, no visible button, or an indicator
+  that never cleared, with a `KeyboardInterrupt` still propagating and still
+  leaving `discarded: false` behind -- and `true` is still written where nothing
+  after it can fail, which is now the end of the function. `DISCARD_TIMEOUT` and
+  `DISCARD_CLEAN_TIMEOUT` keep their values, and the Static-tier test pinning the
+  second at or above the save path's budget for the same inlining pipeline is
+  untouched. Not re-tuned here, and still a watch item: that bound can only ever be
+  calibrated, never proven, so a mutating Live run watches for `discarded: false`
+  recorded **together with** `body_html_inlined: true` -- a discard reported as
+  failed on a surface whose save demonstrably completed the inlining would mean the
+  15 s is short.
 
 ## 0.4.10 — 2026-10-01
 
