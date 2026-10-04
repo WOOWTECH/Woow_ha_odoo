@@ -971,6 +971,83 @@
   ahead of the click -- rather than keeping a comment phrase to feed the grep; and
   the unreadable-side double gained a `root_now` mirroring the base class's default
   so it keeps modelling `Side` instead of pinning an `AttributeError`.
+- **What #263-#292 left unverified is measured on the host** (#282, no Release, no
+  add-on build and no Deploy -- every fix in that block is in a driver, and the
+  drivers run locally against the add-ons already installed). The eight driver
+  fixes of 2026-10-02/04 had all shipped Static-tier only, two of them saying in
+  their own commit bodies that the host proof was this run's. Evidence:
+  `docs/testing/evidence/2026-10-04-issue-282/`, Release 0.4.10 on `odoo_parity`
+  (both surfaces, run `WOOW-MARKUP-20261004T104350Z`) and the local build
+  `0.4.10-202610031232` on `catchup164b` (Ingress only, run
+  `WOOW-MARKUP-20261004T111302Z`).
+- The readings that were only ever asserted: `mailing-editable` records
+  `mailing_source: created` on the first surface and `reclaimed` on the second,
+  with `body_html_marker_before: true` **and** `body_html_inlined: true` on the
+  reclaimed row -- the two-way reading #279 alone could not give, which #286's
+  clear is what makes possible -- and `reading: write-bounding` on both of its
+  stored fields. `media-document-mailing` records `discarded: true` on the mail
+  designer on all four of its records, so 15 s of `DISCARD_CLEAN_TIMEOUT` is
+  enough for the whole `commitChanges` pipeline on a loaded host (#280), and
+  #288's `root_now` seam read back `CLEAN` with every mailing restored to its own
+  body and 0 `hassio_ingress` occurrences in any of them. #277's two-run sequence
+  stranded attachment 362 and then reclaimed it:
+  `reclaimed_attachment_ids: [362]`, `reclaimed_attachments_removed: true`, and
+  the host read afterwards finds it gone. All 18 read-back records carry a
+  per-field `reading` kind, 28 declarations in total, including
+  `media-document-mailing`'s derived `state-bounding` (#289).
+- The two drivers #264 had not reached: the hand checks wrote their **first**
+  `.ambient.json` (`visit`: `website.track` +1 over one navigation -- the figure
+  that is the measurement rather than the accounting; `editbtn` +2 over six, which
+  is the contrast a subcommand that writes no business rows still leaves), and the
+  peer snapshot's `discard_form` reports `dirty: true` with `discarded: true` on
+  the session that typed, with no `WOOW-PEER-PROBE-` marker on the host afterwards
+  (#292, #263's shape of confirmation).
+- **`mailing-readonly` ran, which the issue did not expect**, because
+  `odoo_parity` carries two mailings in state `done` -- so #289's second
+  declaration site is exercised for the first time. Its screen verdict is `ABSENT`
+  on both surfaces and the cause is the fixture, not the prefix: those bodies are
+  166 bytes with `<img` appearing zero times.
+- **Two findings, neither of them in the eight fixes.** `readonly-plain` reads
+  `ESCAPED` on the Public origin because two of `project.task(5)`'s 17 html-field
+  history revisions carry an Ingress prefix, while the `description` those records
+  judge is `CLEAN`. Registered as `G-10` in the parity plan's section 11, with the
+  mechanism #296's triage established against the pinned package rather than the
+  one first written down here: `html.field.history.mixin.write` stores
+  `generate_patch(new_content, old_content)` and `_patch_generator` embeds
+  `old_content_lines`, so a revision is a **reverse** patch carrying the value as
+  it was *before* that write -- which makes the Ingress save that **heals** the
+  field the author of the prefixed revision, and the Public peer's own store the
+  author of a clean one. It therefore recurs once per `G-08` store-and-heal cycle,
+  and `_html_field_history_size_limit = 300` evicts it after 300 further revisions
+  of `project.task.description`, the only versioned field in the package. And `do_codeview`'s success-path restore is gated on
+  `--cleanup` while its error and interrupt paths restore unconditionally, so the
+  first invocation of this run left a real `ir.actions.act_window.help` holding the
+  run's marker until it was written back by hand; both the unrestored and the
+  restored records are kept, because they are what was read.
+- What the run does **not** say, recorded rather than implied: #289's `report`
+  sentence is unexercised (`stored_prefix_found=no` on both record files -- no
+  field carried a prefix, so the line naming the kind never printed, and
+  manufacturing one would mean writing a prefix into the database on purpose); and
+  the interrupt path of #280/#288 stays unmeasured, deliberately, because
+  measuring it means arranging the outcome that leaves a marker on a real action
+  with nothing to restore it. The 76-item conservation tally does not move:
+  `woow.ingress-markup/v1` and `woow.peer-snapshot.v1` do not feed `conservation`,
+  and `G-10` is a gap registration rather than a plan item.
+- `probe`'s reading order in `e2e_collab_peer_snapshot_live` is now **driven**
+  rather than pinned at its shape. A behavioural test drives `do_probe` through
+  doubles where the editable answers `DELIVERED-...` while the form is dirty and
+  `STORED-...` once a discard has reset it, so a `do_probe` that discards before
+  it reads records the second and fails. The source assertion beside it now
+  matches the whole call line rather than the bare name `discard_quietly`, and
+  the reason is narrower than #292's `is_visible()` case: a plain reorder was
+  already caught, because the call text contains the name and carries the first
+  match with it. What the bare name does not survive is the call leaving the call
+  site -- renamed, or extracted into a helper -- while the comment above it still
+  names `discard_quietly`; then `index()` resolves in prose and the ordering
+  claim is satisfied by a sentence. Matching the whole line turns that into a red
+  `assertIn` somebody has to re-point on purpose. This is the instance #292 left
+  unfiled, and the first claim about it -- that the old pin held over a
+  discard-first `do_probe` -- was wrong and is corrected here.
 
 ## 0.4.10 — 2026-10-01
 

@@ -20,7 +20,9 @@ most: the record the run writes exists to say *whose* prefix reached the field,
 and getting that wrong means either an unreadable record or a token in the
 repository.
 """
+import contextlib
 import inspect
+import io
 import json
 import re
 import unittest
@@ -979,6 +981,12 @@ class ProbeWritesNothingTests(unittest.TestCase):
     not do, and the only tier that can watch the browser do it is the one that
     needs the test host. So the shape is held here: the discard happens, the
     read-back happens, and the navigation that did the writing is gone.
+
+    One of them is no longer only a shape. The reading order -- B's editable
+    before either form is discarded -- is driven through doubles since #282,
+    because `probe`'s whole output is that one reading and because a pin that
+    resolves on a bare name can stop meaning anything without going red. The
+    test below says exactly which shape that is.
     """
 
     def test_probe_discards_both_sessions_forms(self):
@@ -1012,9 +1020,99 @@ class ProbeWritesNothingTests(unittest.TestCase):
     def test_probe_reads_the_receiving_editable_before_it_discards(self):
         """A discard reloads the record, so the delivered content is gone after
         it -- and that reading is the only thing in the report that says what the
-        transport did."""
+        transport did.
+
+        Matched on the **whole call line** and not on `discard_quietly` alone,
+        and the reason is narrower than it looks. A plain reorder does not
+        escape the bare name: the call text contains it, so moving the call
+        above the read moves the first match with it and the old assertion goes
+        red. What the bare name does not survive is the call leaving the call
+        site -- renamed, or extracted into a helper -- while the comment above
+        it still names `discard_quietly`. Then `index()` resolves in prose, the
+        ordering claim is satisfied by a sentence, and the code discards first.
+        That is #292's `is_visible()` trap in its weaker form: there the name
+        was one `discard_form` never called at all. Matching the whole call line
+        turns a rename into a red `assertIn` that has to be re-pointed on
+        purpose. The behavioural guard is
+        `test_probe_records_the_delivered_editable_and_not_the_discarded_one`
+        below; this is the shape beside it."""
         source = inspect.getsource(do_probe)
-        self.assertLess(source.index("second_editable = "), source.index("discard_quietly"))
+        call = "discarded = {label: discard_quietly(side)"
+        self.assertIn(call, source)
+        self.assertLess(source.index("second_editable = "), source.index(call))
+
+    def test_probe_records_the_delivered_editable_and_not_the_discarded_one(self):
+        """The same ordering, driven rather than pinned (#282 item 5).
+
+        A discard remounts the editor from the stored value, so a probe that
+        discarded first would record what the record already held and report it
+        as what the transport delivered -- which is exactly the reading a
+        transport that delivered *nothing* produces, and the one `probe` exists
+        to tell apart. The doubles make the two answers different: the editable
+        reads `DELIVERED-...` while the form is still dirty and `STORED-...`
+        once a discard has reset it, so a reordered `do_probe` records the
+        second and fails here.
+        """
+        import e2e_collab_peer_snapshot_live as module
+
+        class FakeEnv:
+            prefix = ""
+            target = "test-doubles"
+            db = "nodb"
+
+            def mask(self, value):
+                return value
+
+        class FakeSide:
+            def __init__(self):
+                self.env = FakeEnv()
+                self.discarded = False
+                self.closed = 0
+
+            def close(self):
+                self.closed += 1
+
+        first, second = FakeSide(), FakeSide()
+        read_order = []
+
+        @contextlib.contextmanager
+        def no_accounting(*args, **kwargs):
+            yield
+
+        def fake_editable_html(side):
+            read_order.append("read")
+            return "STORED-only" if side.discarded else "DELIVERED-marker"
+
+        def fake_discard_quietly(side):
+            read_order.append("discard")
+            side.discarded = True
+            return {"dirty": True, "discarded": True}
+
+        for name, double in (
+            ("open_pair", lambda env, browser, pair: (first, second)),
+            ("ambient_figure", lambda a, b: None),
+            ("ambient_accounting", no_accounting),
+            ("stage", lambda a, b, task_id, marker_text: ({}, 5, {"delivered": True}, {})),
+            ("editable_html", fake_editable_html),
+            ("discard_quietly", fake_discard_quietly),
+            ("read_description", lambda side, task_id: "nothing this run typed"),
+        ):
+            self.addCleanup(setattr, module, name, getattr(module, name))
+            setattr(module, name, double)
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            exit_code = module.do_probe(FakeEnv(), None, "ingress-ingress", 5,
+                                        "WOOW-PEER-PROBE-20260101T000000Z")
+        record = json.loads(out.getvalue())
+
+        self.assertEqual(record["second_session_editable"], "DELIVERED-marker",
+                         "the reading is what B was served, not what a discard put back")
+        self.assertEqual(read_order, ["read", "discard", "discard"],
+                         "one reading, then both sessions' discards")
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(first.discarded and second.discarded,
+                        "and the discard still happens on both sessions")
 
     def test_run_discards_the_sending_sessions_leftover(self):
         """`run` is documented to store what B saved. A's form is still dirty

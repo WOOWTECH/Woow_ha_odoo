@@ -1,0 +1,69 @@
+{
+  "pair": "ingress-ingress",
+  "run_id": "WOOW-PEER-PROBE-20261004T112015Z",
+  "task_id": 5,
+  "prefixes": {
+    "A": "/api/hassio_ingress/<ingress:B>",
+    "B": "/api/hassio_ingress/<ingress:B>"
+  },
+  "prefixes_equal": true,
+  "transport": {
+    "delivered": true,
+    "waited_seconds": 0.0,
+    "marker_pre_existing": false
+  },
+  "collaboration": {
+    "sessions": {
+      "A": {
+        "is_collaborative": true,
+        "display_readonly": false,
+        "res_id": 5,
+        "plugin_present": true,
+        "channel": "editor_collaboration:project.task:description:5",
+        "ptp_joined": true,
+        "ptp_created": true,
+        "peers": 1,
+        "connected_peers": 1,
+        "bus_worker_state": "CONNECTED",
+        "bus_connection_lost": false
+      },
+      "B": {
+        "is_collaborative": true,
+        "display_readonly": false,
+        "res_id": 5,
+        "plugin_present": true,
+        "channel": "editor_collaboration:project.task:description:5",
+        "ptp_joined": true,
+        "ptp_created": true,
+        "peers": 1,
+        "connected_peers": 1,
+        "bus_worker_state": "CONNECTED",
+        "bus_connection_lost": false
+      }
+    },
+    "signalling_posts": {
+      "A": 4,
+      "B": 4
+    },
+    "signalling_route": "/html_editor/bus_broadcast",
+    "shared_channel": true,
+    "cause": "delivered",
+    "detail": ""
+  },
+  "second_session_editable": "<h1>\n    <span style=\"font-size: 36px; color: #374151\">Hey Administrator 👋 <br>\n    Welcome to the To-do app! </span>\n</h1>\n<p>\n    <span style=\"font-size: 14px;\">\n        Use it to manage your work, take notes on the go, and create tasks based on them.\n    </span>\n</p>\n<p><br></p>\n<h3>Using the editor</h3>\n<hr contenteditable=\"false\">\n<p>\n    <span style=\"font-size: 14px;\">This private to-do is for you to play around with.</span>\n    <br>\n    <span style=\"font-size: 14px;\">Ready to give it a spin?</span>\n</p>\n<p>\n    <span style=\"font-size: 14px;\">Try the following</span>\n</p>\n<ul class=\"o_checklist\">\n    <li id=\"checkId-948702291173\">\n        <span style=\"font-size: 14px;\">Check this box to indicate it's done</span>\n    </li>\n    <li id=\"checkId-140908257281\">\n        <span style=\"font-size: 14px;\">Click anywhere, and just start typing</span>\n    </li>\n    <li id=\"checkId-441216037148\">\n        <span style=\"font-size: 14px;\">Press Ctrl+Z/⌘+Z to undo any change</span>\n    </li>\n    <li id=\"checkId-980463482772\">\n        <span style=\"font-size: 14px;\">\n            Select text to\n            <font style=\"background-color: #017E84; color: white\">Highlight</font>,\n            <span style=\"text-decoration-line: line-through;\">strikethrough</span>\n            or\n            <span style=\"font-weight: bolder;\">style</span>\n            <span style=\"font-style: italic; text-decoration-line: underline;\">it</span>\n        </span>\n    </li>\n    <li id=\"checkId-152369821198\">\n        <span style=\"font-size: 14px;\">\n            Below this list, try\n            <span style=\"font-weight: bolder;\">commands</span>\n            by\n            <span style=\"font-weight: bolder;\">\n                <font style=\"color: #017E84\">typing</font>\n            </span>\n            \"<span style=\"font-weight: bolder;\">/</span>\"\n        </span>\n    </li>\n    <li id=\"checkId-947916154443\" class=\"oe-nested\">\n        <ul class=\"o_checklist\">\n            <li id=\"checkId-1422510558483\">\n                <spa",
+  "saved": false,
+  "discarded": {
+    "A": {
+      "dirty": true,
+      "discarded": true
+    },
+    "B": {
+      "dirty": false,
+      "discarded": false
+    }
+  },
+  "wrote_nothing": true,
+  "forms_left_dirty": [],
+  "stored_prefixes": [],
+  "notes": ""
+}
