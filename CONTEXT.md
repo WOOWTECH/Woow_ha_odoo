@@ -91,3 +91,21 @@ _Avoid_: E2E (alone), integration tests, browser tests
 **Perimeter check**:
 The read-only Live-tier assertions that database lifecycle routes are closed on the Public origin.
 _Avoid_: smoke test, security scan
+
+### Evidence
+
+**Stored reading**:
+The value a Live-tier check reads back out of the database after it has acted, and the half of its verdict that answers whether an Ingress prefix reached a write.
+_Avoid_: read-back, stored value, 回讀, DB assertion
+
+**Write-bounding reading**:
+A Stored reading on a field the check itself wrote, where a prefix is that check's own save leaking.
+_Avoid_: own-write reading, write assertion
+
+**State-bounding reading**:
+A Stored reading on a field the check did not write, where a prefix is a leak whoever caused it and the check is the witness rather than the author.
+_Avoid_: row-state reading, passive reading, incidental reading
+
+**Reclaimed row**:
+A scratch record an earlier surface or an earlier run of the same check left on the database, which a later run reuses as its fixture instead of borrowing a real record or creating one.
+_Avoid_: borrowed row, leftover fixture, 殘留資料
