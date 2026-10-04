@@ -1009,10 +1009,17 @@
   166 bytes with `<img` appearing zero times.
 - **Two findings, neither of them in the eight fixes.** `readonly-plain` reads
   `ESCAPED` on the Public origin because two of `project.task(5)`'s 17 html-field
-  history revisions still carry the Ingress prefix #265's Public peer stored,
-  while the `description` those records judge is `CLEAN` -- `G-08`'s residue in an
-  append-only store no healing save can reach, registered as `G-10` in the parity
-  plan's section 11. And `do_codeview`'s success-path restore is gated on
+  history revisions carry an Ingress prefix, while the `description` those records
+  judge is `CLEAN`. Registered as `G-10` in the parity plan's section 11, with the
+  mechanism #296's triage established against the pinned package rather than the
+  one first written down here: `html.field.history.mixin.write` stores
+  `generate_patch(new_content, old_content)` and `_patch_generator` embeds
+  `old_content_lines`, so a revision is a **reverse** patch carrying the value as
+  it was *before* that write -- which makes the Ingress save that **heals** the
+  field the author of the prefixed revision, and the Public peer's own store the
+  author of a clean one. It therefore recurs once per `G-08` store-and-heal cycle,
+  and `_html_field_history_size_limit = 300` evicts it after 300 further revisions
+  of `project.task.description`, the only versioned field in the package. And `do_codeview`'s success-path restore is gated on
   `--cleanup` while its error and interrupt paths restore unconditionally, so the
   first invocation of this run left a real `ir.actions.act_window.help` holding the
   run's marker until it was written back by hand; both the unrestored and the

@@ -20,9 +20,11 @@ typed (#292), with no `WOOW-PEER-PROBE-` marker on the host afterwards.
 
 **Two findings this run turned up, neither of them in the eight fixes**: a
 `readonly-plain` picture **`ESCAPED`** on the Public origin, because two of
-`project.task(5)`'s 17 html-field history revisions still carry the Ingress prefix
-#265's Public peer stored — registered as **`G-10`**, and it is `G-08`'s residue in
-a store no healing save can reach; and `codeview`'s success-path restore is gated on
+`project.task(5)`'s 17 html-field history revisions carry an Ingress prefix —
+registered as **`G-10`**, and the mechanism is the one #296's triage established
+rather than the one this README first stated: a revision's patch is a *reverse*
+patch, so the entry carrying the prefix is written by the Ingress save that
+**healed** the field (§`G-10`); and `codeview`'s success-path restore is gated on
 `--cleanup`, so this run's first invocation left a real `ir.actions.act_window.help`
 replaced until it was put back by hand (§"Host state", and follow-up filed).
 
@@ -242,17 +244,39 @@ confirms it:
       revision 13, 2026-10-02T06:29:43, Administrator
       revision 16, 2026-10-02T06:36:32, Administrator
 
-Those two timestamps are #265's run window. This is `G-08`'s mechanism — a
-Public-origin peer stores the Ingress prefix it was handed — and its residue: the
-**field** was healed by the next Ingress save, and the **revision** cannot be,
-because revisions are append-only. This run's own peer save (session B, under
-Ingress) added revision 17 and it carries no prefix, so the current code does not
-write prefixed revisions; what it cannot do is reach the two that are already there.
+Those two timestamps are #265's run window.
 
-Registered as `G-10` in §11 of the parity plan with the measurement above. It bounds
-`G-08`'s mitigation in as many words: "the next Ingress save heals it" is true of the
-field and false of the history. Whether that moves #234's severity is #234's
-decision, the same way `G-08` left it.
+**Which write deposited them was read wrong here first, and #296's triage corrected
+it against the pinned package.** `html.field.history.mixin.write` stores
+`generate_patch(new_content, old_content)`, and `_patch_generator` embeds
+`old_content_lines`: the patch is a **reverse** patch, the one
+`html_field_history_get_content_at_revision` applies to walk the current value
+*backwards*. So a revision carries the value as it was **before** that write. Run
+against the pinned `.deb`'s own `diff_utils`:
+
+    generate_patch(clean, prefixed)  -> patch contains the prefix   (the heal)
+    generate_patch(prefixed, clean)  -> patch does not              (the peer's store)
+
+So the sequence is: the Public-origin peer stores the prefix in the **field**
+(`G-08`), and that write records a *clean* revision; the next Ingress save strips the
+field (#234) and **that** write is what deposits the prefixed revision. The heal is
+the author of this residue, not a bystander to it — which also means it recurs once
+per `G-08` store-and-heal cycle rather than being a historical accident, and that
+this run's clean revision 17 proves nothing about the current code: it came from the
+`ingress-ingress` pair, which had no prefix to heal.
+
+It is not permanent either: `_html_field_history_size_limit = 300` caps the list per
+field, so the residue is evicted after 300 further revisions of
+`project.task.description` — which is the **only** versioned field in the pinned
+package (`project.task._get_versioned_fields` returns `[description]`, and no other
+model inherits the mixin).
+
+Registered as `G-10` in §11 of the parity plan with the measurement above. What it
+bounds in `G-08` is narrower than "the next Ingress save heals it is false": the heal
+is real and the field is clean, and what the heal also does is leave one prefixed
+entry behind it. #296's triage keeps `G-10` at `important` and recommends **no**
+re-grade for `G-08`, because this is `G-08`'s one write seen in a second store and
+must not be counted twice.
 
 This is also the clearest thing #289 bought: `readonly-plain` is declared
 `writes: False`, and the record says `state-bounding`, so the run reports a prefix it
@@ -387,7 +411,14 @@ verdict: `diff` never reads it and the conservation tally does not move for it.
   verdict rests on.
 - **`G-10`'s own fix is not attempted here.** The two prefixed revisions are left
   exactly as they are: they are #265's data, and rewriting a history store to make a
-  screen pass is the opposite of what this family measures.
+  screen pass is the opposite of what this family measures — #296's triage reaches
+  the same conclusion from ADR 0014, and adds that the only ways into that field are
+  a `super()` call past the mixin or SQL, neither auditable from the record.
+- **The first version of this README had `G-10`'s mechanism backwards**, and said so
+  in its headline: it read the Public peer's store as the writer of the prefixed
+  revision. The readings are unchanged — the host numbers above are what was read —
+  but the attribution is the heal's, and the correction is kept visible rather than
+  quietly edited in, because the wrong version is what #296's body was filed on.
 - **The 76-item conservation tally does not move.** `woow.ingress-markup/v1` and
   `woow.peer-snapshot.v1` do not feed `conservation`, and `G-10` is a §11 gap
   registration rather than a plan item. The figure stays **60 `PARITY` + 0 `GAP` +
