@@ -1314,6 +1314,74 @@ seeder 在寫 `body_arch` 之前就已經讀過，所以不用多一次 RPC。�
 一張票。
 
 
+**#280（2026-10-03）：`_discard_unsaved_form` 沒辦法回報一次失敗的 discard，而且那一下 click 沒有界。**
+由 #277 的審查找到，程式是 #276 與其審查 commit 的（原本的 #281 是同一個函式的另一半，一起修：timeout 就
+掛在第一半正在改寫回報方式的那一下 click 上）。那個函式把每一種例外都吞掉，而且只會寫
+`extra["discarded"] = True`，docstring 又把**沒有**這個 key 定義成「這個頁面沒有東西要 discard」——於是
+`UNSAVED` 命中、`discard.click()` 逾時（按鈕上蓋著 modal、頁面不再回應）的那一列記錄，讀起來和一張本來就
+乾淨的表單一模一樣。那在 #276 的審查替三個 handler 補上這個呼叫的那幾條路徑上最要緊：錯誤路徑上打字早就
+做完了，表單**一定**是髒的，而緊接著的那一步就是還原，照樣寫下 `body_restored: true`（`do_codeview` 是
+`help_restored: true`），即使 `run_check` 自己的 `side.close()` 會在那張還是髒的表單上觸發 `beforeunload`，
+把這一輪的標記 body 原封不動蓋回去。現在是三種讀數而不是兩種：沒有 key（沒東西要 discard）、`true`
+（discard 成功）、`false`（`UNSAVED` 命中而表單沒有變乾淨——click 失敗、找不到可見的 discard 按鈕，或按
+完之後那個未存檔指示器還在），還原自己的讀數於是對得起來。緊接在後的 `settle` **不算**其中一種成因：它跑
+在指示器已經轉 hidden **之後**，這個 key 要回答的問題那時候已經有答案了，所以頁面在那段 sleep 當中關掉，
+也不能把一個已確認的 `true` 翻回「表單被留成髒的」那個讀數——那段 sleep 是為了後面還原的那通 RPC，不是
+discard 的證據。而 `true` 的意思是**表單真的乾淨了**，不是「click 沒有拋例外」：discard 之後等 `UNSAVED`
+轉 hidden（記錄一乾淨，指示器就又帶上
+`invisible`，這個 selector 就不再命中，而沒有元素的 locator 算 hidden——`discard_form` 一直是這樣讀這個結
+果的），否則一次沒有生效的 discard（上面彈了 dialog、表單因記錄無效而不肯離開）仍會記成 `true`，而
+`side.close()` 面對的還是一張髒表單——同一個讀數錯誤換一個成因。按鈕也改用 `>> visible=true` 而不是
+`.first`（本來就是這個 repo 對同一顆按鈕的寫法）：`.first` 不管狀態都取 DOM 裡第一個命中，所以一顆隱藏的
+前面的按鈕（dialog 的、子表單的）會通過 `count()`、把界耗在一個永遠點不到的元素上，真正那一顆從頭到尾沒
+被點。`_remove_mailing_fixture` 逐一回報每次刪除就是同一個理由（一個靜默的 `except` 讀起來等於「刪掉
+了」），而 `e2e_collab_peer_snapshot_live` 的 `discard_quietly` 早就回報這一對。讀不到的頁面（frame 已經換掉、context 已經關掉）仍然不加 key：那時候連「有沒有東西要 discard」都不知
+道，和「discard 失敗」不是同一個讀數。
+
+另一半是**那一下 click 本來沒有界**：這個 driver 從頭到尾沒有呼叫 `set_default_timeout`（`TIMEOUT` 只會明
+寫給 `wait_for`），所以 `discard.click()` 吃的是 Playwright 的 30 秒預設。`do_codeview` 的
+`except BaseException` 會先 discard、再用 RPC 把真的 `ir.actions.act_window.help` 寫回去——順序是對的（那
+正是不讓 `beforeunload` 蓋掉還原的原因）——於是操作者按下 Ctrl+C 之後，那 30 秒整整卡在中斷與那筆記錄唯一
+一次還原之間；窗口裡的第二次 Ctrl+C 是 `KeyboardInterrupt`，`_discard_unsaved_form` 的 `except Exception`
+接不到，handler 自己的 `except Exception` 也接不到，標記文字就留在那個 action 上，沒有任何東西還原它。現在
+兩個等待都明寫界：click 是 `DISCARD_TIMEOUT`（2 秒——它只需要一顆可點的按鈕，而那一顆剛剛才以
+`visible=true` 命中），指示器轉 hidden 是 `DISCARD_CLEAN_TIMEOUT`（15 秒）。第二個等的東西比第一個多得
+多，而且**不是** reload：`_discard` 本身純本機，從 save point 把 `_changes` 還原、重畫，一通 RPC 都沒有
+（`web/static/src/model/relational_model/record.js:565`）。指示器真正在等的是它上面那一行——`discard()`
+（`:183`）先 `await this.model._askChanges()`，那會發出 `NEED_LOCAL_CHANGES`，而 html field 的回應是把
+`commitChanges()` 推進 promise 清單（`html_editor/static/src/fields/html_field.js:78`）。在 mail designer 上
+那個 override 會把 editable 複製進一個 `srcdoc` iframe、**等它的 `load`**、跑 `toInline`、再把結果寫回記錄
+（`mass_mailing/static/src/js/mass_mailing_html_field.js:147-186`）。那是**存檔**路徑用 `side.settle(6000)`
+在等的同一條 inlining pipeline，而 `extra["save_incomplete"]` 存在就是因為那樣有時還不夠。所以這個界如果
+收得比存檔那邊還緊，一次成功的 discard 就會被記成 `discarded: false`——正是這張票要消滅的讀數錯誤從另一邊
+走回來（#288）；它因此訂在存檔預算之上，並有一個 Static tier 的測試釘住這個關係。
+
+**那組界收短的是這個 seam 對窗口的貢獻，不是窗口本身**（#288）。窗口裡還有兩筆更大的開銷，都不在這一個
+函式裡：`side.root` 是 property 而不是欄位，Ingress iframe 一旦 detached 它就走
+`_find_frame(wait_s=60)`（`e2e_parity_shared_layers_live.py:327-339`）——而那正是中斷本身的情境；成功的
+discard 之後那一下 `side.settle(2000)` 又會花掉一個 8 秒的 `networkidle`，Odoo 開著的 bus 通常會讓它等到
+逾時才去睡。這一票真正拿掉的是**三倍曝險**：seam 現在只解析 `side.root` 一次、拿到的 frame 一路用到底，而
+不是三個步驟各自去碰那個 property，所以舊碼那三次「有可能花掉一分鐘」的機會現在只剩一次。（是一分鐘、不是
+三分鐘：`_find_frame` 一有命中的 frame 就回來，完全沒有就掃完一輪 60 秒拋例外，所以一個持續 detached 的
+frame 在舊碼上也只花 60 秒一次；要花到三輪得剛好連續兩次在各自窗口的尾端重新解析成功。）
+
+**而且這個「拿著」是讀數的修正，不只是等待時間的修正。** `IngressSide` 本來就把 frame 快取在
+`self._frame`、只在它 detached 時重新解析，所以三次讀在除了一種情況以外都拿到同一個物件：面板在第一次讀
+與那個確認等待之間把 Ingress iframe 重新掛載起來。那種情況下舊碼會解析到**替換掉的那個** frame，而它剛載
+好的文件上沒有 `.o_form_status_indicator_buttons:not(.invisible)`——於是對一個零命中的 locator 做
+`wait_for(state="hidden")` 立刻就回來、什麼都沒拋，記下 `discarded: true`，而那張髒表單在剛剛消失的那個
+frame 裡，它的 detach 正是 `beforeunload` 觸發的時機。那是這張票自己的讀數錯誤換第三道門進來。拿著那個
+frame 之後，detached 的 frame 會拋例外，讀數留在 `false`。seam 後面也沒有任何東西需要那次順便的重新解
+析：`Side.rpc` 是走 request context 而不是走 frame，所以還原根本不需要一個解析得出來的 frame。
+
+中斷真的落下時，`discarded: false` 已經寫
+進 `extra` 才往外拋——那條路徑上不會有任何一行記錄（`run_check` 只接 `Exception`，被 `KeyboardInterrupt`
+打斷的 surface 連 `NOT-RUN` 都不會寫），這個讀數是給其他每一條**會**寫記錄的路徑用的。另外兩個
+handler 的錯誤路徑共用同一個函式，所以同一組界也跟著套上。全域 `set_default_timeout` 會動到這個 driver 的
+每一個等待，不是修法；「失敗的 discard 之後要不要跳過還原」也不是——還原仍然要試，那是那筆記錄唯一的機
+會，所以這一票改的是讀數，不是順序。
+
+
 落差報告最終彙整為：
 
 ```

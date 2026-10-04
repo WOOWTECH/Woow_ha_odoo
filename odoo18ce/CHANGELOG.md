@@ -605,6 +605,109 @@
   scope and which is real rather than hypothetical, since on a reclaimed row the
   public surface's `PREFIX-STORED` or `CLEAN` can be the ingress surface's
   leftover value. That half wants an issue of its own.
+- **`_discard_unsaved_form` could not report a discard that failed, and its
+  click was unbounded** (#280, with #281 folded into it -- both defects are in
+  that one function, and the timeout belongs on the very click whose reporting
+  the other half restructures; found by the review of #277, and the code is
+  #276's and its review commit's). The function swallowed every exception and
+  only ever wrote `extra["discarded"] = True`, while its docstring made the
+  **absence** of the key mean "a page with nothing to discard". So `UNSAVED`
+  matching and `discard.click()` timing out -- a modal over the button, a page
+  that stopped responding -- recorded exactly what an already-clean form does.
+  That reading matters most on the recovery paths #276's review added the call
+  to: the typing is already done when a later step fails, so the form is
+  *certainly* dirty, and the step after the discard is the restore, which still
+  stamps `body_restored: true` (`help_restored: true` in `do_codeview`) even
+  though `run_check`'s own `side.close()` can fire `beforeunload` on the
+  still-dirty form and write this run's marker body straight back over it.
+- There are now three readings rather than two: no key for a page with nothing
+  to discard, `true` for a discard that came off, and `false` once `UNSAVED` has
+  matched and the form did not come clean -- a click that failed, no visible
+  discard button to click, or an unsaved indicator still up afterwards. The
+  restore's own reading is then checkable against it. The `settle` that follows
+  is not one of those causes: it runs *after* the indicator has gone hidden, so
+  the question this key answers is already answered, and a page that closes
+  during that sleep may not turn a confirmed `true` back into the reading that
+  says the form was left dirty -- the sleep is there for the restore's RPC,
+  not as evidence about the discard. This is the
+  trap `_remove_mailing_fixture` already reports each removal to avoid, and the
+  pair `discard_quietly` in `e2e_collab_peer_snapshot_live` has always reported.
+  A page that cannot be read at all (a frame that navigated away, a context that
+  closed) still adds no key: there "was there anything to discard" is unknown,
+  which is not the same reading as a discard that failed.
+- **`true` means the form came clean, not that the click did not raise.** The
+  discard is confirmed by waiting for `UNSAVED` to go hidden -- the indicator
+  carries `invisible` again once the record is clean, and a locator with no
+  element counts as hidden, which is how `discard_form` has always read the same
+  outcome. Without it a discard that did not take (a dialog raised over it, an
+  invalid record the form will not leave) recorded `true` while `side.close()`
+  still had a dirty form to save, which is the reading this issue is about with a
+  different cause. The button is matched `>> visible=true` for the same reason
+  `discard_form` matches it that way rather than with `.first`: `.first` takes
+  the first DOM match whatever its state, so one hidden earlier button -- a
+  dialog's, a sub-form's -- passes `count()`, spends the new bound on an element
+  that can never be clicked, and leaves the real button unclicked.
+- The two waits are now bounded explicitly: `DISCARD_TIMEOUT` (2 s) on the
+  click, which needs nothing but an actionable button and has just matched one
+  `visible=true`, and `DISCARD_CLEAN_TIMEOUT` (15 s) on the indicator clearing,
+  which waits on much more. `_discard` is purely local -- it resets `_changes`
+  from the save point and re-renders, with no RPC, so there is no reload to wait
+  on (`web/static/src/model/relational_model/record.js:565`). What the indicator
+  waits on is the line above it: `discard()` (`:183`) does
+  `await this.model._askChanges()` first, which raises `NEED_LOCAL_CHANGES`, and
+  the html field answers that by pushing `commitChanges()` into the promise list
+  (`html_editor/static/src/fields/html_field.js:78`). On the mail designer that
+  override clones the editable into an `srcdoc` iframe, awaits that iframe's
+  `load`, runs `toInline` and writes the result back
+  (`mass_mailing/static/src/js/mass_mailing_html_field.js:147-186`) -- the same
+  inlining pipeline the **save** path budgets `side.settle(6000)` for, and
+  `extra["save_incomplete"]` exists because that is sometimes still not enough.
+  A bound tighter than the save's would therefore record `discarded: false` for
+  a discard that did come off, so this one sits above it, with a Static-tier test
+  pinning the relation. No `set_default_timeout` is applied anywhere in this
+  driver -- `TIMEOUT` is only ever passed explicitly to `wait_for` -- so each
+  wait would otherwise take Playwright's 30 s default, and `do_codeview`'s
+  `except BaseException` runs the discard *ahead* of the RPC that puts a real
+  `ir.actions.act_window.help` back. On Ctrl+C mid-check those 30 s sat between
+  the interrupt and the only restore that record was going to get, and a second
+  Ctrl+C inside the window raises `KeyboardInterrupt`, which neither the
+  discard's `except Exception` nor the handler's own catches -- leaving the marker
+  text on that action with nothing restoring it. The other two handlers' recovery
+  paths share the same function and so the same bounds.
+- **The bounds shorten this seam's contribution to that window and not the
+  window** (#288). Two larger costs sit in it and are outside this one function:
+  `side.root` is a property that re-resolves through `_find_frame(wait_s=60)`
+  whenever the Ingress iframe is detached
+  (`e2e_parity_shared_layers_live.py:327-339`) -- which is the interrupt scenario
+  itself -- and the `side.settle(2000)` after a successful discard spends an 8 s
+  `networkidle` that Odoo's open bus normally runs out before sleeping. What this
+  change does take out is the triple exposure: the seam resolves `side.root` once
+  and works through the frame it got, instead of reaching for the property at
+  each of its three steps, so the old seam's three *chances* to pay a minute are
+  now one. (One minute, not three: `_find_frame` returns as soon as a matching
+  frame exists and raises after a single 60 s sweep when none appears, so a
+  persistently detached frame cost the old code 60 s once too -- three sweeps
+  needed two re-resolves each landing at the end of its own window.)
+- **And the hold is a correctness fix, not only a latency one.** `IngressSide`
+  already caches the frame and re-resolves only when it is detached, so the three
+  reads returned the same object in every case but one: a panel that re-mounted
+  its Ingress iframe between the first read and the confirmation wait. There the
+  old code re-resolved to the **replacement** frame, whose freshly loaded
+  document has no `.o_form_status_indicator_buttons:not(.invisible)` -- so
+  `wait_for(state="hidden")` on a zero-match locator returned at once, raised
+  nothing, and recorded `discarded: true` while the dirty form sat in the frame
+  that had just gone, whose detach is exactly when `beforeunload` fires. That is
+  this issue's own misreading, by a third door. Held, the detached frame raises
+  and the reading stays `false`. Nothing after the seam wanted the incidental
+  re-resolve either: `Side.rpc` posts through the request context rather than a
+  frame, so the restore does not need a resolvable frame at all. An interrupt that does land leaves
+  `discarded: false` in `extra` on its way out rather than nothing -- not in an
+  evidence line, since `run_check` catches `Exception` only and so writes no
+  record at all for a surface a `KeyboardInterrupt` left; the reading is there
+  for every other path that does write one. A global `set_default_timeout` is
+  **not** the fix -- it would change every wait in the driver -- and neither is
+  skipping the restore after a failed discard: it is still the record's only
+  chance, so what changes here is the reading and not the order.
 
 ## 0.4.10 — 2026-10-01
 

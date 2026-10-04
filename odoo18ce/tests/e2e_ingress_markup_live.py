@@ -676,6 +676,44 @@ VIEWER_IFRAME = HTML_FIELD + " iframe"
 SAVE_BUTTON = ".o_form_button_save"
 DISCARD_BUTTON = ".o_form_button_cancel"
 UNSAVED = ".o_form_status_indicator_buttons:not(.invisible)"
+# The discard's own two bounds. No `set_default_timeout` is applied anywhere in
+# this driver -- `TIMEOUT` is only ever passed explicitly -- so a wait with no
+# `timeout=` takes Playwright's 30 s default, and `do_codeview`'s interrupt path
+# spends them between the operator's Ctrl+C and the only restore a real
+# `ir.actions.act_window.help` is going to get (#280).
+#
+# They are two numbers because they wait for different things, and the second one
+# waits for far more than the first. The click needs nothing but an actionable
+# button, which was matched `visible=true` in the same breath. The indicator
+# clearing afterwards does **not** wait on a reload -- `_discard`
+# (`web/static/src/model/relational_model/record.js:565`) is purely local, it
+# resets `_changes` from the save point and re-renders, with no RPC at all. What
+# it waits on is the line above it: `discard()` (`:183`) does
+# `await this.model._askChanges()` first, which raises `NEED_LOCAL_CHANGES`, and
+# the html field answers that by pushing `commitChanges()` into the promise list
+# (`html_editor/static/src/fields/html_field.js:78`). On the mail designer that
+# is `MassMailingHtmlField.commitChanges`, which runs `cleanForSave`, clones the
+# editable into an `srcdoc` iframe, **awaits that iframe's `load`** ("Wait for
+# the css and images to be loaded"), runs `toInline` over it and writes the
+# result back into the record
+# (`mass_mailing/static/src/js/mass_mailing_html_field.js:147-186`). So a discard
+# on the designer pays the whole inlining pipeline before the indicator can
+# clear -- the same pipeline the save path budgets `side.settle(6000)` for, and
+# `extra["save_incomplete"]` exists because that is sometimes still not enough.
+# A 5 s bound here therefore recorded `discarded: false` -- "the form was left
+# dirty" -- for a discard that did come off, which is the misreading this issue
+# exists to remove, arriving from the other side (#288). Hence 15 s: comfortably
+# past the measured pipeline and still half of Playwright's default.
+#
+# **Neither bound makes the interrupt window small**, and this comment used to
+# imply they did. Two larger costs sit in the same window and are outside this
+# seam: `side.root` re-resolves through `_find_frame(wait_s=60)` whenever the
+# Ingress iframe is detached (`e2e_parity_shared_layers_live.py:327-339`), and
+# the `side.settle(2000)` after a successful discard spends an 8 s `networkidle`
+# that Odoo's open bus normally runs out before sleeping. Shortening the window
+# itself is #288; these two bounds only stop *this* seam from adding 30 s to it.
+DISCARD_TIMEOUT = 2_000
+DISCARD_CLEAN_TIMEOUT = 15_000
 DIALOG = ".o_dialog .modal-content"
 PICTURES = "img"
 
@@ -723,17 +761,76 @@ def _discard_unsaved_form(side, extra) -> None:
     measured and one nobody could have.
 
     Reported in `extra["discarded"]` rather than silently, because "the form was
-    dirty on the way out" is a reading about the screen; a page with nothing to
-    discard adds no key.
+    dirty on the way out" is a reading about the screen. Three readings, not two
+    (#280): no key at all for a page with nothing to discard, `true` for a
+    discard that came off, and `false` once `UNSAVED` has matched and the form
+    did not come clean -- a modal over the button, a page that stopped
+    responding, no visible discard button to click, an indicator that never
+    cleared. Without that third reading a failed discard is indistinguishable
+    from an already-clean form, while the step after it still stamps
+    `body_restored` / `help_restored` over a write this run's own `beforeunload`
+    can put straight back. `discard_quietly` in
+    `e2e_collab_peer_snapshot_live` reports the same pair for the same reason.
     """
     try:
-        if side.root.locator(UNSAVED).count():
-            discard = side.root.locator(DISCARD_BUTTON).first
-            if discard.count():
-                discard.click()
-                side.settle(2000)
-                extra["discarded"] = True
-    except Exception:  # noqa: BLE001 -- nothing to discard
+        # Resolved once and held, rather than reached for at each of the three
+        # steps below. `side.root` is a property that re-resolves through
+        # `_find_frame(wait_s=60)` whenever the Ingress iframe is detached
+        # (`e2e_parity_shared_layers_live.py:327-339`), so three reads of it are
+        # three chances to spend a minute inside a seam the interrupt path runs
+        # ahead of its only restore (#288).
+        #
+        # It is also the reading: `IngressSide` caches the frame and re-resolves
+        # only when it is detached, so the three reads returned the same object
+        # in every case but one -- a panel that re-mounted its Ingress iframe
+        # between the count above and the confirmation wait below. There a
+        # re-read resolves to the *replacement* frame, whose freshly loaded
+        # document has no `UNSAVED` match, so waiting for it to go hidden returns
+        # at once and records `true` while the dirty form sits in the frame that
+        # just went -- and that detach is exactly when `beforeunload` fires. Held,
+        # the detached frame raises and the reading stays `false`. Nothing after
+        # this wants the incidental re-resolve either: `Side.rpc` posts through
+        # the request context, not a frame, so the restore does not need one.
+        root = side.root
+        if not root.locator(UNSAVED).count():
+            return
+    except Exception:  # noqa: BLE001 -- a frame that cannot be read is no reading
+        return
+    # `UNSAVED` matched, so from here on the form is known to be dirty and the
+    # only reading that may say otherwise is a discard that actually came off.
+    extra["discarded"] = False
+    try:
+        # `>> visible=true` rather than `.first`, this repository's idiom for this
+        # same button (`e2e_collab_peer_snapshot_live.discard_form`): `.first`
+        # takes the first DOM match whatever its state, so one hidden earlier
+        # button -- a dialog's, a sub-form's -- would spend the bound on an
+        # element that can never be clicked and never reach the real one.
+        discard = root.locator(DISCARD_BUTTON + " >> visible=true").first
+        if not discard.count():
+            return
+        discard.click(timeout=DISCARD_TIMEOUT)
+        # `true` has to mean the form came clean, not that the click did not
+        # raise. The indicator carries `invisible` again once the record is clean,
+        # so `UNSAVED` stops matching and a locator with no element counts as
+        # hidden -- `discard_form` reads the outcome the same way. Without this
+        # wait a discard that did not take (a dialog raised over it, an invalid
+        # record the form refuses to leave) reads as `true` while `run_check`'s
+        # `side.close()` still has a dirty form to save.
+        root.locator(UNSAVED).first.wait_for(
+            state="hidden", timeout=DISCARD_CLEAN_TIMEOUT)
+    except Exception:  # noqa: BLE001 -- the reading stays `false`
+        return
+    # The indicator went hidden, so the form came clean -- and that is the whole
+    # of what this key reports, so it is written before anything else runs. The
+    # `settle` below is for the step *after* this one (the restore's RPC, which
+    # wants the page quiet), not evidence about the discard: a page that closes
+    # between the wait above and the sleep below has already answered the only
+    # question `discarded` asks, and may not turn a confirmed `true` back into
+    # the reading that says the form was left dirty.
+    extra["discarded"] = True
+    try:
+        side.settle(2000)
+    except Exception:  # noqa: BLE001 -- the reading above is already settled
         pass
 
 
