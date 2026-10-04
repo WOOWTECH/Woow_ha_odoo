@@ -1532,6 +1532,17 @@ class FakeSide:
         self.env = FakeEnv()
         self._next_id = 100
 
+    @property
+    def root_now(self):
+        """The no-wait resolve, which on a page-rooted side is `root` itself.
+
+        Present because `_discard_unsaved_form` reaches for it (#288) and these
+        tests run the leaving functions that call it: without it the seam would
+        swallow an `AttributeError` and read "nothing to discard" for the wrong
+        reason, which is the fake diverging from `Side` rather than modelling it.
+        """
+        return self.root
+
     def rpc(self, model, method, args, kwargs=None):
         kwargs = kwargs or {}
         self.calls.append((model, method, args, kwargs))
