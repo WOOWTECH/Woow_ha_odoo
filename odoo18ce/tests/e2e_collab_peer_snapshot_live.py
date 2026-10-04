@@ -118,7 +118,9 @@ Discard on both sessions before it leaves, which reloads the record from the
 database, and then reads `description` back over ORM and reports
 `wrote_nothing`. The claim is measured and carried in the output rather than
 asserted here, and a `probe` that did write exits non-zero. `discard_form` holds
-the mechanism and why each of its two waits is load-bearing.
+the mechanism and why each of its three load-bearing details is not defensive --
+the single frame resolve (#292), the wait on the form coming clean, and the
+visibility check ahead of the click.
 
 **What a delivering `probe` measured about B's form** (#265): B holds the sending
 session's whole document, marker included, and its form reports itself **clean**
@@ -1150,8 +1152,13 @@ def discard_form(side) -> dict[str, Any]:
     after it the field reports itself clean, so the same `beforeunload` harvests
     nothing and the save short-circuits with no RPC at all.
 
-    Two details are load-bearing, not defensive:
+    Three details are load-bearing, not defensive:
 
+    - **The resolve.** All three steps below go through one `side.root_now`, and
+      never `side.root`: on `IngressSide` the latter resolves a frame that
+      reports detached to the replacement the panel has since mounted, which
+      answers every question here about a form it does not have -- including
+      "was it dirty" (#292, and the comment on the resolve below).
     - **The wait.** `FormController.discard()` is asynchronous, and Playwright's
       `click()` returns long before it resolves. Navigating in that window leaves
       the field still dirty and the beacon still fires, so this blocks on the
@@ -1166,22 +1173,47 @@ def discard_form(side) -> dict[str, Any]:
     `dirty` is reported because it is a reading in its own right: a `probe` whose
     forms were never dirty exercised nothing.
     """
+    # `side.root_now` and not `side.root`, resolved once and worked through
+    # rather than reached for at each of the three steps below (#292). `root` is
+    # a property, and on `IngressSide` it is a *search*: it re-enters
+    # `_find_frame(wait_s=60)` whenever the held Ingress frame reports detached.
+    #
+    # What that costs here is the reading, not the minute. The frame an add-on
+    # panel leaves behind when it re-mounts its Ingress iframe is detached, so a
+    # read of `root` resolves to the **replacement** frame -- a freshly loaded
+    # document with none of this form in it. At the entry read below that counts
+    # zero `UNSAVED` matches and returns `{"dirty": False, "discarded": False}`,
+    # "the form was never dirty", for a form that went with its frame -- and that
+    # detach is exactly when `beforeunload` fires the uninterceptable
+    # `sendBeacon` save this function exists to head off. The same door is open at
+    # the confirmation wait, where a replacement frame has no indicator to go
+    # hidden and so reports a discard that never happened as `True`.
+    #
+    # `root_now` shuts both: it hands back the frame the side is already holding
+    # without asking whether it is detached, so a frame that has gone raises at
+    # the first locator call, and `discard_quietly` turns that into `dirty: True,
+    # discarded: False` -- unknown reported as dirty, the direction the verdict
+    # must fail in. On the Public side `root_now` is `root` itself. #280 took
+    # these same three reaches out of the markup driver's
+    # `_discard_unsaved_form`, and #288 shut this door there.
+    root = side.root_now
     # The indicator is the earliest faithful signal there is -- the html field
     # raises `FIELD_IS_DIRTY` on the first keystroke, before `record.dirty` is
     # set (`html_field.js:225`, `form_status_indicator.js:16`).
-    dirty = side.root.locator(UNSAVED).count() > 0
+    dirty = root.locator(UNSAVED).count() > 0
     # `>> visible=true` rather than `.first`, which is this repository's idiom for
     # the same button (`e2e_parity_shared_layers_live.py:1805`). `.first` picks the
     # first match in the DOM whatever its state, so one hidden earlier indicator --
-    # a dialog's, a sub-form's -- would make `is_visible()` false and silently skip
-    # the real button, which is the failure this function exists to prevent.
-    button = side.root.locator(DISCARD_BUTTON + " >> visible=true").first
+    # a dialog's, a sub-form's -- would pass the `button.count()` check below on an
+    # element no click can reach and silently skip the real button, which is the
+    # failure this function exists to prevent.
+    button = root.locator(DISCARD_BUTTON + " >> visible=true").first
     if not dirty or not button.count():
         return {"dirty": dirty, "discarded": False}
     button.click()
     # The indicator carries `invisible` again once the record is clean, so this
     # selector stops matching; a locator with no element counts as hidden.
-    side.root.locator(UNSAVED).first.wait_for(state="hidden", timeout=TIMEOUT)
+    root.locator(UNSAVED).first.wait_for(state="hidden", timeout=TIMEOUT)
     side.settle()
     return {"dirty": True, "discarded": True}
 

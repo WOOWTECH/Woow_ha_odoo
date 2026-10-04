@@ -1526,10 +1526,58 @@ frame。那個安靜的頁面沒有任何受益者；而它的代價是實打實
 `DISCARD_CLEAN_TIMEOUT` 的值不變，那個把第二個釘在存檔預算之上的 Static tier 測試也原封不動。這一票沒有重
 訂那個界，而且它仍然是個觀察項：那個界只能校準、永遠無法證明，所以一次會寫入的 Live run 要盯的是
 `discarded: false` 與 `body_html_inlined: true` **同時**出現——在一個存檔明明完成了 inlining 的 surface 上
-卻被記成 discard 失敗，意思就是那 15 秒太短。另一件留在原地、而且是開票而不是併進來的事：姊妹 seam
-`e2e_collab_peer_snapshot_live` 的 `discard_form` 仍然讀三次 `side.root`，所以這一票的兩半它都還有——等待
-時間那一半，以及「表單跟著 frame 一起消失時卻記成 `dirty: false`」那個讀數錯誤（#292）。`Side.root_now` 放
-在共用層上，正是那個 seam 需要的東西；但它是另一個 driver 的讀數，有自己的票。
+卻被記成 discard 失敗，意思就是那 15 秒太短。另一件當時留在原地、而且是開票而不是併進來的事：姊妹 seam
+`e2e_collab_peer_snapshot_live` 的 `discard_form` 當時仍然讀三次 `side.root`，所以這一票的兩半它都還有——
+等待時間那一半，以及「表單跟著 frame 一起消失時卻記成 `dirty: false`」那個讀數錯誤。`Side.root_now` 放在
+共用層上，正是那個 seam 需要的東西；但它是另一個 driver 的讀數，有自己的票，收在 #292（見下）。
+
+
+**#292（2026-10-04）：`discard_form` 讀三次 `side.root`，而一個 detached 的 frame 會讓一張髒表單記成
+`dirty: false`。** 由 #288 的審查提出：#288 刻意把範圍收在 markup 那個 seam 上，而審查確認這個姊妹 seam
+兩半都還在。**真正要緊的是正確性那一半，而它跟延遲無關。** `IngressSide` 上的 `root` 不是欄位而是一次
+*搜尋*：手上握著的 frame 一報 detached，它就重進 `_find_frame(wait_s=60)`。add-on 面板重新掛載過它的
+Ingress iframe 之後，那次解析交回來的是**替換掉的那個** frame，它剛載好的文件上沒有 `UNSAVED` 可命中——於
+是入口那次讀數得到零，函式回傳 `{"dirty": False, "discarded": False}`，也就是「這張表單從來沒髒過」，而那
+張髒表單還在剛剛消失的 frame 裡，它的 detach 正是 `beforeunload` 觸發、把編輯器內容用 `navigator.sendBeacon`
+存出去的時機。`probe` 於是會報出一輪「表單從來沒髒過」的紀錄，而它自己的 docstring 把那件事定義成「什麼都
+沒驗到」：讀數把那次寫入藏起來，而不是把它說出來——正是 #280 那個讀數錯誤，走的是 #288 在 markup 那一側關
+掉的同一道第三門。同一道門也開在確認那一次等待上：替換 frame 上沒有指示器可以轉 hidden，`wait_for` 立刻就
+回來，於是一次從未發生的 discard 被記成 `discarded: true`。
+
+修法就是 #288 已經放在共用層上的那個解析：**只解析一次、而且走 `root_now`**，拿到的 frame 一路用到底（基底
+類別的預設就是 `root`，所以 public 這一側一個位元都沒變；`IngressSide` 的 override 不問 `is_detached()`、也
+絕不進那個會等的搜尋）。已經 detached 的 frame 於是在第一次 locator 呼叫就拋，而 `discard_quietly` 的
+`except Exception` 本來就把那一拋記成 `{"dirty": True, "discarded": False, "error": ...}`——不知道就報成髒
+的，也就是這個判定必須失敗的方向（`test_a_failed_discard_is_a_reading_and_not_an_exception` 釘的就是這個方
+向）。三個讀數的形狀一行都沒動：乾淨的表單仍然是 `{dirty: False, discarded: False}`，成功的 discard 仍然是
+兩個 `True`，而確認等不到仍然由 wrapper 補上第三個讀數。`>> visible=true` 也留著，理由函式自己寫著。
+
+**延遲那一半在這裡是真的、但小得多**，而這也是 #288 當時把它留下的原因：這個 module 沒有
+`except BaseException`，它的 discard 前面也沒有任何還原，所以沒有一段落在「Ctrl+C 到還原」那個窗口裡。三次
+reach 仍然是三次「有可能花掉 60 秒」的機會，而這個 seam 自己的等待是 click 上 Playwright 的 30 秒預設、確認
+上的 `TIMEOUT`（60 秒），外加一次 `side.settle()`。**click 與確認的界因此刻意不動**（triage 的判斷）：那次確
+認等的是整個非同步的 `FormController.discard()`，這個 module 的預算不是 markup driver 的預算，而在沒有中斷窗
+口的地方，收緊的界也沒有東西可以保護。這一票只動那一個正確性 seam；`root`、它的快取與 `_find_frame` 的 60 秒
+預設同樣一行都不動——面板還在載入是個正當的等待理由，那是它們被寫出來的情境。
+
+**這個 seam 現在是被驅動的，不只是被釘形狀。** 它原本只有一個會執行的 double（那個 `root` 會拋的
+`Unusable`），其餘都是 `inspect.getsource` 的字串斷言，而這次的讀數錯誤恰恰是那種斷言看不見的東西。新增 7 個
+Static tier 測試，而且七個全部列出來，因為這一段就是它們的憑據：兩個解析的計數（`root_now` 恰好一次、`root`
+零次，四條路徑各驗一次）、一個握著 detached frame 的 side（它的 `root` 會交回一個乾淨的替換 frame，所以舊碼
+在這個測試上讀出的正是 `{"dirty": False, "discarded": False}`）、四條普通路徑各一個——乾淨的表單、成功的
+discard、髒表單但沒有可見的按鈕、確認逾時——以及一個釘住「為什麼是 `root_now`」那段解釋的（下一個讀這個 seam
+的人要不把它改回去，靠的就是那段）。整個 Static tier
+1781 passed, 1 skipped（這個 driver 的 module 124 → 131）。沒有 Live run、沒有 Release：兩半都是結構性的，不
+需要主機就能確認。
+
+順帶記下一個這次才看見的陷阱，因為它不只這一個檔案有：
+`test_a_discard_is_only_clicked_on_a_form_that_shows_the_button` 斷言 `is_visible()` 出現在
+`inspect.getsource(discard_form)` 裡，而 `discard_form` 從來沒呼叫過 `is_visible()`——它用的是 `count()`。那
+個測試一直是綠的，只因為 `is_visible()` 出現在這一票要重寫的某一條**註解**裡。`getsource` 會把註解和
+docstring 一起交出來，所以這種斷言可以被散文滿足，而且既可能在純註解改動上變紅、也可能在程式根本沒做那件事
+時保持綠色。處理方式是把斷言改指到程式真正用的機制（click 之前那一次 `button.count()` 檢查），而不是為了餵
+grep 把那句註解留著；`Unusable` 則補上一個照抄基底類別預設（`root_now` 就是 `root`）的 property，讓它繼續模
+擬 `Side` 而不是偏離它——否則那個測試釘住的會變成 `AttributeError`，不是它要釘的那個方向。
 
 
 落差報告最終彙整為：
