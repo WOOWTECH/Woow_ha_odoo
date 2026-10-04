@@ -622,9 +622,14 @@
   still-dirty form and write this run's marker body straight back over it.
 - There are now three readings rather than two: no key for a page with nothing
   to discard, `true` for a discard that came off, and `false` once `UNSAVED` has
-  matched and the form did not come clean -- a click that failed, a `settle` that
-  failed, no visible discard button to click, or an unsaved indicator still up
-  afterwards. The restore's own reading is then checkable against it. This is the
+  matched and the form did not come clean -- a click that failed, no visible
+  discard button to click, or an unsaved indicator still up afterwards. The
+  restore's own reading is then checkable against it. The `settle` that follows
+  is not one of those causes: it runs *after* the indicator has gone hidden, so
+  the question this key answers is already answered, and a page that closes
+  during that sleep may not turn a confirmed `true` back into the reading that
+  says the form was left dirty -- the sleep is there for the restore's RPC,
+  not as evidence about the discard. This is the
   trap `_remove_mailing_fixture` already reports each removal to avoid, and the
   pair `discard_quietly` in `e2e_collab_peer_snapshot_live` has always reported.
   A page that cannot be read at all (a frame that navigated away, a context that

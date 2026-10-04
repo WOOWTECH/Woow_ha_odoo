@@ -1323,9 +1323,12 @@ seeder 在寫 `body_arch` 之前就已經讀過，所以不用多一次 RPC。�
 做完了，表單**一定**是髒的，而緊接著的那一步就是還原，照樣寫下 `body_restored: true`（`do_codeview` 是
 `help_restored: true`），即使 `run_check` 自己的 `side.close()` 會在那張還是髒的表單上觸發 `beforeunload`，
 把這一輪的標記 body 原封不動蓋回去。現在是三種讀數而不是兩種：沒有 key（沒東西要 discard）、`true`
-（discard 成功）、`false`（`UNSAVED` 命中而表單沒有變乾淨——click 失敗、settle 失敗、找不到可見的 discard
-按鈕，或按完之後那個未存檔指示器還在），還原自己的讀數於是對得起來。而 `true` 的意思是**表單真的乾淨
-了**，不是「click 沒有拋例外」：discard 之後等 `UNSAVED` 轉 hidden（記錄一乾淨，指示器就又帶上
+（discard 成功）、`false`（`UNSAVED` 命中而表單沒有變乾淨——click 失敗、找不到可見的 discard 按鈕，或按
+完之後那個未存檔指示器還在），還原自己的讀數於是對得起來。緊接在後的 `settle` **不算**其中一種成因：它跑
+在指示器已經轉 hidden **之後**，這個 key 要回答的問題那時候已經有答案了，所以頁面在那段 sleep 當中關掉，
+也不能把一個已確認的 `true` 翻回「表單被留成髒的」那個讀數——那段 sleep 是為了後面還原的那通 RPC，不是
+discard 的證據。而 `true` 的意思是**表單真的乾淨了**，不是「click 沒有拋例外」：discard 之後等 `UNSAVED`
+轉 hidden（記錄一乾淨，指示器就又帶上
 `invisible`，這個 selector 就不再命中，而沒有元素的 locator 算 hidden——`discard_form` 一直是這樣讀這個結
 果的），否則一次沒有生效的 discard（上面彈了 dialog、表單因記錄無效而不肯離開）仍會記成 `true`，而
 `side.close()` 面對的還是一張髒表單——同一個讀數錯誤換一個成因。按鈕也改用 `>> visible=true` 而不是

@@ -774,10 +774,20 @@ def _discard_unsaved_form(side, extra) -> None:
         # `side.close()` still has a dirty form to save.
         side.root.locator(UNSAVED).first.wait_for(
             state="hidden", timeout=DISCARD_CLEAN_TIMEOUT)
-        side.settle(2000)
     except Exception:  # noqa: BLE001 -- the reading stays `false`
         return
+    # The indicator went hidden, so the form came clean -- and that is the whole
+    # of what this key reports, so it is written before anything else runs. The
+    # `settle` below is for the step *after* this one (the restore's RPC, which
+    # wants the page quiet), not evidence about the discard: a page that closes
+    # between the wait above and the sleep below has already answered the only
+    # question `discarded` asks, and may not turn a confirmed `true` back into
+    # the reading that says the form was left dirty.
     extra["discarded"] = True
+    try:
+        side.settle(2000)
+    except Exception:  # noqa: BLE001 -- the reading above is already settled
+        pass
 
 
 def wait_for_editable(side, selector: str = EDITABLE) -> bool:

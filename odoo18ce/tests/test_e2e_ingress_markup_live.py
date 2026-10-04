@@ -1004,12 +1004,20 @@ def test_a_dirty_form_with_no_discard_button_reads_false():
     assert extra == {"discarded": False}
 
 
-def test_a_discard_whose_settle_failed_reads_false():
-    """The click went in but the page never came back, so whether the form is
-    clean is unknown -- and the unknown reading is the one worth checking."""
+def test_a_settle_that_failed_after_the_form_came_clean_still_reads_true():
+    """`settle` runs after the indicator has already gone hidden, so by then
+    whether the form is clean is **known** -- this reading's own question is
+    answered and a page that closes during the sleep may not reopen it. The
+    sleep is there for the restore's RPC that follows, not as evidence about the
+    discard, which is why it cannot turn a confirmed `true` back into the
+    reading that says the form was left dirty."""
     extra = {}
-    markup._discard_unsaved_form(DiscardPage(settle_error=RuntimeError("closed")), extra)
-    assert extra == {"discarded": False}
+    side = DiscardPage(settle_error=RuntimeError("closed"))
+    markup._discard_unsaved_form(side, extra)
+    assert extra == {"discarded": True}
+    # And the order is the reason: confirmed first, slept afterwards.
+    assert [wait[1].get("state") for wait in side.waits] == ["hidden"]
+    assert side.settled == [2000]
 
 
 def test_a_page_that_cannot_be_read_adds_no_key():
