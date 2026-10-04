@@ -1361,8 +1361,18 @@ discard 的證據。而 `true` 的意思是**表單真的乾淨了**，不是「
 `_find_frame(wait_s=60)`（`e2e_parity_shared_layers_live.py:327-339`）——而那正是中斷本身的情境；成功的
 discard 之後那一下 `side.settle(2000)` 又會花掉一個 8 秒的 `networkidle`，Odoo 開著的 bus 通常會讓它等到
 逾時才去睡。這一票真正拿掉的是**三倍曝險**：seam 現在只解析 `side.root` 一次、拿到的 frame 一路用到底，而
-不是三個步驟各自去碰那個 property，所以一個 detached 的 frame 代價是一分鐘而不是最多三分鐘。中途 detach
-的 frame 於是立刻拋例外、讀數留在 `false`——那本來就是再解析一分鐘之後會得到的同一筆記錄。
+不是三個步驟各自去碰那個 property，所以舊碼那三次「有可能花掉一分鐘」的機會現在只剩一次。（是一分鐘、不是
+三分鐘：`_find_frame` 一有命中的 frame 就回來，完全沒有就掃完一輪 60 秒拋例外，所以一個持續 detached 的
+frame 在舊碼上也只花 60 秒一次；要花到三輪得剛好連續兩次在各自窗口的尾端重新解析成功。）
+
+**而且這個「拿著」是讀數的修正，不只是等待時間的修正。** `IngressSide` 本來就把 frame 快取在
+`self._frame`、只在它 detached 時重新解析，所以三次讀在除了一種情況以外都拿到同一個物件：面板在第一次讀
+與那個確認等待之間把 Ingress iframe 重新掛載起來。那種情況下舊碼會解析到**替換掉的那個** frame，而它剛載
+好的文件上沒有 `.o_form_status_indicator_buttons:not(.invisible)`——於是對一個零命中的 locator 做
+`wait_for(state="hidden")` 立刻就回來、什麼都沒拋，記下 `discarded: true`，而那張髒表單在剛剛消失的那個
+frame 裡，它的 detach 正是 `beforeunload` 觸發的時機。那是這張票自己的讀數錯誤換第三道門進來。拿著那個
+frame 之後，detached 的 frame 會拋例外，讀數留在 `false`。seam 後面也沒有任何東西需要那次順便的重新解
+析：`Side.rpc` 是走 request context 而不是走 frame，所以還原根本不需要一個解析得出來的 frame。
 
 中斷真的落下時，`discarded: false` 已經寫
 進 `extra` 才往外拋——那條路徑上不會有任何一行記錄（`run_check` 只接 `Exception`，被 `KeyboardInterrupt`

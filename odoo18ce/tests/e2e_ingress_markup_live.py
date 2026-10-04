@@ -778,9 +778,19 @@ def _discard_unsaved_form(side, extra) -> None:
         # `_find_frame(wait_s=60)` whenever the Ingress iframe is detached
         # (`e2e_parity_shared_layers_live.py:327-339`), so three reads of it are
         # three chances to spend a minute inside a seam the interrupt path runs
-        # ahead of its only restore. Held, a frame that detaches mid-discard
-        # raises at once and the reading below stays `false`, which is the same
-        # record a re-resolve would have produced a minute later (#288).
+        # ahead of its only restore (#288).
+        #
+        # It is also the reading: `IngressSide` caches the frame and re-resolves
+        # only when it is detached, so the three reads returned the same object
+        # in every case but one -- a panel that re-mounted its Ingress iframe
+        # between the count above and the confirmation wait below. There a
+        # re-read resolves to the *replacement* frame, whose freshly loaded
+        # document has no `UNSAVED` match, so waiting for it to go hidden returns
+        # at once and records `true` while the dirty form sits in the frame that
+        # just went -- and that detach is exactly when `beforeunload` fires. Held,
+        # the detached frame raises and the reading stays `false`. Nothing after
+        # this wants the incidental re-resolve either: `Side.rpc` posts through
+        # the request context, not a frame, so the restore does not need one.
         root = side.root
         if not root.locator(UNSAVED).count():
             return

@@ -683,10 +683,24 @@
   `networkidle` that Odoo's open bus normally runs out before sleeping. What this
   change does take out is the triple exposure: the seam resolves `side.root` once
   and works through the frame it got, instead of reaching for the property at
-  each of its three steps, so a detached frame costs one minute rather than up to
-  three. A frame that detaches mid-discard then raises at once and the reading
-  stays `false`, which is the record a re-resolve would have produced a minute
-  later anyway. An interrupt that does land leaves
+  each of its three steps, so the old seam's three *chances* to pay a minute are
+  now one. (One minute, not three: `_find_frame` returns as soon as a matching
+  frame exists and raises after a single 60 s sweep when none appears, so a
+  persistently detached frame cost the old code 60 s once too -- three sweeps
+  needed two re-resolves each landing at the end of its own window.)
+- **And the hold is a correctness fix, not only a latency one.** `IngressSide`
+  already caches the frame and re-resolves only when it is detached, so the three
+  reads returned the same object in every case but one: a panel that re-mounted
+  its Ingress iframe between the first read and the confirmation wait. There the
+  old code re-resolved to the **replacement** frame, whose freshly loaded
+  document has no `.o_form_status_indicator_buttons:not(.invisible)` -- so
+  `wait_for(state="hidden")` on a zero-match locator returned at once, raised
+  nothing, and recorded `discarded: true` while the dirty form sat in the frame
+  that had just gone, whose detach is exactly when `beforeunload` fires. That is
+  this issue's own misreading, by a third door. Held, the detached frame raises
+  and the reading stays `false`. Nothing after the seam wanted the incidental
+  re-resolve either: `Side.rpc` posts through the request context rather than a
+  frame, so the restore does not need a resolvable frame at all. An interrupt that does land leaves
   `discarded: false` in `extra` on its way out rather than nothing -- not in an
   evidence line, since `run_check` catches `Exception` only and so writes no
   record at all for a surface a `KeyboardInterrupt` left; the reading is there
