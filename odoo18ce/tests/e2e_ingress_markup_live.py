@@ -705,13 +705,22 @@ UNSAVED = ".o_form_status_indicator_buttons:not(.invisible)"
 # exists to remove, arriving from the other side (#288). Hence 15 s: comfortably
 # past the measured pipeline and still half of Playwright's default.
 #
-# **Neither bound makes the interrupt window small**, and this comment used to
-# imply they did. Two larger costs sit in the same window and are outside this
-# seam: `side.root` re-resolves through `_find_frame(wait_s=60)` whenever the
-# Ingress iframe is detached (`e2e_parity_shared_layers_live.py:327-339`), and
-# the `side.settle(2000)` after a successful discard spends an 8 s `networkidle`
-# that Odoo's open bus normally runs out before sleeping. Shortening the window
-# itself is #288; these two bounds only stop *this* seam from adding 30 s to it.
+# **These two bounds are now the whole of what the seam spends** (#288). They
+# were not: the window also held an unbounded-in-practice resolve -- `side.root`
+# re-entering `_find_frame(wait_s=60)` whenever the Ingress frame reported
+# detached, which is the interrupt scenario itself -- and a `side.settle(2000)`
+# after the confirmation, worth about 10 s on every successful discard because
+# `Side.settle` runs an 8 s `networkidle` that Odoo's open bus makes time out
+# before it sleeps. The resolve is now `side.root_now`, which hands back the held
+# frame and never enters that search, and the settle is gone: nothing any caller
+# does after this seam touches a page or a frame. So these two are now the only
+# waits the seam asks for: `<= 2 s` + `<= 15 s`, and about **nothing** when the
+# discard comes off at once. Not a bound on the seam in every case, and this
+# comment will not imply one again: the two `count()` calls take no `timeout=`
+# because `count()` does not wait for anything, but they do need the renderer to
+# answer, so on one of the conditions this function reports `false` for -- "a page
+# that stopped responding" -- nothing here is bounded. Nothing bounded it before
+# either; what the bounds cover is every case where the page still answers.
 DISCARD_TIMEOUT = 2_000
 DISCARD_CLEAN_TIMEOUT = 15_000
 DIALOG = ".o_dialog .modal-content"
@@ -773,25 +782,30 @@ def _discard_unsaved_form(side, extra) -> None:
     `e2e_collab_peer_snapshot_live` reports the same pair for the same reason.
     """
     try:
-        # Resolved once and held, rather than reached for at each of the three
-        # steps below. `side.root` is a property that re-resolves through
-        # `_find_frame(wait_s=60)` whenever the Ingress iframe is detached
-        # (`e2e_parity_shared_layers_live.py:327-339`), so three reads of it are
-        # three chances to spend a minute inside a seam the interrupt path runs
-        # ahead of its only restore (#288).
+        # `side.root_now` and not `side.root`, resolved once and held rather than
+        # reached for at each of the three steps below. Both halves of that are
+        # about the same minute: `root` is a property, and on `IngressSide` it
+        # re-enters `_find_frame(wait_s=60)` whenever the held Ingress frame
+        # reports detached, so each read of it is a chance to spend 60 s inside a
+        # seam the interrupt path runs *ahead of* its only restore (#288).
+        # `root_now` hands back the frame the side is already holding and never
+        # enters that search; on the Public side it is `root` itself.
         #
-        # It is also the reading: `IngressSide` caches the frame and re-resolves
-        # only when it is detached, so the three reads returned the same object
-        # in every case but one -- a panel that re-mounted its Ingress iframe
-        # between the count above and the confirmation wait below. There a
-        # re-read resolves to the *replacement* frame, whose freshly loaded
-        # document has no `UNSAVED` match, so waiting for it to go hidden returns
-        # at once and records `true` while the dirty form sits in the frame that
-        # just went -- and that detach is exactly when `beforeunload` fires. Held,
-        # the detached frame raises and the reading stays `false`. Nothing after
+        # It is also the reading, three times over. `IngressSide` caches the
+        # frame and re-resolves only when it is detached, so re-reads returned
+        # the same object in every case but one -- a panel that re-mounted its
+        # Ingress iframe. There a re-read resolves to the *replacement* frame,
+        # whose freshly loaded document has no `UNSAVED` match, so waiting for it
+        # to go hidden returns at once and records `true` while the dirty form
+        # sits in the frame that just went -- and that detach is exactly when
+        # `beforeunload` fires. The same door is open at the *entry* read, where
+        # a zero `count()` on a replacement frame reads as "nothing to discard"
+        # and adds no key at all. Holding one `root_now` shuts both: a detached
+        # frame raises here and adds no key (nothing was attempted, nothing is
+        # known) or raises below and leaves the reading `false`. Nothing after
         # this wants the incidental re-resolve either: `Side.rpc` posts through
         # the request context, not a frame, so the restore does not need one.
-        root = side.root
+        root = side.root_now
         if not root.locator(UNSAVED).count():
             return
     except Exception:  # noqa: BLE001 -- a frame that cannot be read is no reading
@@ -821,17 +835,38 @@ def _discard_unsaved_form(side, extra) -> None:
     except Exception:  # noqa: BLE001 -- the reading stays `false`
         return
     # The indicator went hidden, so the form came clean -- and that is the whole
-    # of what this key reports, so it is written before anything else runs. The
-    # `settle` below is for the step *after* this one (the restore's RPC, which
-    # wants the page quiet), not evidence about the discard: a page that closes
-    # between the wait above and the sleep below has already answered the only
-    # question `discarded` asks, and may not turn a confirmed `true` back into
-    # the reading that says the form was left dirty.
+    # of what this key reports, so it is written where nothing can fail after it.
+    #
+    # There used to be a `side.settle(2000)` here, for the step *after* this one:
+    # the restore's RPC, "which wants the page quiet". It does not. Every step
+    # any caller takes after this seam -- `read_field`/`write_field`,
+    # `_restore_borrowed_mailing_body`, `_remove_mailing_fixture`, and the
+    # document check's record read-back -- goes through `Side.rpc`, which posts
+    # through the browser context's request API and touches neither a page nor a
+    # frame. So the quiet page that sleep bought had no beneficiary, while its
+    # cost was real and in the worst place: `Side.settle` runs an 8 s
+    # `networkidle` that Odoo's open bus makes time out and *then* sleeps, about
+    # 10 s on every successful discard, all of it between an operator's Ctrl+C
+    # and the only restore that record is going to get (#288).
+    #
+    # Nor did the sleep protect the restore from a page-initiated save, which is
+    # worth being exact about because it is this seam's whole subject. There are
+    # two, and the confirmation above covers one of them: `Record.discard` awaits
+    # `_askChanges`, which resolves `this.mutex.getUnlockedDef()` as well as the
+    # field commits (`relational_model.js:209-213`), so anything that went
+    # through `model.mutex` has landed before the indicator can clear -- and
+    # `beforeVisibilityChange`, the ungated `visibilitychange` save of #263, is
+    # `root.save()` (`form_controller.js:483-496`), which does
+    # (`record.js:226-229`). The one that is not is `urgentSave`: it calls
+    # `_save` **outside** the mutex (`record.js:267-272`), so
+    # `getUnlockedDef()` returns straight past it. But it is wired to
+    # `beforeunload` only (`form_controller.js:507`), and the form view sets
+    # `useSendBeaconToSaveUrgently: true` (`:383`), so that save leaves over
+    # `navigator.sendBeacon` and is **fire-and-forget** (`record.js:1014-1033`):
+    # no wait on this side bounds it, and a 10 s sleep only made losing the race
+    # less likely, never impossible. That window is `run_check`'s own
+    # `side.close()`, which is what the discard itself exists to make empty.
     extra["discarded"] = True
-    try:
-        side.settle(2000)
-    except Exception:  # noqa: BLE001 -- the reading above is already settled
-        pass
 
 
 def wait_for_editable(side, selector: str = EDITABLE) -> bool:
@@ -3482,6 +3517,21 @@ def _document_mailing_leaving(side, fixture, extra, screen,
     what names it. It bounds the check and not the session -- a save made by a
     `beforeunload` on `run_check`'s own `side.close()` falls after this reading,
     and the evidence's host check is what covers that window.
+
+    **And it takes no `settle` of its own** (#288, which took the seam's out). The
+    read-back is an RPC through the request context, so it does not want a quiet
+    page for its own sake; what it could want is time for a page-initiated save to
+    land before it reads. It does not need to buy that either. When `discarded` is
+    `true` the discard's confirmation has waited out `_askChanges`, which resolves
+    the model's mutex as well as the field commits, so every save that goes
+    through that mutex -- `root.save()`, which is what the ungated
+    `visibilitychange` of #263 calls -- had landed before the indicator cleared.
+    The one that does not is `urgentSave`, and no sleep bounds that one either: it
+    leaves over `navigator.sendBeacon`, fire-and-forget, in the `beforeunload` this
+    seam exists to find nothing to save. When `discarded` is `false` or absent the
+    form was left dirty and no sleep makes this reading sound -- which is exactly
+    what that reading is for, and why the paragraph above bounds the check rather
+    than the session.
     """
     _discard_unsaved_form(side, extra)
     stored: dict[str, Any] = {}

@@ -1325,10 +1325,11 @@ seeder 在寫 `body_arch` 之前就已經讀過，所以不用多一次 RPC。�
 `help_restored: true`），即使 `run_check` 自己的 `side.close()` 會在那張還是髒的表單上觸發 `beforeunload`，
 把這一輪的標記 body 原封不動蓋回去。現在是三種讀數而不是兩種：沒有 key（沒東西要 discard）、`true`
 （discard 成功）、`false`（`UNSAVED` 命中而表單沒有變乾淨——click 失敗、找不到可見的 discard 按鈕，或按
-完之後那個未存檔指示器還在），還原自己的讀數於是對得起來。緊接在後的 `settle` **不算**其中一種成因：它跑
-在指示器已經轉 hidden **之後**，這個 key 要回答的問題那時候已經有答案了，所以頁面在那段 sleep 當中關掉，
-也不能把一個已確認的 `true` 翻回「表單被留成髒的」那個讀數——那段 sleep 是為了後面還原的那通 RPC，不是
-discard 的證據。而 `true` 的意思是**表單真的乾淨了**，不是「click 沒有拋例外」：discard 之後等 `UNSAVED`
+完之後那個未存檔指示器還在），還原自己的讀數於是對得起來。當時緊接在後的那一下 `settle` **不算**其中一種
+成因：它跑在指示器已經轉 hidden **之後**，這個 key 要回答的問題那時候已經有答案了，所以頁面在那段 sleep
+當中關掉，也不能把一個已確認的 `true` 翻回「表單被留成髒的」那個讀數。（那段 sleep 當時的說法是「為了後面
+還原的那通 RPC」；#288（見下）確認沒有任何呼叫者需要它、把它拿掉了，所以這一段講的那個順序現在就是函式結
+尾本身。）而 `true` 的意思是**表單真的乾淨了**，不是「click 沒有拋例外」：discard 之後等 `UNSAVED`
 轉 hidden（記錄一乾淨，指示器就又帶上
 `invisible`，這個 selector 就不再命中，而沒有元素的 locator 算 hidden——`discard_form` 一直是這樣讀這個結
 果的），否則一次沒有生效的 discard（上面彈了 dialog、表單因記錄無效而不肯離開）仍會記成 `true`，而
@@ -1357,12 +1358,13 @@ discard 的證據。而 `true` 的意思是**表單真的乾淨了**，不是「
 收得比存檔那邊還緊，一次成功的 discard 就會被記成 `discarded: false`——正是這張票要消滅的讀數錯誤從另一邊
 走回來（#288）；它因此訂在存檔預算之上，並有一個 Static tier 的測試釘住這個關係。
 
-**那組界收短的是這個 seam 對窗口的貢獻，不是窗口本身**（#288）。窗口裡還有兩筆更大的開銷，都不在這一個
+**那組界收短的是這個 seam 對窗口的貢獻，不是窗口本身。** 窗口裡還有兩筆更大的開銷，都不在這一個
 函式裡：`side.root` 是 property 而不是欄位，Ingress iframe 一旦 detached 它就走
-`_find_frame(wait_s=60)`（`e2e_parity_shared_layers_live.py:327-339`）——而那正是中斷本身的情境；成功的
+`_find_frame(wait_s=60)`——而那正是中斷本身的情境；成功的
 discard 之後那一下 `side.settle(2000)` 又會花掉一個 8 秒的 `networkidle`，Odoo 開著的 bus 通常會讓它等到
-逾時才去睡。這一票真正拿掉的是**三倍曝險**：seam 現在只解析 `side.root` 一次、拿到的 frame 一路用到底，而
-不是三個步驟各自去碰那個 property，所以舊碼那三次「有可能花掉一分鐘」的機會現在只剩一次。（是一分鐘、不是
+逾時才去睡。這兩筆在 #288（見下）之後都已經不在窗口裡了，窗口現在是多長、以及 seam 解析的為什麼已經不再是
+`side.root`，都寫在那一段。這一票真正拿掉的是**三倍曝險**：seam 只解析一次、拿到的 frame 一路用到底，而
+不是三個步驟各自去碰那個 property，所以舊碼那三次「有可能花掉一分鐘」的機會剩下一次。（是一分鐘、不是
 三分鐘：`_find_frame` 一有命中的 frame 就回來，完全沒有就掃完一輪 60 秒拋例外，所以一個持續 detached 的
 frame 在舊碼上也只花 60 秒一次；要花到三輪得剛好連續兩次在各自窗口的尾端重新解析成功。）
 
@@ -1415,6 +1417,65 @@ seeder 什麼都不清：那個 check 從不存檔，它的讀回是用來證明
 準。另外四個「拿的是 State-bounding reading、卻被當成 write-bounding 來判」的 check——`readonly-plain`、
 `mailing-readonly`、`media-document-mailing` 的 `body_html`、以及 `--task-id` 下的 `readonly-iframe`——是
 同一個家族走另一條可接受的修法（attribution），開在 #289。
+
+
+**#288（2026-10-04）：Ctrl+C 到還原之間那個窗口，界在 `side.root` 與 `side.settle` 上，不在 discard 自己
+那兩個等待上。** 由 #280 的第三輪審查提出，每一條機制都對著釘住的套件（`ODOO_DEB_VERSION`）核過、不是推
+論。#280 把 `_discard_unsaved_form` **裡面**那兩個等待訂了界（click 2 秒、確認 15 秒），也寫明了那並沒有
+把那兩個界所在的窗口收短。窗口裡那兩筆開銷是量出來的，不是估的——用假 page 驅動真正的
+`IngressSide._find_frame` 與 `Side.settle`：一個解不出來的 Ingress frame 正好花掉 **120 輪 500 毫秒的等待
+＝ 60 秒**才拋例外，而 seam 外層的 `except Exception` 會把那一拋吞成「完全沒有讀數」；`settle(2000)` 則是
+一個 8 秒的 `networkidle`（Odoo 開著的 bus 一定讓它等到逾時）**再加**那 2 秒的睡，**每一次成功的 discard
+都要花掉大約 10 秒**。於是 `do_codeview` 的 `except BaseException` 最壞花到約 87 秒、就算一切順利也要約 10
+秒，全部卡在操作者按下 Ctrl+C 與那筆記錄唯一一次「寫回真的 `ir.actions.act_window.help`」之間；窗口裡任何
+一處的第二次 Ctrl+C 都會穿過兩層 catch 往外拋，把這一輪的標記文字留在那個 action 上。
+
+修法一：**`Side.root_now`，一個絕不等面板載入的解析。** 預設放在基底類別上、而且就是 `root` 本身，所以
+public 這一側與這個共用層上另外四個 Live driver 一個位元都沒變；`IngressSide` 是唯一的 override，它直接把
+這個 side 手上已經握著的 frame 交回去，**不問** `is_detached()`，也絕不進那個會等的 frame 搜尋。還沒解析過
+frame 的 side（什麼都還沒跑過）才退回那個會等的解析——面板還在載入是個正當的等待理由，這也正是 `root`、它
+的快取與 `_find_frame` 的 60 秒預設一行都不動的原因，以及為什麼這是第二個 property 而不是把 `wait_s` 改
+小。`_discard_unsaved_form` 那唯一一次解析改用它：detached 的 frame 會在第一次 locator 呼叫就拋，現有的
+`except` 把讀數留在負面——比等一分鐘去解析一個答的是別的問題的替換 frame，又快又真。
+
+而這同時是**入口那一次讀**的正確性修正，也就是 #280 那個讀數錯誤的第三道門：手上那個 frame 已經 detached、
+面板又重新掛載過時，`root` 會毫不等待地回傳**替換掉的那個** frame，它剛載好的文件上沒有未存檔指示器，於
+是 seam 會**連 `discarded` 這個 key 都不加**——也就是「本來就是乾淨的」那個讀數——而那張髒表單還在剛剛消失
+的 frame 裡，它的 detach 正是 `beforeunload` 觸發的時機。握著原本那個 frame 之後，同樣是「沒有這個 key」，
+意思卻終於是它字面上的意思：沒有嘗試過，什麼都不知道。
+
+修法二：**seam 不再替呼叫者 settle。** 那一下 `side.settle(2000)` 是為了它之後那一步——還原的那通 RPC，
+「它想要頁面安靜」。它不想要：`read_field`/`write_field`、借來的 body 還原、fixture 移除、以及 document
+check 的記錄讀回，全部走 `Side.rpc`，那是從 browser context 的 request API 送出去的，碰不到 page 也碰不到
+frame。那個安靜的頁面沒有任何受益者；而它的代價是實打實的、而且落在最壞的位置。
+
+那段 sleep **也不是**在保護還原不被「頁面自己發起的寫入」搶跑，這一點值得講精確，因為那正是這個 seam 的全
+部主題。這種存檔有兩種。走 `model.mutex` 的那一種，上面那個確認已經等過了：`Record.discard` 會
+`await _askChanges()`，而它除了欄位的 commit 之外還會解 `this.mutex.getUnlockedDef()`
+（`relational_model.js:209-213`）——而 #263 那個**沒有條件的 `visibilitychange`** 存檔就是這一種，它是
+`root.save()`（`form_controller.js:483-496`），而 `save()` 本身就是 `mutex.exec`（`record.js:226-229`）。
+它等不到的是 `urgentSave`：那個是在 mutex **外面**直接呼叫 `_save`（`record.js:267-272`）。但 `urgentSave`
+只掛在 `beforeunload` 上（`form_controller.js:507`），而 form view 設了
+`useSendBeaconToSaveUrgently: true`（`:383`），所以那通存檔是走 `navigator.sendBeacon` 送出去、發了就不管
+的（`record.js:1014-1033`）：這一側沒有任何等待能界住它，10 秒的 sleep 只是讓那場賽跑比較不容易輸，從來不
+是不可能輸。它的窗口是 `run_check` 自己的 `side.close()`——而那正是 discard 存在的目的：讓那時候沒有東西可
+存。document check 的讀回也因為同樣的理由**沒有**補上自己的 settle，而 `_document_mailing_leaving` 現在把
+這個判斷寫在它的 docstring 裡。
+
+於是這兩個界現在就是 seam 唯一會要求的等待：`<= 2 秒` + `<= 15 秒`，discard 一下就成功時則幾乎是零。但這不
+是「在所有情況下都有界」，而且這次的註解不會再暗示它是（#280 自己的教訓）：seam 那兩個 `Locator.count()`
+都沒有 `timeout=`，因為 `count()` 本來就不等任何東西——可是它仍然需要 renderer 回答，所以在這個函式自己列
+為 `false` 成因之一的「頁面停止回應」上，這裡沒有任何東西有界，而它本來也沒有。seam 那三個讀數的形狀與成因一
+行都沒動——乾淨的頁面與讀不到的頁面都不加 key，指示器轉 hidden 才是 `true`，click 失敗、沒有可見的 discard
+按鈕、指示器始終沒清則是 `false`，`KeyboardInterrupt` 仍然往外拋、仍然留下 `discarded: false`——而 `true`
+仍然寫在「它之後不會有任何會失敗的東西」的位置，那個位置現在就是函式結尾。`DISCARD_TIMEOUT` 與
+`DISCARD_CLEAN_TIMEOUT` 的值不變，那個把第二個釘在存檔預算之上的 Static tier 測試也原封不動。這一票沒有重
+訂那個界，而且它仍然是個觀察項：那個界只能校準、永遠無法證明，所以一次會寫入的 Live run 要盯的是
+`discarded: false` 與 `body_html_inlined: true` **同時**出現——在一個存檔明明完成了 inlining 的 surface 上
+卻被記成 discard 失敗，意思就是那 15 秒太短。另一件留在原地、而且是開票而不是併進來的事：姊妹 seam
+`e2e_collab_peer_snapshot_live` 的 `discard_form` 仍然讀三次 `side.root`，所以這一票的兩半它都還有——等待
+時間那一半，以及「表單跟著 frame 一起消失時卻記成 `dirty: false`」那個讀數錯誤（#292）。`Side.root_now` 放
+在共用層上，正是那個 seam 需要的東西；但它是另一個 driver 的讀數，有自己的票。
 
 
 落差報告最終彙整為：
