@@ -1048,6 +1048,59 @@
   `assertIn` somebody has to re-point on purpose. This is the instance #292 left
   unfiled, and the first claim about it -- that the old pin held over a
   discard-first `do_probe` -- was wrong and is corrected here.
+- **A borrowed record goes back whatever `--cleanup` says** (#297, Static tier
+  only -- this is driver behaviour and no Live run can show it that #282's did
+  not already pay for). Three success paths gated the restore of a record the
+  driver had only *borrowed* on the flag whose job is deleting what a check
+  **created**, so a successful run taken without it left that record holding this
+  run's marker, with the absence of a key as the only sign. #282's run found the
+  first of the three on `odoo_parity`: see its evidence README, "Host state this
+  run leaves". The three are now restore-always, remove-under-the-flag.
+- `do_codeview` is the one the ticket names and the worst-shaped of the three:
+  `pick_help_action` creates nothing, it borrows the lowest-id
+  `ir.actions.act_window` and seeds a record the installation owns. The restore
+  moves into `_restore_borrowed_help`, which all three of its paths call -- the
+  success path included -- and which keeps the reading three-valued: `true` when
+  the write took, `false` when it did not, **absent** when the handler never got
+  as far as seeding. It reports a failed write rather than raising it, because
+  raising would drop the success path into the handler's `except Exception` and
+  rewrite a measured record as `NOT-RUN`. The discard still goes first (#276,
+  #280, #288); that order is not in question.
+- **`--cleanup` now means nothing for `codeview`, and the signature says so.**
+  Neither `do_codeview` nor `_codeview_after_seeding` takes the parameter any
+  more -- `run_check` passes it to every handler and `**_` absorbs it -- because
+  a flag threaded through to no reader reads as a gate somebody forgot. Its
+  meaning is unchanged for every other check: delete what this check created.
+- The audit the ticket asked for found the same gate on **both** mailing checks,
+  and both are fixed with it. `media-document-mailing` borrows on its `found`
+  branch, which is every run on a database carrying a draft; `mailing-editable`
+  borrows only the row `--mailing-id` names, and that is the costliest of the
+  three because it is the check that *saves* -- a real campaign in `draft` or
+  `in_queue`, a row that can still be sent, kept this run's marker in `body_arch`
+  and in the inlined `body_html` that leaves the installation with the mail.
+  `_restore_borrowed_mailing_body` is a no-op on a scratch or Reclaimed row, so
+  calling it on every path cannot restore what the run owns -- the flag was never
+  what protected that, the function's own first line is.
+- Left alone deliberately: every `--cleanup` gate on a **created** fixture
+  (`readonly-iframe`'s scratch `mail.template`, the two media to-dos, the website
+  page and view, the scratch mailings, the fixture attachments) -- leaving those
+  named after the run is the legible choice #183's and #265's evidence make on
+  purpose. `readonly-iframe` under `--task-id` needs no restore at all: it seeds
+  nothing there and only reads the named template back, which is why #289 calls
+  that reading state-bounding.
+- Guards: four behavioural tests drive `_restore_borrowed_help` (the value back,
+  an empty `help` back as `False` rather than the seed, the `false` reading on a
+  write that failed, and the key written in exactly one place), three drive the
+  two mailing sites without the flag, and one parametrized source check holds all
+  three restores at their function's own indentation -- nested under a gate they
+  would be four spaces deeper. Mutation-checked, each against the assertion named:
+  the gate back on `codeview` (the indentation check and the signature check),
+  on `mailing-editable` (the indentation check and the `--mailing-id` behavioural
+  test), on `media-document-mailing` (the indentation check and the `found`
+  behavioural test), a raising restore (the `false` reading and the one-writer
+  check), a second inline writer (the one-writer check), and the restore moved
+  ahead of the discard (the ordering check, re-pointed off `if cleanup:` and onto
+  the call with its arguments, for the reason #282 item 5 records).
 
 ## 0.4.10 — 2026-10-01
 

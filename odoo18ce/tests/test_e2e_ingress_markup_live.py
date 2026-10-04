@@ -877,10 +877,200 @@ def test_a_handler_that_restores_a_record_discards_before_it_does(handler):
 def test_the_codeview_check_leaves_the_real_action_s_form_clean():
     """The one of the three that writes a record it can neither delete nor
     rebuild: `ir.actions.act_window.help` on a real action. The discard has to
-    come after the read-back -- which is the reading -- and before the restore."""
+    come after the read-back -- which is the reading -- and before the restore.
+
+    The restore anchor is the **call with its arguments**, not `if cleanup:` as
+    it was until #297 and not the bare helper name, which the comment above the
+    call also carries: an `index()` whose target can resolve in prose stops being
+    a guard the moment the call text moves or is renamed (#292's `is_visible()`
+    pin, and #282 item 5's narrower version of it)."""
     source = inspect.getsource(markup._codeview_after_seeding)
     assert source.index('read_field(side, "ir.actions.act_window"') \
-        < source.index("_discard_unsaved_form(") < source.index("if cleanup:")
+        < source.index("_discard_unsaved_form(side, extra)") \
+        < source.index("_restore_borrowed_help(side, uid, before, extra)")
+
+
+# --- #297: a borrowed record goes back whatever `--cleanup` says ---------------
+#
+# `--cleanup` deletes what a check **created**. Leaving a scratch row named after
+# the run is a legible choice and #183's and #265's evidence make it on purpose.
+# Handing back a record the driver merely borrowed is a different question, and
+# three success paths used to answer it with the same flag -- so a run taken
+# without it left a real `ir.actions.act_window.help` and, under `--mailing-id`,
+# a real campaign's body holding this run's marker. #282's run paid for the first
+# one on `odoo_parity`.
+
+
+class HelpAction:
+    """The `ir.actions.act_window` `codeview` borrows, behind the RPC seam.
+
+    `pick_help_action` creates nothing -- it takes the lowest id -- so this fake
+    starts with the record already there, which is the whole point of the ticket.
+    """
+
+    def __init__(self, help_value="", fail_write=False):
+        self.records = {1: {"help": help_value}}
+        self.fail_write = fail_write
+        self.calls = []
+
+    def rpc(self, model, method, args, kwargs=None):
+        self.calls.append((model, method, args))
+        assert model == "ir.actions.act_window", model
+        if method == "search":
+            return sorted(self.records)[:1]
+        if method == "read":
+            return [dict({"id": key},
+                         **{field: self.records[key].get(field, False)
+                            for field in args[1]})
+                    for key in args[0]]
+        if method == "write":
+            if self.fail_write:
+                raise RuntimeError("the action could not be written")
+            for key in args[0]:
+                self.records[key].update(args[1])
+            return True
+        raise AssertionError(method)
+
+
+def test_the_borrowed_help_goes_back_with_no_flag_in_the_question():
+    """The fix, driven: the restore takes a side, the record and the value read
+    before the seed, and `--cleanup` is not one of its arguments."""
+    side = HelpAction(help_value="<p>a real action's help</p>")
+    before = markup.read_field(side, "ir.actions.act_window", 1, "help")
+    markup.write_field(side, "ir.actions.act_window", 1, "help",
+                       markup.signature_value(RUN))
+    assert RUN in side.records[1]["help"], "the seed replaced a real value"
+
+    extra = {}
+    markup._restore_borrowed_help(side, 1, before, extra)
+    assert side.records[1]["help"] == "<p>a real action's help</p>"
+    assert extra == {"help_restored": True}
+    assert "cleanup" not in inspect.signature(markup._restore_borrowed_help).parameters
+
+
+def test_an_empty_help_is_put_back_as_false_and_not_as_a_marker():
+    """The value #282's run found on `odoo_parity`: `help_before` was `""`, and
+    `write_field(..., before or False)` is what makes an empty field empty again
+    rather than leaving the seed in place."""
+    side = HelpAction(help_value="")
+    before = markup.read_field(side, "ir.actions.act_window", 1, "help")
+    markup.write_field(side, "ir.actions.act_window", 1, "help",
+                       markup.signature_value(RUN))
+    markup._restore_borrowed_help(side, 1, before, {})
+    assert side.records[1]["help"] is False
+
+
+def test_a_restore_that_could_not_be_written_is_a_reading_and_not_a_raise():
+    """`false` is the third of the three readings, and raising here would be
+    worse than reporting it: the success path would fall into the handler's
+    `except Exception` and a measured record would be rewritten as `NOT-RUN`."""
+    side = HelpAction(fail_write=True)
+    extra = {}
+    markup._restore_borrowed_help(side, 1, "<p>was here</p>", extra)
+    assert extra == {"help_restored": False}
+
+
+def test_help_restored_is_written_in_exactly_one_place():
+    """The three readings are three only while one function owns the key: `true`,
+    `false`, and **absent** when the handler never got as far as seeding. A
+    second writer -- an inline one under a flag, which is what this ticket
+    removed -- is how the absent reading stopped meaning that."""
+    assignment = 'extra["help_restored"] = '
+    everywhere = [line for line in inspect.getsource(markup).splitlines()
+                  if line.strip().startswith(assignment)]
+    in_the_helper = [line for line
+                     in inspect.getsource(markup._restore_borrowed_help).splitlines()
+                     if line.strip().startswith(assignment)]
+    assert len(everywhere) == len(in_the_helper) == 2, everywhere
+
+
+def test_the_codeview_handler_no_longer_takes_the_flag_it_cannot_use():
+    """It creates nothing, so there is nothing for `--cleanup` to delete -- and a
+    parameter threaded through to no reader reads as a gate somebody forgot.
+    `run_check` passes it to every handler, so the signature must still swallow
+    it."""
+    for handler in (markup.do_codeview, markup._codeview_after_seeding):
+        assert "cleanup" not in inspect.signature(handler).parameters, handler.__name__
+    # Exactly the call `run_check` makes, which `**_` has to keep accepting.
+    inspect.signature(markup.do_codeview).bind(
+        object(), RUN, task_id=None, mailing_id=None, cleanup=True)
+
+
+# The three success paths that hand a borrowed record back, and the call each
+# one makes. The restore sits at the function's own indentation: nested under
+# `if cleanup:` it would be four spaces deeper, which is what this measures.
+BORROWED_RESTORE_SITES = (
+    (markup._codeview_after_seeding, "_restore_borrowed_help(side, uid, before, extra)"),
+    (markup._mailing_editable_leaving, "_restore_borrowed_mailing_body(side, fixture, extra)"),
+    (markup._document_mailing_leaving, "_restore_borrowed_mailing_body(side, fixture, extra)"),
+)
+
+
+@pytest.mark.parametrize("leaving,call", BORROWED_RESTORE_SITES,
+                         ids=lambda value: getattr(value, "__name__", ""))
+def test_no_success_path_puts_a_borrowed_restore_behind_cleanup(leaving, call):
+    """The standing check that the gate cannot come back. Comment lines are
+    dropped first, so the prose above each call can neither satisfy this nor
+    break it."""
+    lines = [line for line in inspect.getsource(leaving).splitlines()
+             if not line.strip().startswith("#")]
+    restore = next(index for index, line in enumerate(lines) if line.strip() == call)
+    assert lines[restore].startswith("    " + call), \
+        "the restore is nested inside something: %r" % lines[restore]
+    assert all(index > restore for index, line in enumerate(lines)
+               if line.strip() == "if cleanup:"), \
+        "a `--cleanup` gate reaches the restore in %s" % leaving.__name__
+
+
+def test_a_borrowed_mailing_is_restored_without_cleanup_and_still_not_deleted():
+    """`media-document-mailing` borrows on its `found` branch, which is every run
+    on a database that carries a draft -- `odoo_parity` does. The removal stays
+    behind the flag, because the attachment is this run's own."""
+    side = FakeSide(mailings={4: {"state": "draft", "subject": "Real campaign",
+                                  "body_arch": BORROWED, "body_html": BORROWED}})
+    fixture = seed_document_mailing(side)
+    assert fixture["extra"]["mailing_source"] == "found"
+    assert side.mailings[4]["body_arch"] != BORROWED, "the seed overwrote the body"
+
+    outcome = leave(side, fixture, cleanup=False)
+    assert side.mailings[4]["body_arch"] == BORROWED
+    assert side.mailings[4]["body_html"] == BORROWED
+    assert outcome["extra"]["body_restored"] is True
+    # What the flag still owns, and it was not asked for.
+    assert "fixture_removed" not in outcome["extra"]
+    assert fixture["attachment"]["id"] in side.attachments
+    assert not side.did("mailing.mailing", "unlink")
+
+
+def test_the_campaign_mailing_id_named_is_restored_without_cleanup():
+    """The worst version of this defect in the driver, because this is the check
+    that **saves**: without the restore a real campaign in `draft` -- a row that
+    can still be sent -- kept this run's marker in `body_arch` and in the inlined
+    `body_html` that leaves the installation with the mail."""
+    side = FakeSide(mailings={9: {"state": "draft", "subject": "Real campaign",
+                                  "body_arch": BORROWED, "body_html": BORROWED}})
+    fixture = seed_editable_mailing(side, mailing_id=9)
+    assert fixture["extra"]["mailing_source"] == "given"
+    assert side.mailings[9]["body_arch"] != BORROWED, "the seed overwrote the body"
+
+    outcome = leave_editable(side, fixture, cleanup=False)
+    assert side.mailings[9]["body_arch"] == BORROWED
+    assert side.mailings[9]["body_html"] == BORROWED
+    assert outcome["extra"]["body_restored"] is True
+    assert 9 in side.mailings and not side.did("mailing.mailing", "unlink")
+    assert "fixture_removed" not in outcome["extra"]
+
+
+def test_a_row_this_run_owns_is_not_restored_just_because_the_gate_went():
+    """The reading the gate was never what protected: `body_restored` must stay
+    absent for a scratch row, or it would say a real campaign was put back when
+    none was. `_restore_borrowed_mailing_body`'s own first line is that test."""
+    side = FakeSide()
+    fixture = seed_document_mailing(side)
+    assert fixture["extra"]["mailing_source"] == "created"
+    outcome = leave(side, fixture, cleanup=False)
+    assert "body_restored" not in outcome["extra"]
+    assert fixture["mailing_id"] in side.mailings, "no cleanup was asked for"
 
 
 # --- `_discard_unsaved_form`'s three readings (#280) ---------------------------
