@@ -438,6 +438,8 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > `__WOOW_INGRESS_MARKUP_IN__` 對非字串原樣回傳，直接套用會是沉默的 no-op。靜態層契約在
 > `odoo18ce/tests/test_ingress_readonly_html_viewer.py`（含兩個 pattern 的測量，以及兩條路徑在
 > globals 有／無兩種情況下的執行）。`U-A6` 的探測清單**不**擴充，`innerHTML` 一途仍記 accepted。
+>
+> **事後附記（#282，2026-10-04）**：這四項已在**同一個 Release 0.4.10** 上、以 2026-10-03／04 改過的 driver 重跑一次（#282，`docs/testing/evidence/2026-10-04-issue-282/`，run `WOOW-MARKUP-20261004T104350Z`）。`readonly-iframe` 兩面重現（`UNDER-PREFIX`／`AT-ORIGIN-ROOT`），`readonly-plain` 的 Ingress 面重現、**Public 面變成 `ESCAPED`**——不是這兩條改寫的事，是歷史對話框畫出來的那份 revision 裡留著別人存進去的 Ingress 前綴，登記為第 11 節的 `G-10`。兩列的 `stored` 自 #289 起各自宣告讀數種類：`readonly-plain` 的 `description` 是 `state-bounding`（它的 register 列寫 `writes: False`），`readonly-iframe` 的 `mail.template.body_html` 是 `write-bounding`。這一列的判定不改。
 
 > **舊版 `web_editor` 編輯器（郵件設計器那一個）的十個改寫點已於 2026-10-01 補上（#238，ADR 0004
 > 的第二個 2026-10-01 附記），Live 重跑已於 2026-10-02 在 Release 0.4.10 上完成（#243）：
@@ -484,6 +486,8 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 的執行）。`U-A6` 的探測清單**不**擴充，也沒有新的 global。**Live 重跑（由 #243 執行）**：在 Ingress
 > 下開啟並儲存郵件設計器的 body，兩面 `route_escape`／`http_4xx_5xx`／`console_error` 皆為 0，且
 > `mailing.mailing` 的 `body_arch` **與** `body_html` 存後仍是 root-relative。
+>
+> **事後附記（#282，2026-10-04）**：三項已在同一個 Release 0.4.10 上、以改過的 driver 重跑（#282，run `WOOW-MARKUP-20261004T104350Z`）。designer 載入與存檔兩項重現 `PARITY`，而且這一次 `mailing-editable` 是在**它自己建的** mailing 上量的（#276），reclaim 來的那一列同時給出 `body_html_marker_before: true` 與 `body_html_inlined: true`（#279／#286），兩個欄位的 `reading` 都是 `write-bounding`。唯讀那一項（line 3）**這一次真的跑了**（`odoo_parity` 有兩封 `done` 的 mailing），判定是 `ABSENT`：那兩封的 body 只有 166 bytes、`<img` 0 次，所以是「這筆記錄沒有圖可以判」而不是前綴的事——#243 當年讀到的 logo 來自它自己種下、後來還原掉的 body。它的兩個欄位 `reading` 都是 `state-bounding`（#289 的第二個 site，這是它第一次被行使）。這一列的判定不改。
 
 > **協作 peer snapshot 的前綴（`project.task.description` 的 token write）已於 2026-10-01 修正
 > （#234，ADR 0004 的第三個 2026-10-01 附記），Live 量測已於 2026-10-02 在 Release 0.4.10 上
@@ -691,6 +695,8 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > #239 管的 preselection 兩面都正確，責任規則是 #166 的通用字面規則之一，而且 domain 走的是 request
 > body，什麼都不存（兩面 `stored_verdict` 都是 `CLEAN`）。真正值得處理的是那個**類別**——通用字面改寫會
 > 碰到 ORM domain 的字面值而不只是 URL——由 #271 承接。
+>
+> **事後附記（#282，2026-10-04）**：三行已在同一個 Release 0.4.10 上、以改過的 driver 重跑（#282，run `WOOW-MARKUP-20261004T104350Z`）：image 兩行重現 `PARITY`、document 那一行在現行編輯器維持 `NOT-RUN`（構造上到不了）、在舊對話框（郵件設計器）兩面重現 `PARITY`。這一輪另外給出這一族欠的兩個讀數：`discarded: true`（#280 的三值讀數，而且是在郵件設計器上——那次確認要付整條 `commitChanges` pipeline，所以 15 秒的界夠用是量到的）與 `body_html` 的**推導**宣告 `state-bounding`（#289：discard 守住了，所以這個 check 不是它的作者）。這一列的判定不改。
 
 > **HTML 編輯器「把 code view 切回去」會重新插入不帶 Ingress 前綴的 markup，已於 2026-10-01 處理
 > （#240，ADR 0004 的第五個 2026-10-01 附記），Live 重跑已於 2026-10-02 在 Release 0.4.10 上
@@ -739,6 +745,8 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > 前綴下載入（`route_escape=0`/`http_4xx_5xx=0`/`console_error=0`，兩面一致），以及存檔之後
 > `res.users.signature` 仍然是 root-relative。`U-A6` 的探測清單**不**擴充，沒有新的 global，Public
 > origin 不動，Rewrite scan 不受影響（記錄內容不在 bundle 裡）。
+>
+> **事後附記（#282，2026-10-04）**：兩半已在同一個 Release 0.4.10 上、以改過的 driver 重跑（#282，run `WOOW-MARKUP-20261004T104350Z`），兩面都重現 `PARITY`，`ir.actions.act_window.help` 讀回 `CLEAN`、`reading: write-bounding`、`help_restored: true`，主機事後讀到的值是 run 前的空字串。順帶量到一個 driver 的不對稱：成功路徑的還原掛在 `--cleanup` 上，而錯誤與中斷路徑是無條件還原，所以不帶 `--cleanup` 的第一趟把這筆真記錄留著 marker（已用 `odoo shell` 寫回並重跑，兩筆記錄都留在證據裡）。這一列的判定不改。
 
 > **網站頁「Edit this content」連結的前綴重複（`U-A2`）已於 2026-09-30 修正（#211）；Live 重跑已於
 > 2026-10-01 在 Release 0.4.9 上完成（#235），改記 `PARITY`。** 連結在 Ingress 下讀到
@@ -970,6 +978,21 @@ check 的每面 5 次 navigation），兩側絕對值 198／59 與 #243 跑完�
 建而且已清掉，所以它那兩個讀數不可重現」的證據——四個 media check 現在都自己建它要量的東西，
 `--cleanup` 全部移除）。#243 的證據目錄只加附記，不改寫。
 
+**事後附記（#282，2026-10-04）**：那一句「要帶著那幾行的是這一族的**下一次**跑」在 #266 就已經兌現了一半
+（markup driver），這一輪把剩下的兩個 driver 補完：**hand checks 第一次留下 `.ambient.json`**（`visit`
+`website.track` **+1**／1 次 navigation——那一行就是量測本身，而不是記帳；`editbtn` +2／6 次 navigation 是對照，
+它「什麼都不寫」指的是業務寫入），peer snapshot 的 `run` 與兩次 `probe` 也各自帶了自己的圖（`probe` 不留記錄檔，
+所以它印在 stderr 上）。四個記錄檔都是「一筆記錄一行圖」：markup 21／21、markup-local 3／3、hand-checks 2／2、
+peer 1／1，`website.track` 的絕對值從 200 → 200（markup）→ 203（hand checks）→ 203（peer）接得起來。
+這一輪在**同一個 Release 0.4.10** 上重跑了 markup 整組 check（#243 的五列全部，加上 #266／#271 之後的
+`media-document-mailing`），因為那些 driver 在 2026-10-03／04 被 #274／#276／#277／#279／#280／#286／#288／#289
+改過——那正是 #266 自己立下的先例（「driver 改了，所以 Live 重跑」）。**76 項守恆數字同樣不動**，理由與上面三次
+相同：這些是第 9 節各列的 Live 欄，`woow.ingress-markup/v1` 與 `woow.peer-snapshot.v1` 都不進 `conservation`，
+所以仍維持 **60 `PARITY` + 0 `GAP` + 2 `APPROVED-DIVERGENCE` + 6 `STRUCTURAL` + 8 `NOT-RUN`**。
+本輪另外找到一個分歧，登記為第 11 節的 **`G-10`**（html field 的版本歷史留著 Ingress 前綴，沒有任何存檔治得到
+它），它和 `G-08`／`G-09` 一樣是落差登記、不是 plan item，所以上面那個 **0 `GAP`** 也不為它而動。證據在
+`docs/testing/evidence/2026-10-04-issue-282/`；#243／#265／#266／#271 的證據目錄一律只加附記，不改寫。
+
 這一輪另外跑了 `crawl --apps website` 兩面比對（30 判定 = 30 `PARITY`、
 1 跳過）與 #163 全部七個 target 兩面比對（7 判定 = 7 `PARITY`），後者是刻意跑整個 target 檔而不是只跑三行：
 0.4.9 是第一個部署 #238 那 182 行 Literal rewrite 的 Release，規則若在不該觸發的頁面觸發，會在無關 target 上
@@ -1029,6 +1052,7 @@ E 群組的判定**不只比較兩邊**：產出物裡只要有 HA 位址、相�
 | `G-07` | Odoo 自己在瀏覽器開出的新分頁（問卷的 Test 按鈕、任何開新分頁的連結、「在新分頁開啟」），在 ingress 下位址必然是 `<HA_BASE><INGRESS_PREFIX>/…`，帶著 Supervisor 的 ingress token（是 add-on 的那一份；per-user 的 session 走 cookie，見 `RC-15`） | **`STRUCTURAL`**（原始發現記為 Important；依第 1.4 節，證據記錄的 severity 為 `none`） | RC-15 | `docs/testing/evidence/2026-09-28-issue-183/checks.jsonl` 的 `check:U-C23\|shared\|generic`（run `WOOW-PARITY-20260928T070408Z`，2026-09-28，#183）：verdict `STRUCTURAL`、severity `none`、`public_path` `<PUBLIC_BASE>/survey/<token>`；ingress 分頁在 `<HA_BASE><INGRESS_PREFIX>/survey/<token>`，public 分頁在 `<PUBLIC_BASE>/survey/<token>`，兩邊開的是同一頁。原始發現見 `docs/testing/evidence/2026-09-25-issue-143/checks.jsonl`（run `WOOW-PARITY-20260925T043539Z`）：同樣的形態，但記於決定之前，verdict 仍是 `GAP`／`important` | **Public origin 承接**：ingress 的每一個頂層頁面都在 Supervisor 路徑之下，新分頁因此只有兩種結果——帶 token，或離開 Ingress 去別的 origin。Runtime shim 只夠得到 `window.open`，`target="_blank"` 錨點、中鍵與「在新分頁開啟」走的是 `href`，而 `href` 必須保持前綴才能在頁內導覽；分頁落到別的 origin 還要求第二次登入，LAN fallback 下離開內網就打不開，通道斷線時也打不開。ADR 0006 對 Ingress 內位址的判斷相同，故不改 shim、不改 Literal rewrite；要給別人開的同一個畫面，從 Public origin 取位址分享。使用者文件見 `odoo18ce/DOCS.md`「What only the Public origin can do」。決定本身見 #168（已關閉）；依新規則的補跑已於 2026-09-28 完成（#183） |
 | `G-08` | 協作中的 Public origin peer 會把 Ingress 前綴存進 `project.task.description`：To-do 的 description 是 `'collaborative': true`，後加入的 peer 會拿到先加入那個 peer 的整份文件當 snapshot，而 Public 那一面沒有 shim 也沒有 rewrite（ADR 0003 的對照組），收到什麼就存什麼。記錄裡那串是 add-on 的 `ingress_token`（不是 session secret，見 `RC-15`） | **Important**（§1.3 的「**ingress token 外洩**」本身是 Blocker；2026-10-02 由 **#234 裁定維持 `important`**：寫入已確認，而下一次 Ingress 存檔會把它清掉，所以真正未解的只有「再也沒有 Ingress 存檔的那一筆記錄」，見「建議處置」）。**不是 `STRUCTURAL`**：§1.4 要求結構性落差指定「由 public surface 承接」的替代路徑，而這一列的 public surface 正是寫入的來源，沒有承接可指，所以不走那條路 | RC-15 | `docs/testing/evidence/2026-10-02-issue-265/peer.jsonl` 的 `ingress-public` 一列（run `WOOW-PEER-20261002T064500Z`，2026-10-02，#265，Release 0.4.10）：`transport.delivered: true`、peer 存檔後 `verdict` 為 `FOREIGN-PREFIX-STORED`、`stored_prefixes: ["A"]`，兩張圖的 `src` 都在 `/api/hassio_ingress/<ingress:A>/project_todo/static/img/…`；接著 `healing.verdict` 為 `CLEAN`、`loaded_prefixes: ["A"]`，兩個 `src` 回到根相對路徑。同一輪的 `ingress-ingress` 在送到的前提下仍 `CLEAN`。第一次嘗試（`peer-first-attempt.jsonl`）的傳輸讀數因 marker 撞號而**作廢**，一併保留 | **下一次 Ingress 存檔治好，擋不住**：Ingress 這邊的 strip 掛在欄位唯一的寫入點（`HtmlField.updateValue`，#210／#238），能做的是把載入值裡任何符合 `$safe_ingress_path` 形狀的前綴去掉（#234），而 Public origin 的那次寫入在另一個 surface 上，ADR 0003 不改它。所以殘留風險是**一筆再也沒有 Ingress session 存過的記錄**：在下一次 Ingress 存檔之前，token 就在那一列裡。量測由 `e2e_collab_peer_snapshot_live.py run --pair ingress-public` 的兩段式讀取維持，`report` 以 `foreign_prefix_healed` 單獨列出、不併進 clean 數。#234 的 severity 要不要因此改（它自己的驗收條件說「確認存到 foreign token 就升 `blocker`」，而現狀是「確認存到、而且被治好」）留給 #234 自己決定；本列只登記量到的東西。見 #265 |
 | `G-09` | ~~Ingress 下媒體對話框的 Documents 分頁把**所有產生出來的 asset bundle** 都列成文件：`DocumentSelector.attachmentsDomain` 以 `!['url', '=like', '/web/assets/%']` 排除它們，而那是 **ORM domain 裡的字串字面值**、和被改寫的 URL 字面值住在同一包 bundle 裡，所以也被加了前綴；加了前綴的排除條件比不中任何一筆 `url`，於是什麼都沒排除~~ **已修正並在測試主機驗證（2026-10-03，#271，`docs/testing/evidence/2026-10-03-issue-271/`）**。那個**類別**也一併記進 ADR 0004：通用字面改寫碰得到 ORM domain 的字面值而不只是 URL，而**搜尋樣式不得被加前綴** | ~~**Minor**~~（原記：什麼都不存——domain 走 request body，兩面 `stored_verdict` 都是 `CLEAN`——也沒有離開前綴；影響是選取器裡的一份錯清單，第一頁 30 格被 bundle 佔滿。**不是 `STRUCTURAL`**：不是原理上做不到，而是一條規則命中了不該命中的字面值） | RC-1（#166 的通用字面改寫） | **原始發現**：`docs/testing/evidence/2026-10-02-issue-266/markup.jsonl` 的 `media-document-mailing` 兩筆（run `WOOW-MARKUP-20261002T074704Z`，2026-10-02，#266，Release 0.4.10）：Ingress `dialog.tiles` 30、Public 1，兩面 `dialog.tiles_selected` 都是 1；`operand.served_domain_asset_exclusion_prefixed` Ingress `true`／Public `false`，`operand.served_domain_length` 383 對 320（正好一個前綴 63 bytes）。**修正後**：`docs/testing/evidence/2026-10-03-issue-271/markup.jsonl`（run `WOOW-MARKUP-20261003T124016Z`，2026-10-03，#271，**本地建置** `local_odoo18ce` `0.4.10-202610031232`，DB `catchup164b`，只有 Ingress——依 #271 的 brief 不發版，Public 那一面不受這個修法影響且已由 #266 量過）：`served_domain_asset_exclusion_prefixed` **`false`**、`served_domain_has_web_assets_literal` 仍為 `true`、getter 長度 **320**（與 Public 同、也與靜態 fixture 同長），`dialog.tiles` **1**、`tiles_selected` 1、`tile_sources` 只有該 check 自建的 fixture，`stored_verdict` `CLEAN`（`body_arch`／`body_html` 各 0 個前綴）；前綴長度由 Supervisor 讀到 **63**，所以 383 與 320 的差就是一次前綴插入。同一個資料庫的資料列另外量到：`url =like '/web/assets/%'` 共 **18** 筆，不帶前綴的排除條件把 **18 筆全部**排掉、帶前綴的 **一筆都沒排掉**——這才是那一格會變成 19 的原因 | **已出貨（#271）**：Ingress asset location 多兩條 **Shipped rewrite**，一條一種引號，pattern 與 replacement 完全相同——唯一的工作是在通用規則之前先搶下那段位元組（`sub_filter` 一次只追一個比對，起點較早者勝；起點相同則依寫的順序，#158，所以這兩條寫在通用規則之前，兩種機制下修法都成立）。**不收窄通用規則**：量測顯示這個類別目前只有**兩處**，而 `/web/assets/...` 同時也是真的位址（`loadBundle` 就用它），位元組搜尋分不出 operand 位置；理由與否決的另一案記在 ADR 0004 的 2026-10-02 postscript。六個樣式字面值（不是 issue 寫的四個——引號風格屬於每一處而不是每個檔案）連同第三個 selector `FileDocumentsSelector` 全部量進 `odoo18ce/tests/fixtures/bundles/README.md`；`odoo18ce/tests/test_ingress_media_dialog_domain.py` 用真正的 nginx **兩個方向**都跑：有修法時六個字面值一個位元組都不變，把這兩條拿掉時那兩個 document 字面值被加上前綴，所以未來有通用規則開始碰到剩下四個中的任何一個，是那個測試變紅而不是選取器悄悄換了清單。**不改 #239 的嚴重度**（本輪也重量到 `tiles_selected: 1`、`rule_in_served_method` 與 `legacy_rule_in_served_method` 皆 `true`），也不是 plan item，不進第 10.6 節的分母 |
+| `G-10` | html field 的**版本歷史**（`html.field.history.mixin` 的 `html_field_history`）留著 Ingress 前綴，而且沒有任何存檔治得到它：`project.task(5)` 的 `description` 有 17 筆 revision，其中 **2 筆**的 patch 裡帶著 `/api/hassio_ingress/<token>/…`（各 2 次，就是那兩張圖）。欄位本身是乾淨的——下一次 Ingress 存檔把它治好了，那正是 `G-08` 的承諾——但 revision 是 append-only，於是 Version History 對話框在 **Public** origin 上把一份帶前綴、載不起來的文件畫出來。記錄裡那串同樣是 add-on 的 `ingress_token`（不是 session secret，見 `RC-15`） | **Important**（與 `G-08` 同一個 token 類別與同一條裁定；它**界住**了 `G-08`「下一次 Ingress 存檔治好」那句話——那句話對欄位成立、對歷史不成立。要不要因此動 #234 的嚴重度留給 #234 自己決定，本列只登記量到的東西） | RC-15（寫入來源與 `G-08` 相同：協作 snapshot 交給沒有 shim 的 Public peer） | `docs/testing/evidence/2026-10-04-issue-282/markup.jsonl` 的 `readonly-plain`／`public` 一列（run `WOOW-MARKUP-20261004T104350Z`，2026-10-04，#282，Release 0.4.10）：兩張圖的 `attribute` 都是 `/api/hassio_ingress/<redacted>/project_todo/static/img/…`、`loaded: false`、verdict `ESCAPED`，而同一筆記錄判定的 `project.task.description` 是 `CLEAN`、0 個前綴、`reading: state-bounding`（#289 的歸屬：這個 check 的 register 列寫 `writes: False`，它是**目擊者**不是作者）。主機讀數：17 筆 revision，帶前綴的是 revision 13（2026-10-02T06:29:43）與 16（2026-10-02T06:36:32），正好落在 #265 那一輪的時間窗；本輪自己的 peer 存檔（session B，在 Ingress 下）新增的 revision 17 **不**帶前綴，所以現行程式不會再寫出帶前綴的 revision，它只是碰不到已經在那裡的那兩筆。Ingress 那一面同一個畫面是 `UNDER-PREFIX`（前綴在那一面本來就該在），所以這不是兩面都壞，是 Public 那一面讀到了別人存進去的東西 | **不自己改歷史**：把一個 append-only 的歷史存儲改寫成「看起來過」是這一族量測的反面，#282 的證據因此原封不動留著那兩筆。真正的問法有兩個，而它們不是同一件事——(a) Public peer 的那次寫入要不要在 `G-08` 之外另外處理（那是 ADR 0003 的對照組，#234 已裁定不改 Public 那一面），(b) Ingress 的 strip 掛在 `HtmlField.updateValue`，而 revision 是伺服器端從新舊值算出來的 patch，所以「存檔前把載入值裡的前綴去掉」(#234) 連帶讓之後的 revision 都是乾淨的——留下來的只有歷史上那幾筆。追蹤票見 #282 的 follow-up；在它之前，讀 Version History 的人在 Public origin 上會看到那兩筆的圖載不起來，而那是真的狀態 |
 
 ---
 
@@ -1579,6 +1603,75 @@ docstring 一起交出來，所以這種斷言可以被散文滿足，而且既�
 grep 把那句註解留著；`Unusable` 則補上一個照抄基底類別預設（`root_now` 就是 `root`）的 property，讓它繼續模
 擬 `Side` 而不是偏離它——否則那個測試釘住的會變成 `AttributeError`，不是它要釘的那個方向。
 
+
+**#282（2026-10-04）：#263-#292 留下沒量的東西，一次量完。** 這一族從 2026-10-02 到 10-04 出了八張票改
+driver（#274、#276、#277、#279、#280、#286、#288、#289，再加另一個 driver 的 #292），**全部只到 Static
+tier**——其中 #286 與 #289 的 commit 自己就把 host proof 指到 #282。這一輪在**同一個 Release 0.4.10**、
+同一台主機上，不發版、不重建，因為被改的全是 driver，而 driver 在本地跑。
+
+量到的東西，逐票：
+
+- **#279／#286（reclaim 來的那一列）**：`mailing-editable --surface both`、兩個 surface 之間**不**帶
+  `--cleanup`，第二個 surface 於是 reclaim 掉第一個留下的 scratch 列。第一面 `mailing_source: created`、
+  `body_html_marker_before: false`；第二面 `mailing_source: reclaimed`、`body_html_marker_before: **true**`、
+  而 `body_html_inlined` 仍然是 **`true`**——這正是 #279 自己給不了的那個雙向讀數（它在 reclaim 來的列上
+  只能是 `false`），#286 在種 `body_arch` 的同一次 `write` 裡把 `body_html` 清掉才讓它成立。被判定的那一半
+  跟著一起成立：兩個欄位的 `reading` 都是 `write-bounding`、`stored_verdict` 都是 `CLEAN`，而在 #286 之前，
+  第二面那個 `CLEAN` 可能是第一面存進去的值。
+- **#280／#288（discard seam）**：`media-document-mailing` 四筆記錄（`odoo_parity` 兩面、`catchup164b` 兩次）
+  全部 `discarded: true`，而 `true` 的意思是表單真的乾淨了（等 `UNSAVED` 轉 hidden）。在郵件設計器上那個等待
+  要付整條 `commitChanges` inlining pipeline 的時間，所以這一輪順便回答了 Static tier 答不了的那半句：
+  **`DISCARD_CLEAN_TIMEOUT`（15 秒）在一台有負載的主機上夠**（不夠的話那四筆會是 `discarded: false` 而 body
+  有變）。`codeview` 四筆與 `mailing-editable` 四筆都**沒有** `discarded` key，那是 #280 的第三個讀數
+  （「沒有東西要 discard」），不是失敗。#288 的 seam（一次 `root_now`、不再 `settle`）在同一批記錄裡：
+  discard 之後的讀回全部 `CLEAN`，事後主機讀數每一封 mailing 都回到自己的 body、任何 mailing body 裡
+  `hassio_ingress` **0** 次——#288 當時用機制論證的那件事，這一輪是量到的。
+- **#289（Stored reading 的種類）**：18 筆有讀回的記錄全部帶著逐欄位的 `reading`，共 28 個宣告。
+  `readonly-plain` 的 `description` 與 `mailing-readonly` 兩個欄位都是 `state-bounding`（而這兩列的 register
+  都寫 `writes: False`，正是 #289 說「證據自己打自己的嘴」那一處）；`readonly-iframe`、`codeview`、
+  `mailing-editable` 是 `write-bounding`；`media-document-mailing` 一個 check 兩種——`body_arch`
+  `write-bounding`、`body_html` **推導**出 `state-bounding`，因為四筆的 discard 都守住了（`after == before`）。
+  守門也驗到了：未宣告的欄位、宣告了卻沒讀回的欄位、不認識的種類、`writes: False` 的 check 主張
+  `write-bounding`，`evidence_record` 都會 raise，而這一輪每一個 surface 都寫出了記錄。
+  **`mailing-readonly` 這一輪是真的跑了**，與 #282 票面上的預期相反：`odoo_parity` 有兩封 `done` 的 mailing，
+  `sent_mailing_id` 找得到，所以 #289 第二個宣告 site 是這一輪量到的。它的畫面判定是 `ABSENT`，原因在 fixture
+  不在前綴——那兩封是 `e2e_parity_outbound_live.py` 的 166 bytes 單段落，`<img` **0** 次；#243 當時讀到
+  logo 是因為它自己先種了一個 body，後來又還原掉了。
+- **#277（stranded attachment）**：刻意的兩段式，在 `catchup164b` 同一個 run id 下。第一趟不帶 `--cleanup`，
+  留下 scratch mailing 2 與 attachment **362**；第二趟帶 `--cleanup`，`mailing_source: reclaimed`、
+  `reclaimed_attachment_ids: [362]`、`reclaimed_attachments_removed: true`，事後主機讀數 attachment 362
+  **不存在**、mailing 回到 0 筆。
+- **#274／#276（自己建 fixture）**：`created` 與 `found` 在同一輪裡並存——`mailing-editable` 兩個資料庫上都
+  自己建（`borrow=False`），`media-document-mailing` 在 `odoo_parity` 上仍走 `found`（借 draft mailing 3、
+  `body_restored: true`）。#274 的 `email_from` `NOT NULL` 在 `catchup164b` 上真的被踩到了（那個資料庫跑之前
+  一封 mailing 都沒有），兩個 check 都建起來並存檔成功。
+- **#292（peer snapshot 的姊妹 seam）**：兩次 `probe` 都是 `discarded: {"A": {"dirty": true,
+  "discarded": true}, "B": {"dirty": false, "discarded": false}}`——A 是打了字的那一面，`dirty: true` 配
+  `discarded: true` 正是 #292 修的那一對（舊碼在面板重新掛載 Ingress iframe 時會從替換 frame 讀出
+  `dirty: false`，把那次寫入藏起來）。沒有任何一筆帶 `error` key。獨立佐證在主機上：兩次 probe 之後
+  `project.task(5).description` 裡 `WOOW-PEER-PROBE-` **0** 個。`run --pair ingress-ingress` 判定 `CLEAN`、
+  `stored_prefixes: []`、`report` exit 0。`--pair ingress-public` 的 `run` **沒有**重跑，而且明寫出來：那一對
+  #265 已經在同一個 Release 上量過，它按設計 exit 非零（`G-08`），而 #282 欠的是 discard 的讀數。
+- **#264 的第三個 driver**：hand checks 第一次留下 `.ambient.json`（見第 10.6 節的附記）。
+- **#271 的 item 3 仍然欠**：這一輪在同一天把兩半都讀到了——Release 的 Ingress 面
+  `served_domain_asset_exclusion_prefixed: true`／長度 383，Public 面 `false`／320，本地建置 Ingress 面
+  `false`／320——所以「一趟、一個資料庫、兩面相等」還是跨了兩個 add-on。決定不變：**不為它發版**，併進下一次
+  發版的 owed-rerun。
+
+**這一輪自己找到兩件事，而它們都不在那八張票裡。** 一個登記成 `G-10`（上面第 11 節）。另一個是 driver 的
+不對稱：`do_codeview` 成功路徑的還原掛在 `--cleanup` 上（`if cleanup: write_field(…, before or False)`），
+而它的錯誤路徑與中斷路徑都是無條件還原。這一輪第一次跑 `codeview` 沒帶 `--cleanup`，於是一筆**真的**
+`ir.actions.act_window.help`（id 1，「Load demo data」）被留著本輪的 marker，直到用 `odoo shell` 寫回 `''`
+（它的 run 前值，由同一筆記錄的 `help_before: ""` 獨立佐證），然後帶 `--cleanup` 重跑一次、兩面
+`help_restored: true`。沒有還原的那一筆與還原的那一筆都留在 `markup.jsonl` 裡，因為那是真的讀到的東西。
+借來的記錄要不要在沒有 `--cleanup` 時也還原，是 driver 的問題而不是這一輪的問題，另開 follow-up。
+
+**這一輪沒有說的事**，一樣明寫：#289 的 `report` 句子**沒有被行使**（兩個記錄檔的 `stored_prefix_found` 都是
+`no`，沒有任何欄位帶前綴，所以那句「`PREFIX STORED by … (state-bounding)`」沒有印出來——這一輪證明的是宣告與
+守門，不是列印路徑，而為了看那句話故意把前綴寫進資料庫是本末倒置）；中斷路徑（#280 後半與 #288 的窗口）
+**刻意沒量**，因為要量就得安排一次「真的把 marker 留在那筆 action 上、而且沒有東西還原它」的結果，而那個窗口
+現在是 2 秒的 click 界加 15 秒的確認、中間沒有 `settle` 也沒有會等的 frame search，所以沒量到的是一個時間
+主張，不是任何判定依賴的讀數。
 
 落差報告最終彙整為：
 
