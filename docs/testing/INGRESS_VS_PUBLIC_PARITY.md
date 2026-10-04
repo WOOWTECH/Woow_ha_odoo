@@ -1345,9 +1345,26 @@ discard 的證據。而 `true` 的意思是**表單真的乾淨了**，不是「
 一次還原之間；窗口裡的第二次 Ctrl+C 是 `KeyboardInterrupt`，`_discard_unsaved_form` 的 `except Exception`
 接不到，handler 自己的 `except Exception` 也接不到，標記文字就留在那個 action 上，沒有任何東西還原它。現在
 兩個等待都明寫界：click 是 `DISCARD_TIMEOUT`（2 秒——它只需要一顆可點的按鈕，而那一顆剛剛才以
-`visible=true` 命中），指示器轉 hidden 是 `DISCARD_CLEAN_TIMEOUT`（5 秒——它等的是 discard 送回宿主的那次
-記錄 reload，而這個 driver 的 Ingress surface 是隔著網路在開 HA 前端，所以這一半給得寬一點）。兩者都遠低
-於 30 秒，這正是重點：等待收短，第二次中斷能落下的窗口也收短。中斷真的落下時，`discarded: false` 已經寫
+`visible=true` 命中），指示器轉 hidden 是 `DISCARD_CLEAN_TIMEOUT`（15 秒）。第二個等的東西比第一個多得
+多，而且**不是** reload：`_discard` 本身純本機，從 save point 把 `_changes` 還原、重畫，一通 RPC 都沒有
+（`web/static/src/model/relational_model/record.js:565`）。指示器真正在等的是它上面那一行——`discard()`
+（`:183`）先 `await this.model._askChanges()`，那會發出 `NEED_LOCAL_CHANGES`，而 html field 的回應是把
+`commitChanges()` 推進 promise 清單（`html_editor/static/src/fields/html_field.js:78`）。在 mail designer 上
+那個 override 會把 editable 複製進一個 `srcdoc` iframe、**等它的 `load`**、跑 `toInline`、再把結果寫回記錄
+（`mass_mailing/static/src/js/mass_mailing_html_field.js:147-186`）。那是**存檔**路徑用 `side.settle(6000)`
+在等的同一條 inlining pipeline，而 `extra["save_incomplete"]` 存在就是因為那樣有時還不夠。所以這個界如果
+收得比存檔那邊還緊，一次成功的 discard 就會被記成 `discarded: false`——正是這張票要消滅的讀數錯誤從另一邊
+走回來（#288）；它因此訂在存檔預算之上，並有一個 Static tier 的測試釘住這個關係。
+
+**那組界收短的是這個 seam 對窗口的貢獻，不是窗口本身**（#288）。窗口裡還有兩筆更大的開銷，都不在這一個
+函式裡：`side.root` 是 property 而不是欄位，Ingress iframe 一旦 detached 它就走
+`_find_frame(wait_s=60)`（`e2e_parity_shared_layers_live.py:327-339`）——而那正是中斷本身的情境；成功的
+discard 之後那一下 `side.settle(2000)` 又會花掉一個 8 秒的 `networkidle`，Odoo 開著的 bus 通常會讓它等到
+逾時才去睡。這一票真正拿掉的是**三倍曝險**：seam 現在只解析 `side.root` 一次、拿到的 frame 一路用到底，而
+不是三個步驟各自去碰那個 property，所以一個 detached 的 frame 代價是一分鐘而不是最多三分鐘。中途 detach
+的 frame 於是立刻拋例外、讀數留在 `false`——那本來就是再解析一分鐘之後會得到的同一筆記錄。
+
+中斷真的落下時，`discarded: false` 已經寫
 進 `extra` 才往外拋——那條路徑上不會有任何一行記錄（`run_check` 只接 `Exception`，被 `KeyboardInterrupt`
 打斷的 surface 連 `NOT-RUN` 都不會寫），這個讀數是給其他每一條**會**寫記錄的路徑用的。另外兩個
 handler 的錯誤路徑共用同一個函式，所以同一組界也跟著套上。全域 `set_default_timeout` 會動到這個 driver 的

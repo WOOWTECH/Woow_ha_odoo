@@ -649,20 +649,44 @@
   that can never be clicked, and leaves the real button unclicked.
 - The two waits are now bounded explicitly: `DISCARD_TIMEOUT` (2 s) on the
   click, which needs nothing but an actionable button and has just matched one
-  `visible=true`, and `DISCARD_CLEAN_TIMEOUT` (5 s) on the indicator clearing,
-  which waits on the record reload the discard sends to the host -- the Ingress
-  surface drives the HA frontend over the network, so that half gets the more
-  generous of the two. No `set_default_timeout` is applied anywhere in this
+  `visible=true`, and `DISCARD_CLEAN_TIMEOUT` (15 s) on the indicator clearing,
+  which waits on much more. `_discard` is purely local -- it resets `_changes`
+  from the save point and re-renders, with no RPC, so there is no reload to wait
+  on (`web/static/src/model/relational_model/record.js:565`). What the indicator
+  waits on is the line above it: `discard()` (`:183`) does
+  `await this.model._askChanges()` first, which raises `NEED_LOCAL_CHANGES`, and
+  the html field answers that by pushing `commitChanges()` into the promise list
+  (`html_editor/static/src/fields/html_field.js:78`). On the mail designer that
+  override clones the editable into an `srcdoc` iframe, awaits that iframe's
+  `load`, runs `toInline` and writes the result back
+  (`mass_mailing/static/src/js/mass_mailing_html_field.js:147-186`) -- the same
+  inlining pipeline the **save** path budgets `side.settle(6000)` for, and
+  `extra["save_incomplete"]` exists because that is sometimes still not enough.
+  A bound tighter than the save's would therefore record `discarded: false` for
+  a discard that did come off, so this one sits above it, with a Static-tier test
+  pinning the relation. No `set_default_timeout` is applied anywhere in this
   driver -- `TIMEOUT` is only ever passed explicitly to `wait_for` -- so each
-  would otherwise take Playwright's 30 s default, and `do_codeview`'s
+  wait would otherwise take Playwright's 30 s default, and `do_codeview`'s
   `except BaseException` runs the discard *ahead* of the RPC that puts a real
   `ir.actions.act_window.help` back. On Ctrl+C mid-check those 30 s sat between
   the interrupt and the only restore that record was going to get, and a second
   Ctrl+C inside the window raises `KeyboardInterrupt`, which neither the
   discard's `except Exception` nor the handler's own catches -- leaving the marker
-  text on that action with nothing restoring it. The bounds shorten both the
-  waiting and that window, and the other two handlers' recovery paths share the
-  same function and so the same bounds. An interrupt that does land leaves
+  text on that action with nothing restoring it. The other two handlers' recovery
+  paths share the same function and so the same bounds.
+- **The bounds shorten this seam's contribution to that window and not the
+  window** (#288). Two larger costs sit in it and are outside this one function:
+  `side.root` is a property that re-resolves through `_find_frame(wait_s=60)`
+  whenever the Ingress iframe is detached
+  (`e2e_parity_shared_layers_live.py:327-339`) -- which is the interrupt scenario
+  itself -- and the `side.settle(2000)` after a successful discard spends an 8 s
+  `networkidle` that Odoo's open bus normally runs out before sleeping. What this
+  change does take out is the triple exposure: the seam resolves `side.root` once
+  and works through the frame it got, instead of reaching for the property at
+  each of its three steps, so a detached frame costs one minute rather than up to
+  three. A frame that detaches mid-discard then raises at once and the reading
+  stays `false`, which is the record a re-resolve would have produced a minute
+  later anyway. An interrupt that does land leaves
   `discarded: false` in `extra` on its way out rather than nothing -- not in an
   evidence line, since `run_check` catches `Exception` only and so writes no
   record at all for a surface a `KeyboardInterrupt` left; the reading is there

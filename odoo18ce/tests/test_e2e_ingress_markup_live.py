@@ -954,9 +954,15 @@ class DiscardPage:
         self.clicks = []
         self.waits = []
         self.settled = []
+        # How many times the seam reached for `side.root`. On the real
+        # `IngressSide` that property re-resolves through `_find_frame(wait_s=60)`
+        # whenever the iframe is detached, so the count is a bound on how long
+        # this seam can sit in front of the restore it runs ahead of.
+        self.root_reads = 0
 
     @property
     def root(self):
+        self.root_reads += 1
         return self
 
     def locator(self, selector):
@@ -1083,6 +1089,47 @@ def test_an_interrupt_inside_the_discard_leaves_the_failed_reading_and_propagate
     with pytest.raises(KeyboardInterrupt):
         markup._discard_unsaved_form(DiscardPage(click_error=KeyboardInterrupt()), extra)
     assert extra == {"discarded": False}
+
+
+def test_the_seam_resolves_side_root_once_and_holds_it():
+    """`side.root` is not a field, it is a property that re-resolves through
+    `_find_frame(wait_s=60)` whenever the Ingress iframe is detached
+    (`e2e_parity_shared_layers_live.py:327-339`). Three reads of it are three
+    chances to spend a minute inside a seam `do_codeview`'s interrupt path runs
+    *ahead of* the only restore a real `ir.actions.act_window.help` will get, so
+    the seam resolves it once and works through the frame it got (#288)."""
+    for page in (DiscardPage(), DiscardPage(still_dirty=True), DiscardPage(button=False)):
+        markup._discard_unsaved_form(page, {})
+        assert page.root_reads == 1, page.root_reads
+
+
+def test_the_clean_bound_covers_the_designer_s_commit_pipeline():
+    """A discard on the mail designer pays the whole inlining pipeline before
+    the indicator can clear, so this bound cannot be the small one.
+
+    `Record.discard` does `await this.model._askChanges()` before `_discard()`
+    (`web/static/src/model/relational_model/record.js:183-188`); `_discard()`
+    itself (`:565`) is purely local -- no RPC, so there is no reload to wait on.
+    `_askChanges` raises `NEED_LOCAL_CHANGES`, the html field answers it with
+    `commitChanges()` (`html_editor/static/src/fields/html_field.js:78`), and
+    the designer's override clones the editable into an `srcdoc` iframe, awaits
+    that iframe's `load`, and runs `toInline`
+    (`mass_mailing/static/src/js/mass_mailing_html_field.js:147-186`).
+
+    This driver's own budget for that same pipeline on the **save** path is
+    `side.settle(6000)` -- an 8 s `networkidle` Odoo's open bus normally runs
+    out, then a 6 s sleep -- and `extra["save_incomplete"]` exists because that
+    is sometimes still not enough. So the discard's confirmation may not be
+    bounded tighter than the save's, or a discard that came off records
+    `discarded: false`: the misreading #280 exists to remove, from the other
+    side."""
+    assert markup.DISCARD_CLEAN_TIMEOUT >= 14_000, markup.DISCARD_CLEAN_TIMEOUT
+    # Still a bound, and still well under the explicit one the driver uses for
+    # waits that are allowed to take as long as a page load.
+    assert markup.DISCARD_CLEAN_TIMEOUT < markup.TIMEOUT
+    # The click is the half that genuinely needs nothing but an actionable
+    # button, and it stays small -- the two are not one number by accident.
+    assert markup.DISCARD_TIMEOUT < markup.DISCARD_CLEAN_TIMEOUT
 
 
 def test_a_body_html_the_save_never_inlined_is_not_a_pass():
