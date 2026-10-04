@@ -100,7 +100,9 @@ they have never been executed against this host. Run the read-only checks first
       --surface both --out markup.jsonl --run-id WOOW-MARKUP-<UTC timestamp>
 
 Writing: `readonly-iframe` creates one scratch `mail.template` and deletes it on
-`--cleanup`; `codeview` writes one `ir.actions.act_window.help`;
+`--cleanup`; `codeview` writes one **real** `ir.actions.act_window.help` and
+hands it back on every path, which is the one thing here that no flag gates
+(#297, and it creates nothing for `--cleanup` to own);
 `mailing-editable` **creates its own draft mailing** (#276, reclaiming a scratch
 one an earlier surface or run left) and writes that mailing's `body_arch` and
 `body_html`, deleted under `--cleanup`, and borrows a real campaign only when
@@ -121,7 +123,10 @@ run made its image and document fixtures by hand and cleaned them up, and the
 only things left on the record are a static module asset and a website logo,
 which no dialog lists. `mailing-editable` builds its mailing for the other half
 of the same rule (#276): it measures a **save**, so the record it saves over must
-not be somebody's campaign. `--cleanup` removes all five. A *reclaimed*
+not be somebody's campaign. `--cleanup` removes all five. **A borrowed row's own
+value is put back whatever the flag says** (#297): the flag deletes what a check
+created, and a real record holding this run's marker is nobody's idea of a
+fixture left on purpose. A *reclaimed*
 mailing's own litter goes with the reclaim instead, whatever the flag says: the
 public attachment an earlier run's body links is in no fixture dict the
 reclaiming run holds, and the seeding replaces the href that names it, so the
@@ -1421,9 +1426,10 @@ def fixture_mailing(side, run_id: str, mailing_id, *, borrow: bool) -> dict[str,
     `mailing-editable` types in the designer and **clicks save**, because #238's
     subject *is* the save seam, and it therefore stores this run's marker body in
     both `body_arch` and `body_html` -- the field that leaves the installation
-    with the mail. A run killed between the save and the restore, or taken
-    without the optional `--cleanup`, would leave a real campaign holding it. So
-    that check passes `borrow=False` and loses nothing by it: the designer,
+    with the mail. A run killed between the save and the restore would leave a
+    real campaign holding it, and until #297 a run merely taken without the
+    optional `--cleanup` did too. So that check passes `borrow=False` and loses
+    nothing by it: the designer,
     `getEditingValue` and `commitChanges` do not care which record they are on
     (#276).
     """
@@ -1556,6 +1562,11 @@ def _restore_borrowed_mailing_body(side, fixture: Mapping[str, Any], extra) -> N
     run **borrowed** must be restored and must not be deleted. `before` is empty
     until it has been read, which is the one case where there is nothing to put
     back at all.
+
+    **Every exit calls this, and none of them gates it on `--cleanup`** (#297).
+    That gate used to sit on the two success paths, so a run taken without the
+    flag handed back nothing -- and the gate was never needed to keep this
+    function off a row the run owns, because the first line is that test.
     """
     if fixture.get("scratch_mailing") is not None or not fixture.get("before"):
         return
@@ -2061,7 +2072,38 @@ CODEVIEW_OFF_BUTTON = "#codeview-btn-group .o_codeview_btn"
 CODEVIEW_TEXTAREA = "textarea.o_codeview"
 
 
-def do_codeview(side, run_id: str, *, cleanup=False, **_) -> dict[str, Any]:
+def _restore_borrowed_help(side, uid: int, before, extra) -> None:
+    """Hand the borrowed `ir.actions.act_window.help` back, on every path (#297).
+
+    `_restore_borrowed_mailing_body`'s shape, for its reason, with the reading it
+    gives: `help_restored` is `true` when the write took, `false` when it did not,
+    and **absent** when the handler never got as far as seeding -- the three
+    readings a reader of the record checks the host against.
+
+    **Not under `--cleanup`, and that is the whole of this ticket.** The flag
+    deletes what a check *created*; `pick_help_action` creates nothing, it takes
+    the lowest-id `ir.actions.act_window` and seeds a record that belongs to the
+    installation. Leaving a scratch row named after the run is a legible choice,
+    and #183's and #265's evidence make it deliberately; leaving a real action
+    holding this run's marker is not one, and the only sign of it in the evidence
+    was the *absence* of a key. #282's run paid for that: its first invocation
+    was taken without the flag, and action 1 ("Load demo data") kept the marker
+    until a hand-written `odoo shell` repair put it back
+    (`docs/testing/evidence/2026-10-04-issue-282/`).
+
+    The write cannot fail the whole check either. A measurement that succeeded
+    and a restore that did not are two readings, so this one is reported and not
+    raised -- raising it would send the success path into the handler's
+    `except Exception` and turn a measured record into `NOT-RUN`.
+    """
+    try:
+        write_field(side, "ir.actions.act_window", uid, "help", before or False)
+        extra["help_restored"] = True
+    except Exception:  # noqa: BLE001 -- the session itself may be gone
+        extra["help_restored"] = False
+
+
+def do_codeview(side, run_id: str, **_) -> dict[str, Any]:
     """#240: the code view toggled off re-inserts the record's markup.
 
     The screen is the user signature in **Preferences** with debug mode on, and
@@ -2074,6 +2116,13 @@ def do_codeview(side, run_id: str, *, cleanup=False, **_) -> dict[str, Any]:
 
     Two halves, both recorded: the picture loads under the prefix after the
     toggle, and `res.users.signature` is still root-relative after the save.
+
+    **`--cleanup` has nothing to do here, and the signature says so by not
+    taking it** (#297). This is the one check in the register that creates no
+    record at all: it borrows a real `ir.actions.act_window.help`, and
+    `_restore_borrowed_help` hands that back on all three paths. `run_check`
+    passes the flag to every handler, so `**_` absorbs it -- a thread-through
+    that reached nothing would read as a restore somebody forgot to gate.
     """
     uid = pick_help_action(side)
     before = read_field(side, "ir.actions.act_window", uid, "help")
@@ -2083,7 +2132,7 @@ def do_codeview(side, run_id: str, *, cleanup=False, **_) -> dict[str, Any]:
     # code view's own typing working.
     write_field(side, "ir.actions.act_window", uid, "help", signature_value(run_id))
     try:
-        return _codeview_after_seeding(side, run_id, uid, before, extra, cleanup=cleanup)
+        return _codeview_after_seeding(side, run_id, uid, before, extra)
     except Exception as error:
         # The partial readings are the whole value of a failed attempt -- was debug
         # on, did the toolbar appear, was there a selection -- and `run_check`
@@ -2093,29 +2142,27 @@ def do_codeview(side, run_id: str, *, cleanup=False, **_) -> dict[str, Any]:
         # and more pressingly here, since a step that failed is likelier to have
         # left the editor dirty.
         _discard_unsaved_form(side, extra)
-        try:
-            write_field(side, "ir.actions.act_window", uid, "help", before or False)
-            extra["help_restored"] = True
-        except Exception:  # noqa: BLE001 -- the session itself may be gone
-            extra["help_restored"] = False
+        _restore_borrowed_help(side, uid, before, extra)
         return {"screen": "/odoo/ir.actions.act_window/%d (help, debug)" % uid, "pictures": None,
                 "stored": {}, "extra": extra,
                 "notes": "%s: %s" % (type(error).__name__,
                                      adapter.sanitize_diagnostic(str(error))[:300])}
     except BaseException:
         # The interrupt path: Ctrl+C, a kill, a timeout that raises outside
-        # `Exception`. A real user's signature was replaced by this check before any
+        # `Exception`. A real action's `help` was replaced by this check before any
         # browser step, so it is put back here too and the interrupt then continues.
-        # `--cleanup` does not cover this; it is only reached on the success path.
+        # The outer guard is the discard's: a second Ctrl+C inside it raises
+        # through, which is the window #288 measured, and the restore is the one
+        # step after it that a `KeyboardInterrupt` has nowhere else to come from.
         try:
             _discard_unsaved_form(side, extra)
-            write_field(side, "ir.actions.act_window", uid, "help", before or False)
+            _restore_borrowed_help(side, uid, before, extra)
         except Exception:  # noqa: BLE001 -- the session itself may be gone
             pass
         raise
 
 
-def _codeview_after_seeding(side, run_id, uid, before, extra, *, cleanup=False) -> dict[str, Any]:
+def _codeview_after_seeding(side, run_id, uid, before, extra) -> dict[str, Any]:
     """The browser half of `do_codeview`, split out so the seed has a restore."""
     # Debug mode first: `codeview` is `Boolean(odoo.debug && options.codeview)`
     # (`html_field.js:375`), so without it the toolbar item is never registered
@@ -2242,10 +2289,11 @@ def _codeview_after_seeding(side, run_id, uid, before, extra, *, cleanup=False) 
     # recorded and nothing acted on -- would put this run's marked help text
     # back on that action permanently, with `help_restored: true` in the
     # evidence saying otherwise.
+    #
+    # The restore itself is unconditional, like both recovery paths above and
+    # unlike `--cleanup`'s own job: `_restore_borrowed_help` carries why (#297).
     _discard_unsaved_form(side, extra)
-    if cleanup:
-        write_field(side, "ir.actions.act_window", uid, "help", before or False)
-        extra["help_restored"] = True
+    _restore_borrowed_help(side, uid, before, extra)
     return {"screen": "/odoo/ir.actions.act_window/%d (help, debug)" % uid, "pictures": pictures,
             "stored": stored, "readings": readings, "extra": extra}
 
@@ -3431,10 +3479,20 @@ def _mailing_editable_leaving(side, fixture, extra, screen, *, cleanup, pictures
     return the RPC-seeded `body_arch` -- root-relative by construction, so
     `CLEAN` -- and score a pass for a check that exercised neither rule. Only the
     path that saved has a reading to pass.
+
+    **The restore is not under `--cleanup` and the removal is** (#297). The two
+    answer different questions, and this check is where the difference costs the
+    most: the only row it can borrow is the one `--mailing-id` named, that row is
+    a real campaign in `draft` or `in_queue` -- a row that can still be *sent* --
+    and this is the check that clicks save, so without the restore it keeps this
+    run's marker in `body_arch` **and** in the inlined `body_html` that leaves
+    the installation with the mail. Naming a row licenses using it, not keeping
+    it altered. `_restore_borrowed_mailing_body` is a no-op on a scratch or
+    reclaimed row, so calling it on every path cannot restore what this run owns.
     """
     _discard_unsaved_form(side, extra)
+    _restore_borrowed_mailing_body(side, fixture, extra)
     if cleanup:
-        _restore_borrowed_mailing_body(side, fixture, extra)
         extra["fixture_removed"] = _remove_mailing_fixture(side, fixture)
     return {"screen": screen, "pictures": pictures, "stored": stored,
             "readings": readings, "extra": extra, "notes": notes}
@@ -3753,8 +3811,15 @@ def _document_mailing_leaving(side, fixture, extra, screen,
         }
     except Exception as error:  # noqa: BLE001
         extra["read_back_error"] = type(error).__name__
+    # Restore on every path, remove only under `--cleanup` (#297). This check
+    # borrows on two of its four branches -- `found` takes a real draft whenever
+    # the database has one, which is every run on `odoo_parity` -- and its own
+    # seed replaces that campaign's `body_arch` before the first navigation. The
+    # flag answers "delete what this run made"; it was never an answer to "whose
+    # body is in that row now". The call is a no-op on a scratch or reclaimed
+    # row, so this cannot restore what the run owns.
+    _restore_borrowed_mailing_body(side, fixture, extra)
     if cleanup:
-        _restore_borrowed_mailing_body(side, fixture, extra)
         extra["fixture_removed"] = _remove_mailing_fixture(side, fixture)
     return {"screen": screen, "pictures": pictures, "stored": stored,
             "readings": readings, "extra": extra, "notes": notes}
