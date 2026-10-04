@@ -912,11 +912,65 @@
   recorded **together with** `body_html_inlined: true` -- a discard reported as
   failed on a surface whose save demonstrably completed the inlining would mean the
   15 s is short. Also left standing and filed rather than folded in: the sibling
-  seam `discard_form` in `e2e_collab_peer_snapshot_live` still reads `side.root`
-  three times and so still has both halves of this issue, the latency one and the
+  seam `discard_form` in `e2e_collab_peer_snapshot_live` read `side.root`
+  three times and so had both halves of this issue, the latency one and the
   detached-frame misreading that reports `dirty: false` for a form that went with
-  its frame (#292). `Side.root_now` is on the shared layer and is what that seam
-  needs; it is a different driver's reading and gets its own issue.
+  its frame. `Side.root_now` is on the shared layer and is what that seam
+  needs; it is a different driver's reading and got its own issue, #292 below.
+- **`discard_form` resolves its frame once, through `root_now`, so a re-mounted
+  Ingress panel can no longer make a dirty form report `dirty: false`** (#292,
+  raised by the review of #288 and confirmed without a host). The sibling seam
+  reached for `side.root` at each of its three steps -- the dirty read, the button,
+  the confirmation wait -- and on `IngressSide` that is a *search*: it re-enters
+  `_find_frame(wait_s=60)` whenever the held frame reports detached. An add-on
+  panel that has re-mounted its Ingress iframe makes that resolve answer with the
+  **replacement** frame, whose freshly loaded document has no `UNSAVED` match, so
+  the entry read counted zero and the function returned `{"dirty": False,
+  "discarded": False}` -- "the form was never dirty" -- for a form that went with
+  its frame, at the moment `beforeunload` fires the `sendBeacon` save this function
+  exists to head off. `probe` then reported a run whose forms were never dirty,
+  which its own docstring defines as having exercised nothing: the reading hides
+  the write instead of naming it. The same door was open at the confirmation wait,
+  where a replacement frame has no indicator to go hidden and so records a discard
+  that never happened as `true`. One `side.root_now`, held and worked through,
+  shuts both: a frame that has gone raises at the first locator call, and
+  `discard_quietly`'s `except Exception` already turns that into `{"dirty": True,
+  "discarded": False, "error": ...}` -- unknown reported as dirty, the direction
+  the verdict must fail in. The three readings are unchanged on every ordinary
+  path, and `>> visible=true` stays for the reason the function gives.
+- **The latency half is real here and smaller, and the two waits are deliberately
+  left alone.** This module has no `except BaseException` and its discard sits
+  ahead of no restore, so none of it is in a Ctrl+C-to-restore window -- which is
+  why the misreading and not the minute is what motivated the change. The
+  confirmation deliberately waits on the whole asynchronous
+  `FormController.discard()`, and this driver's budget is not the markup driver's,
+  so the click keeps Playwright's default and the confirmation keeps `TIMEOUT`.
+  `root`, its cache and `_find_frame`'s 60 s default are untouched, as in #288.
+- **The seam is now driven and not only pinned at its shape.** It had one
+  executing double -- a side whose `root` raises -- and source assertions for
+  everything else, and a reading taken from the wrong frame is exactly what those
+  cannot see. Seven Static-tier tests, and all seven enumerated because this entry
+  is the audit trail for them: the two resolves counted on every path (`root_now`
+  exactly once, `root` never); a side holding a detached frame whose waiting
+  resolve hands back a clean replacement -- the old code reads
+  `{"dirty": False, "discarded": False}` there, which is the defect itself; one
+  each for the four ordinary paths (a clean form, a discard that came off, a dirty
+  form with no visible button, and a confirmation that never arrives); and one
+  holding the explanation of why the resolve is `root_now`, since that is what the
+  next reader of this seam has to not undo. Static tier only, no Live run and no
+  Release: 1781 passed, 1 skipped, this driver's module 124 -> 131.
+- **One trap worth recording, because it is not confined to this file.**
+  `test_a_discard_is_only_clicked_on_a_form_that_shows_the_button` asserted that
+  `is_visible()` appears in `inspect.getsource(discard_form)`, and the function has
+  never called it -- it uses `count()`. The test was green only because
+  `is_visible()` appeared inside one of the comments this change rewrites.
+  `getsource` returns comments and docstrings as well as code, so an assertion of
+  that shape can be satisfied by prose: it can go red on a comment-only edit, and
+  it can stay green over code that never does the thing. The assertion is now
+  re-pointed at the mechanism the code actually uses -- the `button.count()` check
+  ahead of the click -- rather than keeping a comment phrase to feed the grep; and
+  the unreadable-side double gained a `root_now` mirroring the base class's default
+  so it keeps modelling `Side` instead of pinning an `AttributeError`.
 
 ## 0.4.10 — 2026-10-01
 

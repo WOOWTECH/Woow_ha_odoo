@@ -33,6 +33,7 @@ from e2e_collab_peer_snapshot_live import (
     COLLABORATION_STATE_JS,
     DELIVERED,
     DIFFERENT_CHANNEL,
+    DISCARD_BUTTON,
     EVIDENCE_SCHEMA,
     HEALING_PAIR,
     MARKER_COLLISION,
@@ -46,6 +47,7 @@ from e2e_collab_peer_snapshot_live import (
     PAIRS,
     PROBE_RUN_PREFIX,
     UNATTRIBUTED,
+    UNSAVED,
     UNKNOWN_PREFIX_STORED,
     await_marker,
     classify,
@@ -1086,6 +1088,16 @@ class ProbeWritesNothingTests(unittest.TestCase):
             def root(self):
                 raise RuntimeError("the frame went away")
 
+            @property
+            def root_now(self):
+                """The no-wait resolve, which on a page-rooted side *is* `root`
+                -- that is the base-class default (`Side.root_now`), and the seam
+                reaches for this one since #292. Present here so the double
+                models `Side` rather than diverging from it: without it the
+                unreadable side would raise `AttributeError` and this test would
+                pin the wrong failure."""
+                return self.root
+
         outcome = discard_quietly(Unusable())
         self.assertEqual(outcome["discarded"], False)
         self.assertEqual(outcome["error"], "RuntimeError")
@@ -1104,9 +1116,25 @@ class ProbeWritesNothingTests(unittest.TestCase):
         """The button is in the DOM on a clean form too, behind
         `o_form_status_indicator_buttons.invisible`. Playwright's `click()` waits
         for visibility, so a clean form would burn the whole timeout -- #238's
-        run lost a measurement to exactly that on the save button."""
+        run lost a measurement to exactly that on the save button.
+
+        The mechanism the code uses for that is `button.count()` on a
+        visibility-filtered selector, read *before* the click. This assertion
+        used to look for `is_visible()`, which `discard_form` has never called:
+        it was green off the word appearing in a comment, and #292's rewrite of
+        those comments is what exposed it (`source-shape-assertions`).
+
+        Both halves are matched on the **whole gate line** and not on
+        `button.count()` alone, which is the same trap one layer down: the
+        comment above the locator names `button.count()` too, so a bare
+        `index()` resolves inside prose that no edit to the code can move, and
+        the ordering half would hold over a version that clicked first.
+        `DiscardSeamTests.test_a_dirty_form_with_no_visible_button_is_left_dirty`
+        is the behavioural guard; this is the shape beside it."""
         source = inspect.getsource(discard_form)
-        self.assertIn("is_visible()", source)
+        gate = "if not dirty or not button.count():"
+        self.assertIn(gate, source)
+        self.assertLess(source.index(gate), source.index("button.click()"))
         self.assertIn("dirty", source, "and it reports whether there was anything to discard")
 
     def test_a_discard_is_waited_on_rather_than_clicked_and_left(self):
@@ -1119,6 +1147,194 @@ class ProbeWritesNothingTests(unittest.TestCase):
         self.assertIn('wait_for(state="hidden"', source)
         self.assertLess(source.index("button.click()"),
                         source.index('wait_for(state="hidden"'))
+
+
+class DiscardSeamTests(unittest.TestCase):
+    """#292: the seam is driven here, not only pinned at its shape.
+
+    The three readings `discard_form` produces were held by source assertions
+    alone, and the one defect that mattered is invisible to those: on
+    `IngressSide`, `side.root` is a *search* that re-enters `_find_frame`'s 60 s
+    sweep whenever the held frame reports detached, and the frame of a re-mounted
+    Ingress panel is exactly that. The sweep then answers with the replacement,
+    whose freshly loaded document has no `UNSAVED` match -- so the entry read
+    counted zero and the function reported "the form was never dirty" for a form
+    that went with its frame, at the moment `beforeunload` fired its
+    uninterceptable save. #280 removed that misreading from the markup driver's
+    sibling seam and #288 shut this third door there; these drive it here.
+    """
+
+    class Locator:
+        """What `Frame.locator` hands back, as this seam uses it."""
+
+        def __init__(self, root, selector):
+            self.root = root
+            self.selector = selector
+
+        @property
+        def first(self):
+            return self
+
+        def count(self):
+            if self.selector == UNSAVED:
+                return 1 if self.root.dirty else 0
+            # The visible-button selector: present on a dirty form unless the
+            # form is readonly, where the button is absent from the DOM.
+            return 1 if self.root.button else 0
+
+        def click(self, **kwargs):
+            self.root.clicks.append((self.selector, kwargs))
+
+        def wait_for(self, **kwargs):
+            self.root.waits.append((self.selector, kwargs))
+            if self.selector == UNSAVED and kwargs.get("state") == "hidden" \
+                    and self.root.never_clean:
+                # Playwright's shape for the form that will not go clean: an
+                # invalid record keeps the indicator up, so it never does.
+                raise RuntimeError("Timeout %sms exceeded" % kwargs.get("timeout"))
+
+    class ReplacementFrame:
+        """What the waiting resolve finds once the panel has re-mounted: a
+        freshly loaded document, with none of the form the caller was reading. It
+        answers `UNSAVED` with zero, and zero reads as "never dirty".
+        """
+
+        dirty = False
+        button = True
+        never_clean = False
+
+        def __init__(self):
+            self.clicks = []
+            self.waits = []
+
+        def locator(self, selector):
+            return DiscardSeamTests.Locator(self, selector)
+
+    class DetachedFrame:
+        """The held Ingress frame after the panel re-mounted.
+
+        The raise comes from `count()` and not from `locator()`, which is
+        Playwright's real shape: `Frame.locator` builds a selector object without
+        touching the browser, so a frame that has gone raises nothing there and
+        the detach surfaces at the first call that needs an answer.
+        """
+
+        def locator(self, selector):
+            return self
+
+        @property
+        def first(self):
+            return self
+
+        def count(self):
+            raise RuntimeError("Frame was detached")
+
+    class FakeSide:
+        """A form page as `discard_form` reads it, and the side around it.
+
+        `detached` is the re-mounted panel: the side is *holding* a frame that
+        has gone, while the waiting resolve would answer with the replacement it
+        has since mounted. Both resolves are counted, because which one the seam
+        reaches for is the whole difference.
+        """
+
+        def __init__(self, *, dirty=True, button=True, never_clean=False, detached=False):
+            self.dirty = dirty
+            self.button = button
+            self.never_clean = never_clean
+            self.detached = detached
+            self.clicks = []
+            self.waits = []
+            self.settled = 0
+            self.root_reads = 0
+            self.root_now_reads = 0
+
+        @property
+        def root(self):
+            self.root_reads += 1
+            if self.detached:
+                return DiscardSeamTests.ReplacementFrame()
+            return self
+
+        @property
+        def root_now(self):
+            self.root_now_reads += 1
+            return DiscardSeamTests.DetachedFrame() if self.detached else self
+
+        def locator(self, selector):
+            return DiscardSeamTests.Locator(self, selector)
+
+        def settle(self, ms=800):
+            self.settled += 1
+
+    def test_a_clean_form_reports_both_readings_negative_and_is_not_clicked(self):
+        side = self.FakeSide(dirty=False)
+        self.assertEqual(discard_form(side), {"dirty": False, "discarded": False})
+        self.assertEqual(side.clicks, [], "nothing to discard, so nothing is clicked")
+
+    def test_a_discard_that_came_off_reports_dirty_and_discarded(self):
+        side = self.FakeSide()
+        self.assertEqual(discard_form(side), {"dirty": True, "discarded": True})
+        self.assertEqual([selector for selector, _ in side.clicks],
+                         [DISCARD_BUTTON + " >> visible=true"])
+        self.assertEqual([(selector, kwargs.get("state")) for selector, kwargs in side.waits],
+                         [(UNSAVED, "hidden")], "and `true` means the form came clean")
+
+    def test_a_dirty_form_with_no_visible_button_is_left_dirty(self):
+        """A readonly form has no discard button in the DOM at all, and `.first`
+        on a selector with no match would spend the click's whole timeout."""
+        side = self.FakeSide(button=False)
+        self.assertEqual(discard_form(side), {"dirty": True, "discarded": False})
+        self.assertEqual(side.clicks, [])
+
+    def test_a_confirmation_that_never_arrives_is_a_reading_through_the_wrapper(self):
+        """The form that will not go clean: the click went in and the indicator
+        is still up when the wait runs out. `discard_form` raises, and the
+        wrapper is what turns that into the third reading."""
+        side = self.FakeSide(never_clean=True)
+        self.assertEqual(discard_quietly(side),
+                         {"dirty": True, "discarded": False, "error": "RuntimeError"})
+        self.assertEqual(side.settled, 0, "the seam did not reach its settle")
+
+    def test_the_seam_resolves_the_no_wait_root_once_and_never_the_waiting_one(self):
+        """Neither resolve is a field: both are properties, and the waiting one
+        re-enters `_find_frame(wait_s=60)` whenever the Ingress iframe reports
+        detached. So the seam takes `side.root_now` (#288) -- and takes it once,
+        working through the frame it got (#280), on every path it has."""
+        for side in (self.FakeSide(), self.FakeSide(dirty=False),
+                     self.FakeSide(button=False)):
+            discard_form(side)
+            self.assertEqual(side.root_now_reads, 1)
+            self.assertEqual(side.root_reads, 0)
+        side = self.FakeSide(never_clean=True)
+        discard_quietly(side)
+        self.assertEqual(side.root_now_reads, 1)
+        self.assertEqual(side.root_reads, 0)
+
+    def test_a_detached_held_frame_is_reported_dirty_and_not_never_dirty(self):
+        """The door #292 exists to shut. The panel re-mounted its Ingress iframe,
+        so the frame the side holds is detached and the dirty form went with it.
+        Reaching for the waiting resolve would hand back the replacement, count
+        zero `UNSAVED` matches and report a form that was never dirty -- over a
+        detach that is exactly when `beforeunload` fires its `sendBeacon`. Held
+        once through `root_now`, the first locator call raises instead, and the
+        wrapper's reading stays dirty: unknown fails closed."""
+        side = self.FakeSide(detached=True)
+        self.assertEqual(discard_quietly(side),
+                         {"dirty": True, "discarded": False, "error": "RuntimeError"})
+        self.assertEqual(side.root_reads, 0,
+                         "the replacement frame is never consulted")
+
+    def test_the_seam_says_why_the_no_wait_resolve_and_not_the_waiting_one(self):
+        """The reason is not legible from the call, and the next reader of this
+        seam is the one who has to not undo it: the entry read's replacement-frame
+        door is the specific thing the explanation has to name."""
+        source = inspect.getsource(discard_form)
+        self.assertIn("root_now", source)
+        self.assertNotIn("side.root.", source, "no reach for the waiting resolve is left")
+        self.assertIn("_find_frame", source, "naming the search a read of `root` can enter")
+        self.assertIn("replacement", source,
+                      "and the frame a re-mounted panel resolves to instead")
 
 
 class BehaviourIsWrittenDownTests(unittest.TestCase):
