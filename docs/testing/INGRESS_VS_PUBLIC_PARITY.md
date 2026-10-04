@@ -1414,9 +1414,63 @@ fixture 形狀還和 document-mailing 的 seeder 共用，所以清除有自己�
 一列上刻意的單向讀數（不論那次存檔怎麼走都是 `false`）換回雙向的，比對的是「seed 留下的值」而不是跑前
 值。它仍然**只記不判**（理由同 `_media_verdict`），所以也沒有任何判定因此移動。**document**-mailing 的
 seeder 什麼都不清：那個 check 從不存檔，它的讀回是用來證明 discard 有效的，清掉欄位會毀掉它拿來比的基
-準。另外四個「拿的是 State-bounding reading、卻被當成 write-bounding 來判」的 check——`readonly-plain`、
-`mailing-readonly`、`media-document-mailing` 的 `body_html`、以及 `--task-id` 下的 `readonly-iframe`——是
-同一個家族走另一條可接受的修法（attribution），開在 #289。
+準。另外那些「拿的是 State-bounding reading、卻被當成 write-bounding 來判」的讀數，是同一個家族走另一條
+可接受的修法（attribution），開在 #289——而 #289 查出來，清除自己那道 gate 也把這個 check 的 `body_html`
+在 `--mailing-id` 下留在那個家族裡。
+
+
+**#289（2026-10-04）：五個讀回 site 拿的是 State-bounding reading，卻被當成讀它的那個 check 自己寫的。** 由 #286 的 triage 回合開出
+來：那一回合定了其中一筆的修法，並且在確認這個缺陷是不是只有一處時找到了整個家族。`stored_verdict` 會判
+定 check 交給它的每一個欄位，`evidence_record` 又會把 `PREFIX-STORED` 在所有其他分支之前提升成整列 check
+的判定——那是 #237 第 4 條的規則，不在討論範圍。記錄說不出來的是：它剛剛判的是**哪一種讀數**。
+**Write-bounding reading** 是在 check 自己寫過的欄位上，裡面有前綴，意思是這個 check 自己的存檔漏了；
+**State-bounding reading** 是在它沒寫過的欄位上，裡面有前綴，意思是不管是誰漏的，這個 check 是目擊者而不
+是作者（兩個詞都寫在 `CONTEXT.md`）。兩者以前被記成一模一樣的樣子，都是一筆 `PREFIX-STORED`，歸給「只是
+看了一眼」的那個 check 與 surface。對 `readonly-plain` 與 `mailing-readonly` 來說，這讓證據自己打自己的
+嘴：register 把這兩列都宣告成 `writes: False`，而報告把它們指成一次寫入的作者。
+
+這從來不是**假發現**——前綴真的在資料庫裡，#237 第 4 條「到過寫入的前綴一定要報」也不在討論範圍。這是假
+**歸屬**，而方向有差：在 Public 這一側，「資料庫裡有前綴」的意思是 `sub_filter` 從 Ingress 的 asset
+location 漏了出去，和「這一列從這次跑之前就一直有前綴」是兩個不同、而且嚴重程度不同的主張。
+
+修法是 ADR 0014 點名、而 #286 用不上的那一條：**attribution**。flow 自己逐欄位宣告它拿的是哪一種讀數
+（`stored` 旁邊的 `readings`），`evidence_record` 把兩者配對，逐欄位那一格多一個 `reading` 鍵。是逐**欄
+位**而不是逐 check，因為 register 的 `writes` 旗標不是那個判準：`media-document-mailing` 一個 check 就同
+時有一個 write-bounding 欄位和一個 state-bounding 欄位。五個是 `readonly-plain`、`mailing-readonly`（兩個欄位都是）、
+`media-document-mailing` 的 `body_html`、`--task-id` 下的 `readonly-iframe`，以及 `--mailing-id` 下
+`mailing-editable` 的 `body_html`——最後那一筆正是 #286 的清除被 gate 擋在外面的那一列，所以兩種修法合起
+來才把這個家族關上，誰也不能取代誰。
+
+**兩種讀數都還是會讓這趟跑失敗，而且沒有任何判定移動。** `screen_verdict`、`summarise` 與 exit code 一行
+都沒動：一筆 state-bounding 的前綴照樣被報、被計數、照樣非零退出，因為「逐 check 判了但不失敗」就是
+ADR 0014 拒絕的那個閥門往外挪一層——那個發現還是會從 exit code、計分與 sweep 的門上消失。變的是那句話：
+`report` 現在印 `PREFIX STORED by readonly-plain/public in project.task.description (state-bounding)`，而
+且只列真的帶著前綴的欄位，不再把每一個讀回來的欄位都列進去。schema 維持 `woow.ingress-markup/v1`——那個鍵
+是加上去的，這個 repo 三份 markup 證據裡每一筆 `stored` 都是 `CLEAN`，而在這個鍵存在之前寫下的記錄會印成
+`kind not recorded`，不會被拒。
+
+**沒有折進判定字串裡**，這是它和 peer snapshot driver 的 `classify` 不同的地方。那邊的種類**就是**判定
+（`OWN-`/`FOREIGN-`/`UNKNOWN-PREFIX-STORED` 是三個有嚴重度順序的發現），所以 `classify` 是這一票**形狀**
+的先例、不是機制的先例：它按 session 歸屬，這一票按「這個 flow 到底有沒有寫過這個欄位」歸屬。`--task-id`
+／`--mailing-id` 也沒有造出第三種：它們只是從另一條路走到第二種，而「走哪條路」是一筆*讀數*，那幾個site
+本來就都記著。
+
+有一筆宣告是**推導**出來的，而那正是「平鋪宣告」會把讀數丟掉的那個 site。`media-document-mailing` 從不寫
+`body_html`，所以在一列借來的草稿上，那個值是那個 campaign 自己的；但如果 discard 沒有守住，闖過去的那次
+存檔正好就是會 inline 這個欄位的那一次，而**它**寫進去的前綴就是這個 check 自己的漏。到底是哪一種，事前
+宣告不出來，從值本身也猜不出來（那個 campaign 自己的 body 可能幾個月前就帶著前綴）；分開兩者的是**有沒有
+變**，而基準早就在手上：`fixture["before"]` 在 seed 之前讀，本來就是還原的來源。一個連 `before` 都還沒讀
+到的 fixture 宣告 state-bounding，而且這不是「保守起來這樣選」——只走到 seed 就放棄的 handler 根本沒有導
+航過，它自己的存檔到不了那個欄位。
+
+**沒有預設種類，因為預設會猜錯的那個 site 正好就是沒人看過的那一個。** `evidence_record` 在四種情況下
+拋：`stored` 裡有欄位沒人宣告、宣告指向一個沒被讀回來的欄位、種類不是這個模組命名的那兩個、以及一列
+register 說什麼都不寫的 check 宣告了 `write-bounding`——最後那一組配對正是 #289 自己那個假主張，只是改由
+flow 自己講出來而不是讓讀者推論。和 `RESERVED_RECORD_KEYS` 的碰撞一樣，這些都落在 `run_check` 外層那個
+`except` 裡，代價是那個 surface 少一筆記錄而不是整趟停掉，所以真正讓那六個讀回 site 守規矩的是一個
+Static tier 的測試：它從原始碼列舉出那六個 site，並釘住每一個宣告了什麼。只跑 Static tier：沒有任何
+handler 的瀏覽器行為改變、沒有任何判定移動，這裡也沒有任何東西是 host 能否證的——那些宣告第一次真正被操
+演是在 #282 那趟，而這一票不卡它。
 
 
 **#288（2026-10-04）：Ctrl+C 到還原之間那個窗口，界在 `side.root` 與 `side.settle` 上，不在 discard 自己

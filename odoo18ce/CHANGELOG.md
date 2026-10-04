@@ -756,11 +756,84 @@
   **recorded and not judged**, for `_media_verdict`'s reason, so no verdict moves
   on that account either. Nothing is cleared in the **document**-mailing seeder:
   that check never saves, its read-back exists to prove the discard worked, and
-  clearing the field would destroy the baseline it compares against. The four
-  checks that take a **State-bounding reading** and have it judged as if it were
-  write-bounding -- `readonly-plain`, `mailing-readonly`, `media-document-mailing`'s
-  `body_html` and `readonly-iframe` under `--task-id` -- are the same family by
-  the other admissible correction, attribution, and are #289.
+  clearing the field would destroy the baseline it compares against. The readings
+  that take a **State-bounding reading** and have it judged as if it were
+  write-bounding are the same family by the other admissible correction,
+  attribution, and are #289 -- which found that the clear's own gate leaves this
+  check's `body_html` in that family too, under `--mailing-id`.
+- **Five read-back sites had a State-bounding reading judged as the reading
+  check's own write** (#289,
+  filed out of #286's triage round, which settled one instance and found the
+  class while checking whether the defect was local). `stored_verdict` judges
+  every field a check hands it and `evidence_record` promotes a `PREFIX-STORED`
+  to that check's whole verdict ahead of every other branch -- #237 check 4's
+  rule, and not in question. What the record could not say is **which kind of
+  reading** it had just judged. A **Write-bounding reading** is on a field the
+  check itself wrote, so a prefix there is that check's own save leaking; a
+  **State-bounding reading** is on a field it did not, so a prefix is a leak
+  whoever caused it and the check is the witness rather than the author
+  (`CONTEXT.md` carries both terms). Both were reported identically, as a
+  `PREFIX-STORED` attributed to the check and surface that merely looked --
+  which for `readonly-plain` and `mailing-readonly` means the evidence
+  contradicted itself, since the register declares both of them `writes: False`
+  and the report named them as the author of a write. It was never a false
+  *finding*: the prefix really is in the database. It was a false
+  **attribution**, and the direction matters -- on the Public origin a stored
+  prefix is the leaked-`sub_filter` finding, a different and more serious claim
+  than "this row has held a prefix since before the run".
+- **The fix is attribution, which ADR 0014 named and #286 could not use.** A flow
+  declares, per field, which kind of reading it took, in a `readings` mapping
+  beside `stored`; `evidence_record` pairs the two and the per-field entry gains
+  a `reading` key. Per *field* and not per check, because the register's `writes`
+  flag is not the discriminator: `media-document-mailing` is one check with one
+  field of each kind. The five are `readonly-plain`, `mailing-readonly`,
+  `media-document-mailing`'s `body_html`, `readonly-iframe` under `--task-id` and
+  `mailing-editable`'s `body_html` under `--mailing-id` -- the last being the row
+  #286's clear is gated away from, so the two corrections close the family
+  between them and neither subsumes the other. ADR 0014 carries a postscript with
+  the corrected count and the two decisions below.
+- **Both kinds still fail the run, and no verdict moves.** `screen_verdict`,
+  `summarise` and the exit code are untouched: a State-bounding prefix is
+  reported, counted and still exits non-zero, because a per-check "judge but do
+  not fail" policy is the valve ADR 0014 refuses one layer out -- the finding
+  would still vanish from the exit code, the tally and the sweep gate. What
+  changes is the sentence: `report` now prints `PREFIX STORED by
+  readonly-plain/public in project.task.description (state-bounding)`, and names
+  only the fields that carry the prefix rather than every field read back. The
+  schema stays `woow.ingress-markup/v1` -- the key is additive, every record in
+  this repo's three markup evidence files is `CLEAN`, and a record written before
+  the key existed reports as `kind not recorded` rather than being rejected.
+- **Not folded into the verdict string**, which is where this differs from the
+  peer snapshot driver's `classify`. There the kind *is* the verdict --
+  `OWN-`/`FOREIGN-`/`UNKNOWN-PREFIX-STORED` are three findings with a severity
+  order between them -- so `classify` is the precedent for the shape and not for
+  the mechanism: it attributes by session, this attributes by whether the flow
+  wrote the field at all. And `--task-id`/`--mailing-id` do not make a third
+  kind: they reach the second one by a different road, which is a *reading*, and
+  each of those sites already records it.
+- **One declaration is derived rather than declared**, and it is the site where a
+  flat one would have thrown the reading away. `media-document-mailing` never
+  writes `body_html`, so on a borrowed draft the value is the campaign's own --
+  but if the discard did not hold, the save that got through is exactly what
+  inlines that field, and a prefix in what *it* wrote is the check's own leak.
+  Which of the two happened is not declarable in advance and not guessable from
+  the value; it is **the change** that separates them, measured against the
+  pre-run `fixture["before"]` that is already in hand as the restore source. A
+  fixture that never reached that read declares state-bounding, and not as the
+  cautious answer: a handler that got no further than its seed never navigated.
+- **No default kind, because the site a default is wrong at is the one nobody
+  looked at.** `evidence_record` raises for a field in `stored` with no
+  declaration, for a declaration naming a field that was not read back, for a
+  kind this module does not name, and for a `write-bounding` declaration from a
+  check the register says writes nothing -- that last pairing being #289's own
+  false claim, made by the flow instead of inferred by a reader. Like the
+  `RESERVED_RECORD_KEYS` collision, these land in `run_check`'s outer `except`
+  and cost a surface its record rather than stopping a run, so the guard that
+  keeps the six read-back sites honest is a Static-tier test that enumerates them
+  from the source and pins what each declares. Static tier only: no handler's
+  browser behaviour changed, no verdict moved, and nothing here is falsifiable by
+  a host -- the declarations get their first live exercise on #282's run, which
+  this does not gate.
 - **The Ctrl+C-to-restore window was bounded by `side.root` and `side.settle`, not
   by the discard's own waits** (#288, raised by review round 3 of #280 and
   confirmed against the pinned package rather than inferred). #280 bounded the two

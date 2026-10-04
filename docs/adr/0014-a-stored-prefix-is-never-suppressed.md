@@ -60,3 +60,41 @@ A check whose Stored reading is write-bounding owes the discipline that makes it
 so. It may not assume the field it reads back was untouched when it arrived —
 a reclaimed fixture, a re-run under one `--run-id`, and `--surface both` against
 one database all hand it a field that already holds this run's marker.
+
+## Postscript (2026-10-04, #289): five read-back sites, not three
+
+The decision above is unchanged. Its count of affected readings was wrong, and
+the correction is worth recording because the number is what says how much of
+this family #286's fix could reach.
+
+The admissible option — **correct by attribution** — now exists. A flow declares,
+per field, which kind of Stored reading it took; `evidence_record` pairs the
+declaration with the value and refuses a value with no kind beside it. Five of
+the markup driver's read-back sites take a **State-bounding** reading, not three:
+
+| Site | Why the check did not write it |
+|---|---|
+| `readonly-plain` / `project.task.description` | It *requires* `has_description_history` and then reads that description back, so any prefix in it predates the run. |
+| `mailing-readonly` / `body_arch`, `body_html` | `writes: False`; the body is readonly in the two states this check needs. |
+| `media-document-mailing` / `body_html` | It discards the form on purpose and the read-back proves the discard worked. **Derived**, not declared: if the discard did *not* hold, the save that got through is what inlines this field, and a prefix in what it wrote is then the check's own. |
+| `readonly-iframe` / `mail.template.body_html` under `--task-id` | The default branch creates the scratch template and seeds the value; the flag branch seeds nothing. |
+| `mailing-editable` / `body_html` under `--mailing-id` | The clear this ADR chose for #286 is gated on the fixture carrying a scratch row, and the `given` branch has none — an ungated clear would blank a real campaign's body. |
+
+The last row is where the two options meet: #286's write-side correction closes
+this family on every row the driver owns, and attribution closes the one row it
+does not. Neither subsumes the other.
+
+Two things the postscript settles that the decision left open, both consistent
+with it:
+
+- **A State-bounding prefix still fails the run.** It is reported, counted, and
+  still exits non-zero. A per-check "judge but do not fail" policy would be the
+  suppression this ADR refuses, one layer out: the finding would still vanish
+  from the exit code, the tally and the sweep gate. Attribution changes the
+  *claim*, never the verdict — a check whose register row says `writes: False`
+  was being printed as the author of a write, which on the Public origin is the
+  leaked-`sub_filter` finding and a more serious statement than "this row has
+  held a prefix since before the run".
+- **Two kinds, not three.** `--task-id` and `--mailing-id` reach the second kind
+  by a different road rather than making a third. Which road is a *reading*, and
+  each of those sites already records it.
