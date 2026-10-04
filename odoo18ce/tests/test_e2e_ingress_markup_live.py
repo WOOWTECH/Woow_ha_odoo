@@ -257,6 +257,7 @@ def test_the_stored_value_in_a_record_carries_no_token():
         check="readonly-plain", issue=237, run_id="WOOW-MARKUP-20261001T000000Z",
         database="odoo_parity", target="local", surface=INGRESS,
         screen="/odoo/project.task/7", pictures=[], stored={"project.task.description": stored},
+        readings={"project.task.description": markup.STATE_BOUNDING},
     )
     line = markup.json.dumps(record, sort_keys=True)
     assert PREFIX not in line
@@ -313,6 +314,7 @@ def test_a_stored_prefix_fails_the_record_even_when_the_screen_rendered():
         target="local", surface=INGRESS, screen="/x",
         pictures=[{"verdict": markup.UNDER_PREFIX}],
         stored={"res.users.signature": stored},
+        readings={"res.users.signature": markup.WRITE_BOUNDING},
     )
     assert record["verdict"] == markup.PREFIX_STORED
     assert record["stored_verdict"] == markup.PREFIX_STORED
@@ -528,6 +530,7 @@ def test_a_stored_prefix_outranks_an_unreadable_screen():
         check="readonly-iframe", issue=237, run_id="R", database="odoo_parity",
         target="local", surface=INGRESS, screen="/x", pictures=None,
         stored={"project.task.description": stored},
+        readings={"project.task.description": markup.WRITE_BOUNDING},
     )
     assert record["verdict"] == markup.PREFIX_STORED
     summary = markup.summarise([record])
@@ -1916,7 +1919,7 @@ def seed_editable_mailing(side, mailing_id=None):
 def leave_editable(side, fixture, **kwargs):
     return markup._mailing_editable_leaving(
         side, fixture, fixture["extra"], "/screen",
-        pictures=None, stored={}, notes="", **kwargs)
+        pictures=None, stored={}, readings={}, notes="", **kwargs)
 
 
 def test_a_database_with_no_mailing_at_all_gets_one_the_editable_check_made():
@@ -2228,9 +2231,11 @@ def test_a_prefix_the_other_surface_inlined_is_not_judged_as_this_save_s():
         pictures=[{"verdict": markup.AT_ORIGIN_ROOT}],
         stored={"mailing.mailing.body_arch": after.get("body_arch"),
                 "mailing.mailing.body_html": after.get("body_html")},
+        readings={"mailing.mailing.body_arch": markup.WRITE_BOUNDING,
+                  "mailing.mailing.body_html": markup.mailing_body_html_reading(fixture)},
         extra=fixture["extra"])
     assert record["stored"]["mailing.mailing.body_html"] == {
-        "verdict": markup.CLEAN, "prefixes": 0}
+        "verdict": markup.CLEAN, "prefixes": 0, "reading": markup.WRITE_BOUNDING}
     assert record["verdict"] == markup.AT_ORIGIN_ROOT
 
 # --- #277: a reclaim deletes the attachments the reclaimed body links ----------
@@ -2503,3 +2508,331 @@ def test_the_module_no_longer_declares_a_gap_in_what_cleanup_removes():
     writing = markup.__doc__.split("Writing:")[1].split("**The ambient")[0]
     assert "with one gap" not in writing
     assert "reclaimed" in writing and "#277" in writing
+
+
+# --- #289: which kind of Stored reading a field carries ------------------------
+#
+# `stored_verdict` judges every field a check hands it and `evidence_record`
+# promotes a `PREFIX-STORED` to that check's whole verdict ahead of every other
+# branch. That rule is #237 check 4's and it is not in question here. What the
+# record could not say is *which kind of reading* it just judged, and five of
+# this driver's readings are on a field the check never wrote -- so a check whose
+# register row says `writes: False` could be printed as the author of a write,
+# which on the Public origin is the leaked-`sub_filter` finding and a more
+# serious claim than "this row has held a prefix since before the run".
+#
+# ADR 0014 rules out the repair that suppresses such a verdict. These tests pin
+# the admissible one: the kind is **declared per field by the flow that took the
+# reading**, both kinds are still reported, and no verdict or exit code moves.
+
+PREFIXED_VALUE = '<img src="%s%s">' % (PREFIX, PICTURE)
+CLEAN_VALUE = '<img src="%s">' % PICTURE
+
+
+def stored_record(check="readonly-plain", **kwargs):
+    """A record for a check that read one field back, with the kind declared."""
+    options = {
+        "issue": 237, "run_id": "R", "database": "odoo_parity", "target": "local",
+        "surface": PUBLIC, "screen": "/x",
+        "pictures": [{"verdict": markup.AT_ORIGIN_ROOT}],
+        "stored": {"project.task.description": PREFIXED_VALUE},
+        "readings": {"project.task.description": markup.STATE_BOUNDING},
+    }
+    options.update(kwargs)
+    return markup.evidence_record(check=check, **options)
+
+
+def test_the_two_kinds_are_the_whole_taxonomy():
+    """Q3 of #289's grilling: `--task-id` and `--mailing-id` reach the second kind
+    by a different road, they do not make a third. The reading that says *why* --
+    `mailing_source`, `created_template`, `record_id` -- is already in `extra` at
+    every one of those sites, and that is a reading rather than a kind."""
+    assert markup.READING_KINDS == (markup.WRITE_BOUNDING, markup.STATE_BOUNDING)
+    assert len(set(markup.READING_KINDS)) == 2
+    # And a kind is never a verdict, so the two vocabularies cannot be confused
+    # by a reader or by an `==` against the wrong constant.
+    verdicts = set(markup.PICTURE_VERDICTS) | {markup.CLEAN, markup.PREFIX_STORED,
+                                               markup.NOT_RUN}
+    assert not verdicts & set(markup.READING_KINDS)
+
+
+def test_the_record_carries_the_kind_beside_the_verdict():
+    """The per-field entry is where it lands: additive, so `verdict`,
+    `stored_verdict` and `stored_values` keep the shape every existing evidence
+    file has."""
+    record = stored_record()
+    assert record["stored"]["project.task.description"] == {
+        "verdict": markup.PREFIX_STORED, "prefixes": 1,
+        "reading": markup.STATE_BOUNDING,
+    }
+
+
+def test_the_kind_is_not_folded_into_the_verdict_string():
+    """Where this differs from the peer snapshot driver's `classify`, which
+    composes `OWN-`/`FOREIGN-`/`UNKNOWN-PREFIX-STORED` because *there* the kind is
+    the verdict -- three findings with a severity order between them. Here the
+    kind moves no verdict, and `do_report` filters on an equality against
+    `PREFIX_STORED` which a composed string would break."""
+    record = stored_record()
+    assert record["stored_verdict"] == markup.PREFIX_STORED
+    assert record["stored"]["project.task.description"]["verdict"] == markup.PREFIX_STORED
+
+
+def test_a_state_bounding_prefix_still_fails_the_run(tmp_path):
+    """Q2, and the half ADR 0014 settles. A prefix in that row **is** in the
+    database, so the finding stands, is counted, and still exits non-zero. A
+    per-check "judge but do not fail" policy would be the valve ADR 0014 refuses,
+    one layer out: the finding would still vanish from the exit code, the tally
+    and the sweep gate."""
+    record = stored_record()
+    assert record["verdict"] == markup.PREFIX_STORED, "ahead of the passing screen"
+    summary = markup.summarise([record])
+    assert summary["failed"] == 1
+    assert summary["failures"] == ["readonly-plain/public: " + markup.PREFIX_STORED]
+    records = tmp_path / "markup.jsonl"
+    records.write_text(markup.json.dumps(record) + "\n", encoding="utf-8")
+    assert markup.do_report(str(records)) == 1
+
+
+def test_the_report_names_the_kind_and_only_the_prefixed_field(tmp_path, capsys):
+    """What #289 actually buys. The same line used to read as an accusation
+    against a check the register declares non-writing; naming the kind makes it a
+    witness statement. The `CLEAN` field is dropped from the sentence because it
+    was never part of the claim."""
+    record = stored_record(
+        check="mailing-readonly", issue=238,
+        stored={"mailing.mailing.body_arch": CLEAN_VALUE,
+                "mailing.mailing.body_html": PREFIXED_VALUE},
+        readings={"mailing.mailing.body_arch": markup.STATE_BOUNDING,
+                  "mailing.mailing.body_html": markup.STATE_BOUNDING})
+    records = tmp_path / "markup.jsonl"
+    records.write_text(markup.json.dumps(record) + "\n", encoding="utf-8")
+    markup.do_report(str(records))
+    printed = capsys.readouterr().out
+    assert "PREFIX STORED by mailing-readonly/public in " in printed
+    assert "mailing.mailing.body_html (state-bounding)" in printed
+    assert "body_arch" not in printed, "a CLEAN field is not part of the claim"
+
+
+def test_a_record_written_before_the_kind_existed_still_reports(tmp_path, capsys):
+    """The schema stays `woow.ingress-markup/v1` because this is additive, and
+    `report` reads any JSONL it is handed -- including the three evidence files
+    already in this repo, every `stored` entry of which is `CLEAN`."""
+    record = stored_record()
+    del record["stored"]["project.task.description"]["reading"]
+    records = tmp_path / "markup.jsonl"
+    records.write_text(markup.json.dumps(record) + "\n", encoding="utf-8")
+    assert markup.do_report(str(records)) == 1
+    assert "project.task.description (kind not recorded)" in capsys.readouterr().out
+
+
+def test_the_schema_is_unchanged_by_the_kind():
+    assert markup.EVIDENCE_SCHEMA == "woow.ingress-markup/v1"
+
+
+def test_the_redacted_values_keep_their_flat_shape():
+    """Why the declaration travels beside `stored` rather than inside its values.
+    `stored_values` is built straight off `stored` and is the one place a reader
+    sees what was stored; making its values composite would nest that map a level
+    deeper for every reader and every evidence file, to no end."""
+    record = stored_record(stored={"project.task.description": CLEAN_VALUE})
+    assert record["stored_values"] == {"project.task.description": CLEAN_VALUE}
+
+
+# --- The guards: no default kind, and no incoherent one -----------------------
+
+
+def test_a_stored_value_with_no_declared_kind_is_refused():
+    """No default, because whichever constant a default named would be wrong at
+    some site -- and the site it was wrong at is the one nobody looked at."""
+    with pytest.raises(ValueError, match="which kind it is"):
+        markup.evidence_record(
+            check="readonly-plain", issue=237, run_id="R", database="odoo_parity",
+            target="local", surface=INGRESS, screen="/x", pictures=[],
+            stored={"project.task.description": CLEAN_VALUE})
+
+
+def test_a_declaration_for_a_field_that_was_not_read_is_refused():
+    """The other direction of the same mistake: a renamed field or a typo, which
+    would read as "declared" while judging nothing."""
+    with pytest.raises(ValueError, match="did not read back"):
+        stored_record(readings={"project.task.description": markup.STATE_BOUNDING,
+                                "project.task.desciption": markup.STATE_BOUNDING})
+
+
+def test_a_kind_this_module_does_not_name_is_refused():
+    with pytest.raises(ValueError, match="write-bounding or state-bounding"):
+        stored_record(readings={"project.task.description": "incidental"})
+
+
+@pytest.mark.parametrize("check", sorted(
+    name for name, row in markup.CHECKS.items() if row["writes"] is False))
+def test_a_check_that_writes_nothing_cannot_have_written_what_it_read(check):
+    """The incoherent pairing is #289's own false claim, stated by the flow
+    instead of inferred by a reader -- so the record refuses it. `readonly-plain`
+    and `mailing-readonly` are the two rows this pins, and it is parametrized off
+    the register so a row whose flag flips is covered either way."""
+    with pytest.raises(ValueError, match="registered as writing nothing"):
+        stored_record(check=check, issue=markup.CHECKS[check]["issue"],
+                      readings={"project.task.description": markup.WRITE_BOUNDING})
+
+
+def test_a_check_the_register_has_never_heard_of_is_left_alone():
+    """The tests above build records for names the register does not carry, and a
+    guard that refused them would be checking this file rather than the driver."""
+    record = stored_record(check="not-a-registered-check",
+                           readings={"project.task.description": markup.WRITE_BOUNDING})
+    assert record["stored"]["project.task.description"]["reading"] == markup.WRITE_BOUNDING
+
+
+# --- Every site declares, and a seventh cannot be added silently --------------
+
+# The six places in the driver that build a non-empty `stored`. The guard above
+# costs a surface its record rather than stopping a run -- it lands in
+# `run_check`'s outer `except`, the way the `RESERVED_RECORD_KEYS` collision does
+# -- so this is the test that actually keeps the sites honest.
+STORED_SITES = {
+    "do_readonly_iframe": {"mail.template.body_html"},
+    "do_mailing_readonly": {"mailing.mailing.body_arch", "mailing.mailing.body_html"},
+    "_codeview_after_seeding": {"ir.actions.act_window.help"},
+    "do_readonly_plain": {"project.task.description"},
+    "_mailing_after_seeding": {"mailing.mailing.body_arch", "mailing.mailing.body_html"},
+    "_document_mailing_leaving": {"mailing.mailing.body_arch", "mailing.mailing.body_html"},
+}
+
+STORED_ASSIGNMENT = re.compile(r"\bstored(?::\s*dict\[str, Any\])? = \{(?!\})")
+
+
+def stored_building_functions():
+    """Every function in the driver that builds a non-empty `stored` mapping."""
+    found = set()
+    for name, value in sorted(vars(markup).items()):
+        if not inspect.isfunction(value) or value.__module__ != markup.__name__:
+            continue
+        if STORED_ASSIGNMENT.search(inspect.getsource(value)):
+            found.add(name)
+    return found
+
+
+def test_the_sites_that_read_a_field_back_are_the_ones_this_file_pins():
+    """A seventh read-back has to join the table rather than arrive unnoticed --
+    which is how four of the five mis-attributed readings got there in the first
+    place: each was right about its own field and nobody held the set."""
+    assert stored_building_functions() == set(STORED_SITES)
+
+
+@pytest.mark.parametrize("name", sorted(STORED_SITES))
+def test_every_site_that_reads_a_field_back_declares_its_kind(name):
+    source = inspect.getsource(getattr(markup, name))
+    assert "readings" in source, "%s reads a field back and declares no kind" % name
+    for field in STORED_SITES[name]:
+        assert field in source
+
+
+# --- The two declarations a flag or a baseline decides ------------------------
+
+
+def test_the_iframe_check_s_kind_follows_whether_it_seeded_the_template():
+    """By default it creates the scratch template and seeds the full-HTML value,
+    so the read-back is its own write. Under `--task-id` it seeds nothing and
+    reads back a template the operator named -- same field, same line, and
+    `writes: True` on the register row is true of the check and not of this field
+    on this invocation."""
+    source = inspect.getsource(markup.do_readonly_iframe)
+    assert "WRITE_BOUNDING if created is not None else STATE_BOUNDING" in source
+    # And `created` is set on exactly the branch that seeds.
+    assert "task_id = created = seed_scratch_template(side, run_id)" in source
+
+
+def test_the_editable_check_s_body_html_kind_follows_the_clear():
+    """#286 cleared this field on a row the check owns, which is what makes the
+    reading write-bounding there. On the one row the clear is withheld on -- the
+    campaign `--mailing-id` named -- it is not, and that branch is #289's fifth
+    site."""
+    side = FakeSide()
+    owned = seed_editable_mailing(side)
+    assert owned["extra"]["mailing_source"] == "created"
+    assert markup.mailing_body_html_reading(owned) == markup.WRITE_BOUNDING
+
+    borrowed = FakeSide(mailings={9: {"state": "draft", "subject": "Real campaign",
+                                      "body_arch": BORROWED,
+                                      "body_html": "<p>a real campaign's body</p>"}})
+    given = seed_editable_mailing(borrowed, mailing_id=9)
+    assert given["extra"]["mailing_source"] == "given"
+    assert "seeded" not in given, "the clear is withheld on a row the operator named"
+    assert markup.mailing_body_html_reading(given) == markup.STATE_BOUNDING
+
+
+def test_the_document_check_derives_its_body_html_kind_from_the_baseline():
+    """The site where a flat declaration would throw the reading away. The check
+    never writes this field, so on a borrowed draft the value is the campaign's
+    own -- but if the discard did not hold, the save that got through is exactly
+    what inlines `body_html`, and a prefix in what *it* wrote is this check's own
+    leak. Only the change separates them."""
+    fixture = {"before": {"body_arch": BORROWED, "body_html": "<p>as found</p>"}}
+    assert markup.document_mailing_body_html_reading(
+        fixture, {"body_html": "<p>as found</p>"}) == markup.STATE_BOUNDING
+    assert markup.document_mailing_body_html_reading(
+        fixture, {"body_html": "<p>the save got through</p>"}) == markup.WRITE_BOUNDING
+    # An unset field on both sides is unchanged, and `stored_verdict(False)` is
+    # `CLEAN` anyway -- the kind is still recorded rather than left out.
+    assert markup.document_mailing_body_html_reading(
+        {"before": {"body_html": False}}, {"body_html": False}) == markup.STATE_BOUNDING
+
+
+def test_a_fixture_that_never_read_its_baseline_claims_nothing():
+    """The give-up paths leave `before` empty. That is state-bounding rather than
+    unknown, and it is not merely the cautious answer: a handler that got no
+    further than its seed never navigated, so no save of its own could have
+    reached the field."""
+    assert markup.document_mailing_body_html_reading(
+        {"before": {}}, {"body_html": PREFIXED_VALUE}) == markup.STATE_BOUNDING
+    assert markup.document_mailing_body_html_reading(
+        {}, {"body_html": PREFIXED_VALUE}) == markup.STATE_BOUNDING
+
+
+def test_the_document_check_declares_one_field_of_each_kind():
+    """Which is why the declaration is per field and not the register's `writes`
+    row: one check, one write-bounding field and one state-bounding one, so no
+    per-check flag can express it."""
+    side = FakeSide(mailings={9: {"state": "draft", "subject": "Real campaign",
+                                  "body_arch": BORROWED,
+                                  "body_html": "<p>a real campaign's body</p>"}})
+    fixture = seed_document_mailing(side)
+    assert fixture["extra"]["mailing_source"] == "found", "borrowed, so body_html is theirs"
+    outcome = leave(side, fixture, cleanup=True)
+    assert outcome["readings"] == {
+        "mailing.mailing.body_arch": markup.WRITE_BOUNDING,
+        "mailing.mailing.body_html": markup.STATE_BOUNDING,
+    }
+    # And the pair survives into a record, which is the shape `evidence_record`
+    # refuses to assemble from a half-declared one.
+    record = markup.evidence_record(
+        check="media-document-mailing", issue=239, run_id=RUN, database="odoo_parity",
+        target="local", surface=PUBLIC, screen="/x",
+        pictures=[{"verdict": markup.AT_ORIGIN_ROOT}],
+        stored=outcome["stored"], readings=outcome["readings"])
+    assert record["stored"]["mailing.mailing.body_arch"]["reading"] == markup.WRITE_BOUNDING
+    assert record["stored"]["mailing.mailing.body_html"]["reading"] == markup.STATE_BOUNDING
+
+
+def test_a_read_back_that_failed_leaves_both_mappings_empty():
+    """The only shape `evidence_record` accepts of a check that read nothing: a
+    field with no kind raises, and a kind with no field raises too."""
+    side = FakeSide(mailings={9: {"state": "draft", "subject": "Real campaign",
+                                  "body_arch": BORROWED, "body_html": False}})
+    fixture = seed_document_mailing(side)
+    # After the seed, so the baseline read it needs has already happened: the
+    # window this covers is the read-back, which `run_check` closes the session
+    # right after.
+    unreachable = side.rpc
+
+    def gone(model, method, args, kwargs=None):
+        if method == "read":
+            raise RuntimeError("the session is gone")
+        return unreachable(model, method, args, kwargs)
+
+    side.rpc = gone
+    outcome = leave(side, fixture, cleanup=False)
+    assert outcome["stored"] == {} and outcome["readings"] == {}
+    assert fixture["extra"]["read_back_error"] == "RuntimeError"

@@ -218,6 +218,38 @@ PREFIX_STORED = "PREFIX-STORED"
 
 NOT_RUN = "NOT-RUN"
 
+# --- Which *kind* of Stored reading a field carries (#289) --------------------
+#
+# A different question from what the value says, and the one the record could not
+# answer. A **Write-bounding reading** is on a field the check itself wrote, so a
+# prefix in it is that check's own save leaking. A **State-bounding reading** is
+# on a field it did not, so a prefix is a leak whoever caused it and the check is
+# the witness rather than the author (`CONTEXT.md` carries both terms). Five of
+# this driver's read-back sites take the second kind -- `readonly-plain`,
+# `mailing-readonly` (both its fields), `media-document-mailing`'s `body_html`,
+# `readonly-iframe` under `--task-id` and `mailing-editable`'s `body_html` under
+# `--mailing-id` -- and all five were reported identically to the first, as a
+# `PREFIX-STORED` attributed to the check and surface that merely looked.
+#
+# **Both kinds are still reported and both still fail the run.** ADR 0014 refuses
+# a per-field valve that withholds a verdict, and a per-check "judge but do not
+# fail" policy is that same valve one layer out: the finding would still vanish
+# from the exit code, the tally and the sweep gate. What the kind changes is the
+# *claim* -- a check whose register row says `writes: False` was being printed as
+# the author of a write, which on the Public origin is the leaked-`sub_filter`
+# finding and a more serious statement than "this row has held a prefix since
+# before the run".
+#
+# **Not composed into the verdict string**, which is where this differs from the
+# peer snapshot driver's `classify`. There the kind *is* the verdict:
+# `OWN-`/`FOREIGN-`/`UNKNOWN-PREFIX-STORED` are three findings with a severity
+# order between them. Here the kind moves no verdict, so folding it into the
+# verdict would encode a distinction the verdict does not make -- and would break
+# `do_report`'s `stored_verdict == PREFIX_STORED` equality filter besides.
+WRITE_BOUNDING = "write-bounding"
+STATE_BOUNDING = "state-bounding"
+READING_KINDS = (WRITE_BOUNDING, STATE_BOUNDING)
+
 # The names `evidence_record` owns. A flow's own readings are merged flat beside
 # them, so a collision would let one quietly replace a verdict with a reading;
 # `evidence_record` refuses instead of letting the record lie.
@@ -566,6 +598,7 @@ def evidence_record(
     screen: str,
     pictures: Sequence[Mapping[str, Any]] | None,
     stored: Mapping[str, Any],
+    readings: Mapping[str, str] | None = None,
     signals: Mapping[str, int] | None = None,
     extra: Mapping[str, Any] | None = None,
     notes: str = "",
@@ -576,12 +609,59 @@ def evidence_record(
     kept, because #237 check 4 is the half that says the screen passing proves
     nothing about the write: a viewer has no save, so a changed value there
     means the prefix reached one.
+
+    `readings` says which **kind** of Stored reading each field in `stored`
+    carries (#289), declared by the flow that took it. It is the flow's to
+    declare because the register cannot: `media-document-mailing` is one check
+    with one write-bounding field and one state-bounding one, so the row's
+    `writes` flag is not the discriminator. A flow is free to *derive* its own
+    declaration from a baseline it already holds -- the document-mailing check
+    does -- and that stays the flow's business: nothing here knows about
+    baselines, which is what keeps the verdict core out of it.
     """
+    stored = dict(stored or {})
+    readings = dict(readings or {})
+    # **No default kind, and no silent one.** Whichever constant a default named
+    # would be wrong at some site by construction, and the site it was wrong at
+    # is the one nobody looked at. A declaration for a field that is not in
+    # `stored` is the other direction of the same mistake -- a renamed field or a
+    # typo -- and would read as "declared" while judging nothing. Both raise,
+    # where the `RESERVED_RECORD_KEYS` collision raises and for its reason: the
+    # record refuses rather than carrying a claim nobody made. Like that guard,
+    # this one lands in `run_check`'s outer `except` and costs the surface its
+    # record rather than stopping the run, so the guard that actually keeps the
+    # six sites honest is the Static-tier test that pins every one of them.
+    undeclared = sorted(set(stored) - set(readings))
+    if undeclared:
+        raise ValueError("a Stored reading must say which kind it is (#289); no "
+                         "reading declared for: %s" % ", ".join(undeclared))
+    orphaned = sorted(set(readings) - set(stored))
+    if orphaned:
+        raise ValueError("a reading was declared for a field this check did not "
+                         "read back: %s" % ", ".join(orphaned))
+    unknown = sorted({kind for kind in readings.values() if kind not in READING_KINDS})
+    if unknown:
+        raise ValueError("a Stored reading is %s; not: %s" % (
+            " or ".join(READING_KINDS), ", ".join(map(str, unknown))))
+    # **A check the register declares non-writing cannot host a write-bounding
+    # reading.** That pairing is exactly the false claim #289 is about, and here
+    # it would be made by the flow itself rather than inferred by a reader.
+    # `readonly-plain` and `mailing-readonly` are the two rows it pins; a check
+    # this module does not carry a row for is left alone, since the tests build
+    # records for names the register has never heard of.
+    if CHECKS.get(check, {}).get("writes", True) is False:
+        claimed = sorted(field for field, kind in readings.items()
+                         if kind == WRITE_BOUNDING)
+        if claimed:
+            raise ValueError("%s is registered as writing nothing, so it cannot have "
+                             "written: %s" % (check, ", ".join(claimed)))
+
     stored_results = {}
     worst_stored = CLEAN
-    for field, value in (stored or {}).items():
+    for field, value in stored.items():
         verdict, count = stored_verdict(value)
-        stored_results[field] = {"verdict": verdict, "prefixes": count}
+        stored_results[field] = {"verdict": verdict, "prefixes": count,
+                                 "reading": readings[field]}
         if verdict == PREFIX_STORED:
             worst_stored = PREFIX_STORED
 
@@ -614,7 +694,7 @@ def evidence_record(
         # The values themselves, so a reader can see *what* was stored without
         # seeing a token. This is the one place a Supervisor secret could reach
         # the evidence, and the redaction is where it does not.
-        "stored_values": redact(dict(stored or {}), {}),
+        "stored_values": redact(dict(stored), {}),
         "signals": dict(signals or {}),
         "notes": notes,
     }
@@ -1650,7 +1730,12 @@ def run_check(
                         navigation_basis=adapter.AMBIENT_BASIS_DOCUMENTS,
                     ):
                         outcome: dict[str, Any] = {
-                            "screen": row["screen"], "pictures": None, "stored": {}, "notes": "",
+                            "screen": row["screen"], "pictures": None, "stored": {},
+                            # Beside `stored` and empty for the same reason: a
+                            # handler that threw before its read-back declared
+                            # nothing, and an empty `stored` needs no declaration
+                            # (#289).
+                            "readings": {}, "notes": "",
                         }
                         mark = side.recorder.mark() if side.recorder else None
                         try:
@@ -1671,6 +1756,7 @@ def run_check(
                             screen=outcome.get("screen") or row["screen"],
                             pictures=outcome.get("pictures"),
                             stored=outcome.get("stored") or {},
+                            readings=outcome.get("readings") or {},
                             signals=signals,
                             extra=outcome.get("extra"),
                             notes=outcome.get("notes", ""),
@@ -1746,8 +1832,23 @@ def do_report(records_path: str) -> int:
     # that reached a write happened even if a later attempt was clean.
     print("stored_prefix_found=%s" % ("yes" if stored else "no"))
     for record in stored:
+        # **Name the kind beside the field** (#289), and name only the fields that
+        # carry the prefix. "PREFIX STORED by readonly-plain/public in
+        # project.task.description" read as an accusation against a check the
+        # register declares non-writing; the kind is what makes the same line a
+        # witness statement. Listing a `CLEAN` field here alongside them was the
+        # smaller half of the same problem -- it put a field in the sentence that
+        # was never part of the claim. A record written before #289 has no kind to
+        # print, which is said rather than guessed at: every record in this repo's
+        # three evidence files is `CLEAN`, so none of them reaches this line, but
+        # the subcommand still reads any JSONL it is handed.
+        fields = record.get("stored") or {}
+        named = ", ".join(
+            "%s (%s)" % (field, entry.get("reading") or "kind not recorded")
+            for field, entry in sorted(fields.items())
+            if (entry or {}).get("verdict") == PREFIX_STORED)
         print("  PREFIX STORED by %s/%s in %s" % (
-            record["check"], record["surface"], ", ".join(sorted(record.get("stored") or {}))))
+            record["check"], record["surface"], named))
     return 1 if (summary["failed"] or stored) else 0
 
 
@@ -1853,11 +1954,21 @@ def do_readonly_iframe(side, run_id: str, *, task_id=None, cleanup=False, **_) -
         notes = ""
 
     stored = {"mail.template.body_html": read_field(side, "mail.template", task_id, "body_html")}
+    # **The flag decides the kind** (#289). By default this check creates the
+    # template and seeds the full-HTML value, so the field it reads back is one it
+    # wrote and a prefix in it is this check's own: write-bounding. Under
+    # `--task-id` it seeds nothing -- `created` is the only thing that says so --
+    # and reads back a template the operator named, whose `body_html` may have
+    # held a prefix since long before this run. Same reading, same field, and the
+    # record has to say which, because `writes: True` on the register row is true
+    # of the check and not of this field on this invocation.
+    readings = {"mail.template.body_html":
+                WRITE_BOUNDING if created is not None else STATE_BOUNDING}
     if cleanup and created is not None:
         side.rpc("mail.template", "unlink", [[created]])
         extra["deleted_template"] = created
     return {"screen": "/odoo/mail.template/%d" % task_id, "pictures": pictures,
-            "stored": stored, "extra": extra, "notes": notes}
+            "stored": stored, "readings": readings, "extra": extra, "notes": notes}
 
 
 # --- #238: the legacy web_editor ----------------------------------------------
@@ -1903,8 +2014,16 @@ def do_mailing_readonly(side, run_id: str, *, mailing_id=None, **_) -> dict[str,
         "mailing.mailing.body_arch": read_field(side, "mailing.mailing", mailing_id, "body_arch"),
         "mailing.mailing.body_html": read_field(side, "mailing.mailing", mailing_id, "body_html"),
     }
+    # Which is `STATE_BOUNDING`, and now the record says so rather than the
+    # comment above saying it to a reader (#289). This check has no save at all --
+    # the body is `readonly` in the two states it needs -- so a prefix in either
+    # field is a leak whoever caused it, with this check as the witness. The
+    # register's `writes: False` makes the other declaration unavailable here:
+    # `evidence_record` refuses a write-bounding reading from a row that writes
+    # nothing.
+    readings = {field: STATE_BOUNDING for field in stored}
     return {"screen": "/odoo/mailing.mailing/%d" % mailing_id, "pictures": pictures,
-            "stored": stored, "extra": extra}
+            "stored": stored, "readings": readings, "extra": extra}
 
 
 # --- #240: the code view round trip -------------------------------------------
@@ -2109,6 +2228,12 @@ def _codeview_after_seeding(side, run_id, uid, before, extra, *, cleanup=False) 
     extra["unsaved_after_save"] = side.root.locator(UNSAVED).count() > 0
     after = read_field(side, "ir.actions.act_window", uid, "help")
     stored = {"ir.actions.act_window.help": after}
+    # Write-bounding, and the simple case of #289: this check seeded the field
+    # over RPC before any browser step and has just saved it through the editor,
+    # so what it reads back is its own save and a prefix in it is this save's
+    # leaking. There is no flag that turns this one -- `pick_help_action` chooses
+    # the record and seeds it either way.
+    readings = {"ir.actions.act_window.help": WRITE_BOUNDING}
 
     # Read first, then leave the form clean, and only then restore (#276). This
     # check replaced a **real** `ir.actions.act_window.help`, and `run_check`
@@ -2122,7 +2247,7 @@ def _codeview_after_seeding(side, run_id, uid, before, extra, *, cleanup=False) 
         write_field(side, "ir.actions.act_window", uid, "help", before or False)
         extra["help_restored"] = True
     return {"screen": "/odoo/ir.actions.act_window/%d (help, debug)" % uid, "pictures": pictures,
-            "stored": stored, "extra": extra}
+            "stored": stored, "readings": readings, "extra": extra}
 
 
 # --- #237: the plain path, through the history dialog --------------------------
@@ -2226,8 +2351,15 @@ def do_readonly_plain(side, run_id: str, *, task_id=None, **_) -> dict[str, Any]
         discard.click()
         side.settle(800)
     stored = {"project.task.description": read_field(side, "project.task", task_id, "description")}
+    # State-bounding (#289), and this check is the clearest case of it: it
+    # *requires* `has_description_history` -- it refuses a record whose
+    # description has never been written -- and then reads that description back.
+    # Any prefix in it predates the run, and the docstring above already points at
+    # whose write it would be. The register's `writes: False` makes the other
+    # declaration unavailable here.
+    readings = {"project.task.description": STATE_BOUNDING}
     return {"screen": "/odoo/project.task/%d (Version History)" % task_id, "pictures": pictures,
-            "stored": stored, "extra": extra, "notes": notes}
+            "stored": stored, "readings": readings, "extra": extra, "notes": notes}
 
 
 # --- #239: the media dialog's preselection -------------------------------------
@@ -2970,6 +3102,56 @@ def body_html_baseline(fixture: Mapping[str, Any]) -> Mapping[str, Any]:
     return fixture.get("seeded") or fixture.get("before") or {}
 
 
+def mailing_body_html_reading(fixture: Mapping[str, Any]) -> str:
+    """Which kind of Stored reading `mailing-editable`'s `body_html` carries (#289).
+
+    The same gate `body_html_baseline` turns on, and for the same reason. On a row
+    this check owns the seed cleared the field (#286), so what the save leaves in
+    it is this save's own output and a prefix there is this save's
+    `commitChanges` leaking: **write-bounding**, which is what the check means
+    that reading to be. On the one row the clear is withheld on -- the campaign
+    `--mailing-id` named -- the field still holds whatever that campaign held, so
+    a save that never inlined leaves a value this check did not write:
+    **state-bounding**. #286 fixed four of the five sites' worth of this at the
+    write and could not fix this one, because an ungated clear would blank a real
+    campaign's body.
+    """
+    return WRITE_BOUNDING if fixture.get("seeded") else STATE_BOUNDING
+
+
+def document_mailing_body_html_reading(fixture: Mapping[str, Any],
+                                       after: Mapping[str, Any]) -> str:
+    """Which kind `media-document-mailing`'s `body_html` carries (#289). Derived.
+
+    This is the site where a flat declaration would throw the reading away. The
+    check never writes this field -- it discards the form on purpose and the
+    read-back exists to prove the discard worked -- so on a borrowed draft the
+    value is the campaign's own: state-bounding. But if the discard did *not*
+    hold, the save that got through is exactly what inlines `body_html`
+    (`commitChanges`, #238 rule 8), and a prefix in what it wrote is then this
+    check's own leak: write-bounding, and the discard failing is this check's
+    subject rather than the row's history.
+
+    Which of the two happened is not declarable in advance, and it is not
+    guessable from the value either -- the campaign's own body may have held a
+    prefix for months. It is **the change** that separates them, and the baseline
+    is already in hand: `fixture["before"]` is read before the seed and is the
+    restore source besides, so deriving this costs no further read. ADR 0014's
+    attribution option is what allows a derivation at all; a suppression would
+    have had to pick one of the two answers and be wrong half the time.
+
+    A fixture that never reached its `before` read has no baseline -- the give-up
+    paths leave it that way -- and that is state-bounding rather than unknown: a
+    handler that got no further than its seed never navigated, so no save of its
+    could have reached the field.
+    """
+    before = fixture.get("before") or {}
+    if "body_html" not in before:
+        return STATE_BOUNDING
+    return (WRITE_BOUNDING if after.get("body_html") != before.get("body_html")
+            else STATE_BOUNDING)
+
+
 def do_mailing_editable(side, run_id: str, *, mailing_id=None, cleanup=False, **_) -> dict[str, Any]:
     """#238 lines 1 and 2: the designer loads, and the save stores **two** fields.
 
@@ -3141,7 +3323,8 @@ def _mailing_after_seeding(side, fixture, run_id, *, cleanup=False) -> dict[str,
     extra["rendered_iframe"] = frame is not None
     if frame is None:
         return _mailing_editable_leaving(side, fixture, extra, screen, cleanup=cleanup,
-                                         pictures=None, stored={}, notes=(
+                                         pictures=None, stored={}, readings={},
+                                         notes=(
             "the mail designer rendered no iframe; look at the generic HTML location's "
             "\"src\": \"/ rewrite of /web/bundle JSON before these rules"))
     if frame.locator(MAILING_THEME_SELECTOR).count():
@@ -3153,7 +3336,8 @@ def _mailing_after_seeding(side, fixture, run_id, *, cleanup=False) -> dict[str,
     editable = frame.locator(MAILING_EDITABLE).first
     if not editable.count():
         return _mailing_editable_leaving(side, fixture, extra, screen, cleanup=cleanup,
-                                         pictures=None, stored={}, notes=(
+                                         pictures=None, stored={}, readings={},
+                                         notes=(
             "the designer's iframe held no %s editable" % MAILING_EDITABLE))
     pictures = read_pictures(frame, MAILING_EDITABLE + " img", side)
 
@@ -3185,7 +3369,8 @@ def _mailing_after_seeding(side, fixture, run_id, *, cleanup=False) -> dict[str,
         # path is likely rather than hypothetical.
         extra["saved"] = False
         return _mailing_editable_leaving(side, fixture, extra, screen, cleanup=cleanup,
-                                         pictures=None, stored={}, notes=(
+                                         pictures=None, stored={}, readings={},
+                                         notes=(
             "%s never became visible, so nothing was saved: the two rules this "
             "check is about are the save seam, and a read-back of the RPC-seeded "
             "body_arch would have scored a pass without exercising either"
@@ -3200,6 +3385,13 @@ def _mailing_after_seeding(side, fixture, run_id, *, cleanup=False) -> dict[str,
     stored = {
         "mailing.mailing.body_arch": after.get("body_arch"),
         "mailing.mailing.body_html": after.get("body_html"),
+    }
+    # `body_arch` is write-bounding at every branch -- this check seeded it and
+    # has just saved it through `getEditingValue`, so a prefix in it is this
+    # save's. `body_html` is the one the gate decides (#289).
+    readings = {
+        "mailing.mailing.body_arch": WRITE_BOUNDING,
+        "mailing.mailing.body_html": mailing_body_html_reading(fixture),
     }
     # **Did rule 8 run at all?** Building the row (#276) makes `False` the
     # baseline for `body_html`, and `stored_verdict(False)` is `CLEAN` -- so a
@@ -3216,11 +3408,12 @@ def _mailing_after_seeding(side, fixture, run_id, *, cleanup=False) -> dict[str,
     # subject.
     extra["body_html_inlined"] = body_html_inlined(run_id, body_html_baseline(fixture), after)
     return _mailing_editable_leaving(side, fixture, extra, screen, cleanup=cleanup,
-                                     pictures=pictures, stored=stored, notes="")
+                                     pictures=pictures, stored=stored,
+                                     readings=readings, notes="")
 
 
 def _mailing_editable_leaving(side, fixture, extra, screen, *, cleanup, pictures,
-                              stored, notes) -> dict[str, Any]:
+                              stored, readings, notes) -> dict[str, Any]:
     """Leave the designer: restore what was borrowed, remove what was made.
 
     Every exit from the check comes through here, so a run that gave up early
@@ -3230,7 +3423,9 @@ def _mailing_editable_leaving(side, fixture, extra, screen, *, cleanup, pictures
     so a `--cleanup` run that gave up at the iframe left this run's marker body
     in a borrowed `body_arch`.
 
-    `stored` arrives as a parameter rather than being read here, which is the one
+    `stored` arrives as a parameter rather than being read here -- and `readings`
+    with it, because the two travel together: `evidence_record` pairs them by
+    field and refuses a value with no kind declared (#289) -- which is the one
     way this differs from `_document_mailing_leaving`. #238's two rules **are**
     the save seam, and on a path where nothing was saved the read-back would
     return the RPC-seeded `body_arch` -- root-relative by construction, so
@@ -3242,7 +3437,7 @@ def _mailing_editable_leaving(side, fixture, extra, screen, *, cleanup, pictures
         _restore_borrowed_mailing_body(side, fixture, extra)
         extra["fixture_removed"] = _remove_mailing_fixture(side, fixture)
     return {"screen": screen, "pictures": pictures, "stored": stored,
-            "extra": extra, "notes": notes}
+            "readings": readings, "extra": extra, "notes": notes}
 
 
 # --- #239 line 3 on the legacy editor (#266) ----------------------------------
@@ -3511,7 +3706,10 @@ def _document_mailing_leaving(side, fixture, extra, screen,
     """Leave the designer, read the two fields back, and restore.
 
     Every exit from the check comes through here, so a run that gave up early
-    still discards, still reads the record back and still cleans up. The
+    still discards, still reads the record back and still cleans up. A read-back
+    that *failed* leaves both `stored` and its declarations empty together, which
+    is the only shape `evidence_record` accepts: a field with no kind raises, and
+    a kind with no field raises too (#289). The
     read-back is in `stored` on purpose: the only way a prefix could reach the
     database from this check is the dirty-form save, and `stored_verdict` is
     what names it. It bounds the check and not the session -- a save made by a
@@ -3535,6 +3733,7 @@ def _document_mailing_leaving(side, fixture, extra, screen,
     """
     _discard_unsaved_form(side, extra)
     stored: dict[str, Any] = {}
+    readings: dict[str, str] = {}
     try:
         after = side.rpc("mailing.mailing", "read",
                          [[fixture["mailing_id"]], ["body_arch", "body_html"]])[0]
@@ -3542,13 +3741,23 @@ def _document_mailing_leaving(side, fixture, extra, screen,
             "mailing.mailing.body_arch": after.get("body_arch"),
             "mailing.mailing.body_html": after.get("body_html"),
         }
+        # One check, one field of each kind -- which is why the declaration is
+        # per field and not the register's `writes` row (#289). `body_arch` is
+        # this check's own seed, root-relative by construction, so a prefix in it
+        # is the dirty-form save's. `body_html` this check never writes, and
+        # whether the value in it is nonetheless this check's doing is derived
+        # from the pre-run baseline rather than declared.
+        readings = {
+            "mailing.mailing.body_arch": WRITE_BOUNDING,
+            "mailing.mailing.body_html": document_mailing_body_html_reading(fixture, after),
+        }
     except Exception as error:  # noqa: BLE001
         extra["read_back_error"] = type(error).__name__
     if cleanup:
         _restore_borrowed_mailing_body(side, fixture, extra)
         extra["fixture_removed"] = _remove_mailing_fixture(side, fixture)
     return {"screen": screen, "pictures": pictures, "stored": stored,
-            "extra": extra, "notes": notes}
+            "readings": readings, "extra": extra, "notes": notes}
 
 
 if __name__ == "__main__":
