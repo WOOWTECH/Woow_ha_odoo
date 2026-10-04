@@ -21,6 +21,12 @@ dpkg-deb --fsys-tarfile odoo_18.0.20260930_all.deb \
 | `web_editor_html_field_history_mixin.py` | `web_editor/models/html_field_history_mixin.py` | `eb592cc6bd4caab2bf02cca5b75ca0b03b3d0ec6f591cb8fa68e59e5d348917f` |
 | `project_task_5_description.html` | not from the package — see below | — |
 
+`test_html_field_history_prefix.py` re-hashes both files against the digests
+in this table on every run, and checks that the deb version above is still
+the one `odoo18ce/Dockerfile` pins — a capture nobody can re-check is a copy
+rather than evidence, and every claim in that test is driven from these
+bytes.
+
 Both Python files keep Odoo's own copyright header. `diff_utils.py` imports
 only `re` and `difflib`, so `test_html_field_history_prefix.py` loads it by
 path and **executes** it; the mixin imports `odoo` and is therefore only

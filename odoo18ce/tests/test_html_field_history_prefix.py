@@ -61,9 +61,10 @@ prefixed value is in the field the moment the Public peer saves it, and ADR
 whether the field stays prefixed too.
 """
 import ast
+import hashlib
 import importlib.util
 import json
-import textwrap
+import re
 from pathlib import Path
 
 import pytest
@@ -133,8 +134,10 @@ def write_revision(history: list[dict], old_content: str, new_content: str,
                    limit: int) -> list[dict]:
     """`html.field.history.mixin.write`'s revision loop, lines 80-107.
 
-    Newest first, the patch generated new-then-old, the list cut to `limit`.
-    The shape is held to the captured source by the `ast` tests below.
+    Newest first, the patch generated new-then-old, the list cut to `limit`
+    from the front. Every one of those choices is held to the captured source
+    by `test_the_replayed_revision_loop_is_the_captured_one` below, because
+    the two replay tests read their answer out of this replica.
     """
     if new_content == old_content:
         return history
@@ -285,6 +288,25 @@ def test_the_pre_write_value_is_captured_before_super_write() -> None:
         "the capture must precede super().write, or the diff is against the new value"
 
 
+def test_the_replayed_revision_loop_is_the_captured_one() -> None:
+    """`write_revision` is a replica, and a replica is only worth its pins.
+
+    The two replay tests read the host's revision shape out of it, so the
+    three choices that shape rests on are taken from the captured source
+    rather than from this file: the new revision goes in at the **front**,
+    its id is the front one's plus 1, and the cut keeps the front `limit`.
+    A re-capture that does not re-derive the replica turns these red.
+    """
+    statements = [ast.unparse(n) for n in ast.walk(function_of(mixin_tree(), "write"))
+                  if isinstance(n, (ast.Assign, ast.Expr))]
+    assert any(re.fullmatch(r"history_revs\[field\]\.insert\(0, \{.*\}\)", line, re.S)
+               for line in statements), "the revision is inserted at the front"
+    assert "revision_id = history_revs[field][0]['revision_id'] + 1 if history_revs[field] else 1" \
+        in statements, "the id counts up from the front one"
+    assert "history_revs[field] = history_revs[field][:limit]" in statements, \
+        "the cut keeps the newest `limit`, so the oldest is the one evicted"
+
+
 def test_the_patch_is_generated_new_content_then_old_content() -> None:
     calls = [n for n in ast.walk(function_of(mixin_tree(), "write"))
              if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
@@ -341,12 +363,28 @@ def test_the_history_cannot_be_set_through_an_ordinary_write() -> None:
 # --- the capture itself ------------------------------------------------------
 
 @pytest.mark.parametrize("fixture", [DIFF_UTILS, MIXIN])
-def test_the_captured_sources_are_the_pinned_packages(fixture: Path) -> None:
-    """A fixture is only evidence while it says where it came from."""
+def test_the_captured_sources_are_the_bytes_the_readme_recorded(fixture: Path) -> None:
+    """A capture nobody can re-check is a copy, not evidence.
+
+    Every claim in this file is driven from these two files, so an edit to
+    one -- a re-capture that reformats, or a line changed to make an
+    assertion come out right -- would quietly move the thing being measured.
+    The digests are the README's, taken from the package itself.
+    """
     readme = (FIXTURES / "README.md").read_text(encoding="utf-8")
-    assert fixture.name in readme
-    assert "18.0.20260930" in readme
-    version = (ROOT / "odoo18ce/Dockerfile").read_text(encoding="utf-8")
-    assert 'ARG ODOO_DEB_VERSION="18.0.20260930"' in version, \
-        "the deb pin moved; re-capture these fixtures and update the README"
+    row = [line for line in readme.splitlines() if "`%s`" % fixture.name in line]
+    assert len(row) == 1, "the README has no single table row for %s" % fixture.name
+    recorded = re.search(r"`([0-9a-f]{64})`", row[0])
+    assert recorded, "the row records no sha256"
+    assert hashlib.sha256(fixture.read_bytes()).hexdigest() == recorded.group(1), \
+        "%s is not the bytes the README recorded; re-capture it from the pinned deb" % fixture.name
     assert "Part of Odoo" in fixture.read_text(encoding="utf-8")
+
+
+def test_the_capture_names_the_deb_the_image_still_pins() -> None:
+    readme = (FIXTURES / "README.md").read_text(encoding="utf-8")
+    version = (ROOT / "odoo18ce/Dockerfile").read_text(encoding="utf-8")
+    pinned = re.search(r'ARG ODOO_DEB_VERSION="([^"]+)"', version)
+    assert pinned, "the Dockerfile no longer pins a deb version"
+    assert pinned.group(1) in readme, \
+        "the deb pin moved to %s; re-capture these fixtures and update the README" % pinned.group(1)
