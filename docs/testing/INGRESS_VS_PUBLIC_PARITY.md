@@ -747,6 +747,8 @@ Runtime shim 是 Ingress URL 的唯一權威，Literal rewrite 只補 shim 攔�
 > origin 不動，Rewrite scan 不受影響（記錄內容不在 bundle 裡）。
 >
 > **事後附記（#282，2026-10-04）**：兩半已在同一個 Release 0.4.10 上、以改過的 driver 重跑（#282，run `WOOW-MARKUP-20261004T104350Z`），兩面都重現 `PARITY`，`ir.actions.act_window.help` 讀回 `CLEAN`、`reading: write-bounding`、`help_restored: true`，主機事後讀到的值是 run 前的空字串。順帶量到一個 driver 的不對稱：成功路徑的還原掛在 `--cleanup` 上，而錯誤與中斷路徑是無條件還原，所以不帶 `--cleanup` 的第一趟把這筆真記錄留著 marker（已用 `odoo shell` 寫回並重跑，兩筆記錄都留在證據裡）。這一列的判定不改。
+>
+> **事後附記（#297，2026-10-04）**：上一段量到的那個不對稱已經修掉，Static tier only、沒有 Live run（這是 driver 行為，#282 那一趟已經替它付過一次代價）。還原移進 `_restore_borrowed_help`，`do_codeview` 三條路徑都呼叫它、包含成功路徑，而 `--cleanup` 從此對這一列**沒有意義**——它一筆記錄都不建，`pick_help_action` 借的是 id 最小的那筆 `ir.actions.act_window`——所以兩個函式的簽名都不再收那個參數（`run_check` 照樣傳，由 `**_` 吸收；穿到沒有讀者的參數會被讀成「有人忘了掛的 gate」）。三個讀數不變：`help_restored` `true`／`false`／沒有這個 key，而寫入失敗是**回報**不是 raise——raise 會讓成功路徑掉進 handler 的 `except Exception`，把一筆量到的記錄改寫成 `NOT-RUN`。discard 仍然在還原之前（#276、#280、#288）。同一趟 audit 在**兩個** mailing check 上找到同一個 gate，一起修：`media-document-mailing` 的 `found` 分支（資料庫裡有 draft 就會走到，`odoo_parity` 每一趟都是），以及 `mailing-editable` 的 `--mailing-id`——後者代價最大，因為那是會**存檔**的那一列。`--cleanup` 的意思對其他每一列都不變：刪掉這個 check 自己建的東西。這一列的判定不改。
 
 > **網站頁「Edit this content」連結的前綴重複（`U-A2`）已於 2026-09-30 修正（#211）；Live 重跑已於
 > 2026-10-01 在 Release 0.4.9 上完成（#235），改記 `PARITY`。** 連結在 Ingress 下讀到
@@ -1664,7 +1666,7 @@ tier**——其中 #286 與 #289 的 commit 自己就把 host proof 指到 #282�
 `ir.actions.act_window.help`（id 1，「Load demo data」）被留著本輪的 marker，直到用 `odoo shell` 寫回 `''`
 （它的 run 前值，由同一筆記錄的 `help_before: ""` 獨立佐證），然後帶 `--cleanup` 重跑一次、兩面
 `help_restored: true`。沒有還原的那一筆與還原的那一筆都留在 `markup.jsonl` 裡，因為那是真的讀到的東西。
-借來的記錄要不要在沒有 `--cleanup` 時也還原，是 driver 的問題而不是這一輪的問題，另開 follow-up。
+借來的記錄要不要在沒有 `--cleanup` 時也還原，是 driver 的問題而不是這一輪的問題，開在 **#297**。**該票已修（Static tier only）**：答案是「要」，而同一趟 audit 在兩個 mailing check 上找到同一個 gate、一起修了——`media-document-mailing` 的 `found` 分支與 `mailing-editable` 的 `--mailing-id`。三條還原現在都是無條件的，刪除仍然掛在 `--cleanup` 上；`--cleanup` 對 `codeview` 從此沒有意義，它一筆記錄都不建。
 
 **這一輪沒有說的事**，一樣明寫：#289 的 `report` 句子**沒有被行使**（兩個記錄檔的 `stored_prefix_found` 都是
 `no`，沒有任何欄位帶前綴，所以那句「`PREFIX STORED by … (state-bounding)`」沒有印出來——這一輪證明的是宣告與
