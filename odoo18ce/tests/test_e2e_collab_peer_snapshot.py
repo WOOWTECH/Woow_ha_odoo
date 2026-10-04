@@ -984,8 +984,9 @@ class ProbeWritesNothingTests(unittest.TestCase):
 
     One of them is no longer only a shape. The reading order -- B's editable
     before either form is discarded -- is driven through doubles since #282,
-    because a source pin on that one was green off a comment and `probe` is the
-    command whose whole output is that reading (`source-shape-assertions`).
+    because `probe`'s whole output is that one reading and because a pin that
+    resolves on a bare name can stop meaning anything without going red. The
+    test below says exactly which shape that is.
     """
 
     def test_probe_discards_both_sessions_forms(self):
@@ -1021,12 +1022,18 @@ class ProbeWritesNothingTests(unittest.TestCase):
         it -- and that reading is the only thing in the report that says what the
         transport did.
 
-        Matched on the **whole call line** and not on `discard_quietly` alone.
-        The bare name resolves two lines earlier, in the comment that explains
-        why the discard goes through the wrapper, so a bare `index()` holds over
-        a version that discards first -- the trap #292 found in this file's
-        `is_visible()` pin and then reproduced one layer down in its own
-        re-pointing (`source-shape-assertions`). The behavioural guard is
+        Matched on the **whole call line** and not on `discard_quietly` alone,
+        and the reason is narrower than it looks. A plain reorder does not
+        escape the bare name: the call text contains it, so moving the call
+        above the read moves the first match with it and the old assertion goes
+        red. What the bare name does not survive is the call leaving the call
+        site -- renamed, or extracted into a helper -- while the comment above
+        it still names `discard_quietly`. Then `index()` resolves in prose, the
+        ordering claim is satisfied by a sentence, and the code discards first.
+        That is #292's `is_visible()` trap in its weaker form: there the name
+        was one `discard_form` never called at all. Matching the whole call line
+        turns a rename into a red `assertIn` that has to be re-pointed on
+        purpose. The behavioural guard is
         `test_probe_records_the_delivered_editable_and_not_the_discarded_one`
         below; this is the shape beside it."""
         source = inspect.getsource(do_probe)

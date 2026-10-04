@@ -1027,14 +1027,20 @@
   `woow.ingress-markup/v1` and `woow.peer-snapshot.v1` do not feed `conservation`,
   and `G-10` is a gap registration rather than a plan item.
 - `probe`'s reading order in `e2e_collab_peer_snapshot_live` is now **driven**
-  rather than pinned at its shape: the source assertion that B's editable is read
-  before either form is discarded resolved on the bare name `discard_quietly`,
-  which appears two lines earlier in a comment, so it held over a version that
-  discarded first. It now matches the whole call line, and a behavioural test
-  drives `do_probe` through doubles where the editable answers `DELIVERED-...`
-  while the form is dirty and `STORED-...` once a discard has reset it -- a
-  reordered `do_probe` records the second and fails. Same shape as the
-  `is_visible()` trap #292 recorded, in the one instance that commit left unfiled.
+  rather than pinned at its shape. A behavioural test drives `do_probe` through
+  doubles where the editable answers `DELIVERED-...` while the form is dirty and
+  `STORED-...` once a discard has reset it, so a `do_probe` that discards before
+  it reads records the second and fails. The source assertion beside it now
+  matches the whole call line rather than the bare name `discard_quietly`, and
+  the reason is narrower than #292's `is_visible()` case: a plain reorder was
+  already caught, because the call text contains the name and carries the first
+  match with it. What the bare name does not survive is the call leaving the call
+  site -- renamed, or extracted into a helper -- while the comment above it still
+  names `discard_quietly`; then `index()` resolves in prose and the ordering
+  claim is satisfied by a sentence. Matching the whole line turns that into a red
+  `assertIn` somebody has to re-point on purpose. This is the instance #292 left
+  unfiled, and the first claim about it -- that the old pin held over a
+  discard-first `do_probe` -- was wrong and is corrected here.
 
 ## 0.4.10 — 2026-10-01
 
