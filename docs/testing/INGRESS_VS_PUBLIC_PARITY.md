@@ -1301,17 +1301,18 @@ seeder 在寫 `body_arch` 之前就已經讀過，所以不用多一次 RPC。�
 因此移動；它守的是讀者用來分辨「inline 過，而且是 root-relative」與「根本沒 inline」的那份證據——
 `stored_verdict(False)` 是 `CLEAN`，空的 `body_html` 自己就會拿到一個 pass。
 
-代價是明寫出來的：**在 reclaim 來的那一列上，這個讀數不論那一次存檔怎麼走都是 `false`**（標記在存檔之前
-就已經在欄位裡了）。對一個「職責是拒絕假 pass」的讀數來說，這是該往的那個方向——「inline 過」才是需要證
-據的那個主張——而新記下的 `extra["body_html_marker_before"]`（在讀 `before` 的地方一起讀）就是用來分辨兩
-種 `false` 的：「這次存檔沒有 inline」與「標記本來就在，這一列說不了話」。想在那一列拿到正面讀數，就帶
-`--cleanup`，或給它自己的 run id。至於「在種 `body_arch` 的同時把 `body_html` 清掉」——那會讓那一列的兩
-邊讀數都成立，這裡刻意不做，但不是因為做不到（掛在 `fixture["scratch_mailing"]` 上就只會碰到這個 driver
-自己的垃圾）：那種寫法改的是**寫入**，連帶改掉 `stored["mailing.mailing.body_html"]`，而那一個是
+代價是明寫出來的：**#279 在 reclaim 來的那一列上把這個讀數留成了「不論那一次存檔怎麼走都是 `false`」**
+（標記在存檔之前就已經在欄位裡了）——這一段只講 #279 自己留下的狀態，往後走到哪裡看下面的 #286。對一個
+「職責是拒絕假 pass」的讀數來說，這是該往的那個方向——「inline 過」才是需要證據的那個主張——而新記下的
+`extra["body_html_marker_before"]`（在讀 `before` 的地方一起讀）就是用來分辨兩種 `false` 的：「這次存檔沒
+有 inline」與「標記本來就在，這一列說不了話」。只有 #279、還沒有 #286 的那段時間裡，想在那一列拿到正面讀
+數就得帶 `--cleanup`，或給它自己的 run id。至於「在種 `body_arch` 的同時把 `body_html` 清掉」——那會讓那
+一列的兩邊讀數都成立，#279 刻意不做，但不是因為做不到（掛在 `fixture["scratch_mailing"]` 上就只會碰到這
+個 driver 自己的垃圾）：那種寫法改的是**寫入**，連帶改掉 `stored["mailing.mailing.body_html"]`，而那一個是
 `stored_verdict` 會**判定**的——同一份殘值的「被判定」那一半，正是 #279 劃在範圍外的東西。那一半是真的、
 不是假想：在一列 reclaim 來的 mailing 上，若第二次存檔只寫了 `body_arch` 而沒有 inline，public surface 記
-下的 `PREFIX-STORED` 或 `CLEAN` 可能是 ingress surface 留下的值，而不是這次存檔寫的任何東西。那一半該另開
-一張票。
+下的 `PREFIX-STORED` 或 `CLEAN` 可能是 ingress surface 留下的值，而不是這次存檔寫的任何東西。那一半就是
+#286，而它正是把那個清除做了下去。
 
 
 **#280（2026-10-03）：`_discard_unsaved_form` 沒辦法回報一次失敗的 discard，而且那一下 click 沒有界。**
@@ -1380,6 +1381,40 @@ frame 之後，detached 的 frame 會拋例外，讀數留在 `false`。seam 後
 handler 的錯誤路徑共用同一個函式，所以同一組界也跟著套上。全域 `set_default_timeout` 會動到這個 driver 的
 每一個等待，不是修法；「失敗的 discard 之後要不要跳過還原」也不是——還原仍然要試，那是那筆記錄唯一的機
 會，所以這一票改的是讀數，不是順序。
+
+
+**#286（2026-10-04）：reclaim 來的那一列上，被判定的 `body_html` 可能不是這次存檔寫的。** 這是 #279 修掉
+「被記錄」那一半之後剩下的「被判定」那一半，由 #277 的審查提出、在 #279 之後的 `main` 上原封不動。
+`mailing-editable` 把這個欄位的 **Stored reading** 當成 *write-bounding* 的：裡面有前綴，意思是**這一次**
+存檔的 `commitChanges` 漏了（#238 第 8 條）。但在一列 reclaim 來的 mailing 上、而且這次存檔只寫了
+`body_arch` 時，它就不是——讀回來的是上一個 surface inline 進去的值。而 `stored_verdict` 會判定交給它的每
+一個欄位，`PREFIX-STORED` 又會在所有其他分支之前被提升成整列 check 的判定（#237 第 4 條），於是 ingress
+surface 那次存檔漏出來的前綴會被印成 `PREFIX STORED by mailing-editable/public`、exit 1——而在 public 這
+一側，「資料庫裡有前綴」的意思是 `sub_filter` 從 Ingress 的 asset location 漏了出去，是另一個、而且更嚴重
+的主張。乾淨的那個方向也一樣會落下：上一輪留下的乾淨值會替這次存檔根本沒寫的欄位記下 `CLEAN`。
+
+修法在**寫入**，不在判定，理由寫在 `docs/adr/0014-a-stored-prefix-is-never-suppressed.md`：教
+`stored_verdict` 跳過一個「已知是殘值」的欄位，在程式上與證據上都和「把一個存進資料庫的前綴抹掉」分不出
+來，而那正是這個模組存在要揭露的東西、也是 #237 第 4 條要禁止的事。所以 seeder 現在在種 `body_arch` 的
+**同一通 `write`** 裡把 `body_html` 清掉，存檔之後留在那個欄位裡的就只會是這次存檔自己的產物；
+`stored_verdict`、`evidence_record`、`do_report` 一行都沒動。
+
+清除掛在「這一輪手上有 scratch 列」上，而那正是 `_restore_borrowed_mailing_body` 自己那道 guard 的反面。
+兩者互為反面，所以這個清除永遠不可能抹掉還原會寫回去的值：`created` 是 no-op（欄位本來就是 `False`）、
+`reclaimed` 是這一票要修的情況（這個 driver 自己的垃圾）、`given` 是 `--mailing-id` 指名的那一列，原封不
+動留著（還原仍然只在 `--cleanup` 下跑），`found` 則到不了（這個 check 傳 `borrow=False`）。
+`fixture["before"]` 留著**真正的**跑前值：它既是還原的來源，也是「這一列原本長什麼樣」的證據，而同一個
+fixture 形狀還和 document-mailing 的 seeder 共用，所以清除有自己的讀數（`fixture["seeded"]`，由新的
+`body_html_baseline` 讀），不是去蓋掉別人的。`extra["body_html_marker_before"]` 的意思與位置都不變（標記
+在這一輪碰這一列之前就在那裡），仍然在那通寫入之前讀。
+
+於是 `body_html_inlined` 在 reclaim 來的那一列上現在讀得到 `true`——#279 給不了的那一半：清除把 #279 在那
+一列上刻意的單向讀數（不論那次存檔怎麼走都是 `false`）換回雙向的，比對的是「seed 留下的值」而不是跑前
+值。它仍然**只記不判**（理由同 `_media_verdict`），所以也沒有任何判定因此移動。**document**-mailing 的
+seeder 什麼都不清：那個 check 從不存檔，它的讀回是用來證明 discard 有效的，清掉欄位會毀掉它拿來比的基
+準。另外四個「拿的是 State-bounding reading、卻被當成 write-bounding 來判」的 check——`readonly-plain`、
+`mailing-readonly`、`media-document-mailing` 的 `body_html`、以及 `--task-id` 下的 `readonly-iframe`——是
+同一個家族走另一條可接受的修法（attribution），開在 #289。
 
 
 落差報告最終彙整為：

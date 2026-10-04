@@ -2879,8 +2879,8 @@ def body_html_marked(run_id: str, read: Mapping[str, Any]) -> bool:
     """Is this run's typed marker in the `body_html` of a `read` of the mailing?
 
     The field can come back `False` rather than a string on either side of the
-    save: `create_fixture_mailing` leaves it unset, and a save that never inlined
-    leaves it that way.
+    save: `create_fixture_mailing` leaves it unset, the seed clears it on a row
+    this check owns (#286), and a save that never inlined leaves it that way.
     """
     return marker_for(run_id) in (read.get("body_html") or "")
 
@@ -2891,8 +2891,8 @@ def body_html_inlined(run_id: str, before: Mapping[str, Any],
 
     The marker is the discriminator because of which *field* the seed writes: it
     writes `body_arch` -- where the marker also sits, `mailing_body_value` puts it
-    there -- and leaves `body_html` as `create_fixture_mailing` left it, so rule 8
-    is the only thing in this check that can carry the marker across.
+    there -- and leaves `body_html` empty, so rule 8 is the only thing in this
+    check that can carry the marker across.
 
     "Present after the save" is not that reading though, and #279 is where the
     difference shows: `--run-id` is one value for the whole invocation and
@@ -2903,33 +2903,36 @@ def body_html_inlined(run_id: str, before: Mapping[str, Any],
     second save that stored only `body_arch` would read as inlined.
 
     So the marker has to be **newly** present: in `after` and not in the value
-    read before the seed. That value is already in hand -- `fixture["before"]` --
-    so this costs no further read, and it closes a re-run of the *same* surface
-    under one run id as well, which a surface-specific marker would not.
+    the field held when the browser half began. `body_html_baseline` is that
+    value and it is already in hand, so this costs no further read, and the
+    reading closes a re-run of the *same* surface under one run id as well, which
+    a surface-specific marker would not.
 
-    **On a reclaimed row this reads `False` whichever way the save went**, since
-    the marker is there before it. That is the direction to fail in for a reading
-    whose whole job is to refuse a false pass -- `stored_verdict(False)` is
-    `CLEAN`, so "inlined" is the claim that needs the evidence -- and
-    `body_html_marker_before` beside it says which of the two `False`s this is. A
-    positive reading on that row wants `--cleanup`, or a run id of its own.
-
-    Clearing `body_html` alongside the `body_arch` seed would make both readings
-    possible on that row, and it is **not** done here -- deliberately, and not
-    because it could not be. Gated on `fixture["scratch_mailing"]` it would touch
-    only this driver's own litter: `mailing-editable` passes `borrow=False`, so
-    `found` is unreachable and the only borrowed row it can be on is the one
-    `--mailing-id` named, whose inlined body an ungated clear would blank with the
-    restore running under `--cleanup` only. What that spelling changes is the
-    **write**, and through it `stored["mailing.mailing.body_html"]`, which
-    `stored_verdict` *judges* -- and the judged half of this same stale value is
-    what #279 puts out of scope. That half is real and not hypothetical: on a
-    reclaimed row whose second save stores `body_arch` without inlining, the
-    public surface's `PREFIX-STORED` or `CLEAN` can be the ingress surface's
-    leftover value rather than anything this save wrote. It wants an issue of its
-    own rather than a change made inside this one.
+    **On a row this check owns the seed clears the field** (#286), so both
+    readings are available there: `false` is a save that never inlined, `true` is
+    this save's own doing. The clear is gated on the fixture carrying a scratch
+    row -- the seeder is where that gate's argument is -- so on the one row it is
+    withheld on, the one `--mailing-id` named, a marker already in the field
+    leaves this `false` whichever way the save went. That is the direction to fail
+    in for a reading whose whole job is to refuse a false pass --
+    `stored_verdict(False)` is `CLEAN`, so "inlined" is the claim that needs the
+    evidence -- and `body_html_marker_before` beside it says which of the two
+    `false`s it is. A positive reading on that row wants a run id of its own.
     """
     return body_html_marked(run_id, after) and not body_html_marked(run_id, before)
+
+
+def body_html_baseline(fixture: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The reading `body_html_inlined` measures a save's own output against (#286).
+
+    `fixture["seeded"]` on a row this check owns -- what the seed left the field
+    as, which is empty -- and the pre-run read on the one row it does not, where
+    the clear is withheld and #279's reading stands exactly as it was: a marker
+    already in the campaign `--mailing-id` named is no evidence that *this* save
+    inlined it. `fixture["before"]` is empty until it has been read, which is how
+    the give-up paths leave it and why neither key is assumed present.
+    """
+    return fixture.get("seeded") or fixture.get("before") or {}
 
 
 def do_mailing_editable(side, run_id: str, *, mailing_id=None, cleanup=False, **_) -> dict[str, Any]:
@@ -3039,16 +3042,49 @@ def seed_editable_mailing_fixture(side, run_id: str, mailing_id) -> dict[str, An
                           [[mailing_id], ["body_arch", "body_html"]])[0]
         fixture["before"] = before
         extra["body_arch_before"] = redact(before.get("body_arch") or "", {})
-        # The second input to `body_html_inlined`, recorded where it is read:
-        # without it a record showing this run's marker in the stored `body_html`
-        # beside `body_html_inlined: false` cannot be explained from itself
-        # (#279). Whether the marker was in it, and not the value -- the reading
-        # is that one bit, and the field's own value is what `stored` carries.
+        # Whether the marker was on the row **before this run touched it**,
+        # recorded where it is read: without it a record showing this run's marker
+        # in the stored `body_html` beside `body_html_inlined: false` cannot be
+        # explained from itself (#279). Whether the marker was in it, and not the
+        # value -- the reading is that one bit, and the field's own value is what
+        # `stored` carries. It is read before the seed write, which since #286
+        # clears that field on a row this check owns.
         extra["body_html_marker_before"] = body_html_marked(run_id, before)
         # Seeded over RPC so the value under test is exactly the measured one, and
         # so the check does not also depend on the designer's own typing working.
-        write_field(side, "mailing.mailing", mailing_id, "body_arch",
-                    mailing_body_value(run_id))
+        #
+        # **`body_html` is cleared in the same write, on a row this check owns**
+        # (#286). That field's Stored reading is meant to be write-bounding -- a
+        # prefix in it is *this* save's `commitChanges` leaking -- and on a
+        # reclaimed row it was not: the value read back after a save that stored
+        # only `body_arch` was the earlier surface's inlined body, and
+        # `stored_verdict` judges every field it is handed, so the record
+        # attributed to one surface a prefix the other surface's save wrote.
+        # Suppressing that judgement is refused by ADR 0014; the correction is
+        # here, at the write, so what comes back is this save's output and
+        # nothing else.
+        #
+        # **The gate is `_restore_borrowed_mailing_body`'s own guard inverted**,
+        # and that is what makes the clear safe: the two are exact inverses, so it
+        # can never blank a value the restore would have put back. `created` is a
+        # no-op, since the field is already `False`; `reclaimed` is the case this
+        # fixes, this driver's own litter; `given` is the row the operator named,
+        # whose inlined body an ungated clear would blank with the restore running
+        # under `--cleanup` only; and `found` is unreachable, because this check
+        # passes `borrow=False`. One write carrying both fields, the shape
+        # `_restore_mailing_body` already uses on this model.
+        seed: dict[str, Any] = {"body_arch": mailing_body_value(run_id)}
+        if scratch is not None:
+            seed["body_html"] = False
+        side.rpc("mailing.mailing", "write", [[mailing_id], seed])
+        if "body_html" in seed:
+            # What the seed left the field as, which is the value
+            # `body_html_inlined` compares the save against -- recorded once the
+            # write has taken, and *beside* `fixture["before"]` rather than over
+            # it: that reading is the restore source and the evidence of the row's
+            # pre-run state, and the same fixture shape is shared with the
+            # document-mailing seeder.
+            fixture["seeded"] = {"body_html": seed["body_html"]}
     except BaseException:
         _abandon_mailing_fixture(side, fixture, extra, "mailing-editable")
         raise
@@ -3136,14 +3172,14 @@ def _mailing_after_seeding(side, fixture, run_id, *, cleanup=False) -> dict[str,
     # pass for the one field this check exists to measure, the field that leaves
     # the installation with the mail. The marker the designer typed is what
     # separates "inlined, and root-relative" from "never inlined", and it has to
-    # be *newly* there: on a reclaimed row the marker is already in `body_html`
-    # (#279), so `body_html_inlined` reads the value from before the seed too --
-    # which makes that row's `false` ambiguous, and `body_html_marker_before`
-    # is what tells the two `false`s apart.
+    # be *newly* there: on a reclaimed row the marker was already in `body_html`
+    # (#279), so the reading is against what the field held when this half began
+    # -- `body_html_baseline`, which the seed's clear (#286) makes empty on a row
+    # this check owns and which is the pre-run read on the one row it does not.
     # Recorded rather than judged, for the reason `_media_verdict` is: a verdict
     # here would make this check's `PARITY` depend on a mechanism that is not its
     # subject.
-    extra["body_html_inlined"] = body_html_inlined(run_id, fixture["before"], after)
+    extra["body_html_inlined"] = body_html_inlined(run_id, body_html_baseline(fixture), after)
     return _mailing_editable_leaving(side, fixture, extra, screen, cleanup=cleanup,
                                      pictures=pictures, stored=stored, notes="")
 

@@ -590,21 +590,24 @@
   moves either way. What it protects is the evidence a reader uses to tell
   "inlined, and root-relative" from "never inlined", since `stored_verdict(False)`
   is `CLEAN` and an empty `body_html` already scores a pass on its own.
-- **On a reclaimed row the reading is now `false` whichever way that save went**,
-  and the record says so rather than leaving it to be worked out: the new
-  `extra["body_html_marker_before"]` is read where the `before` read happens, so
-  the two `false`s -- "the save never inlined" and "the marker was already in the
-  field, so this row cannot say" -- are told apart from the record itself. That is
-  the direction to fail in for a reading whose job is to refuse a false pass, and
-  a positive reading on that row wants `--cleanup` or a run id of its own.
+- **#279 left the reading `false` on a reclaimed row whichever way that save
+  went** -- read #286 below for where that ends up, since both land in this
+  release -- and the record says so rather than leaving it to be worked out: the
+  new `extra["body_html_marker_before"]` is read where the `before` read happens,
+  so the two `false`s -- "the save never inlined" and "the marker was already in
+  the field, so this row cannot say" -- are told apart from the record itself.
+  That is the direction to fail in for a reading whose job is to refuse a false
+  pass, and under #279 alone a positive reading on that row wanted `--cleanup` or
+  a run id of its own.
   Clearing `body_html` beside the `body_arch` seed would make both readings
-  possible on it and is deliberately not done here, though gated on
+  possible on it and was deliberately not done in #279, though gated on
   `fixture["scratch_mailing"]` it could be: what it changes is the **write**, and
   through it the `stored["mailing.mailing.body_html"]` that `stored_verdict`
   *judges* -- the judged half of the same stale value, which #279 puts out of
   scope and which is real rather than hypothetical, since on a reclaimed row the
   public surface's `PREFIX-STORED` or `CLEAN` can be the ingress surface's
-  leftover value. That half wants an issue of its own.
+  leftover value. That half is #286 below, which makes the clear -- so the
+  reading is two-way on a reclaimed row after all.
 - **`_discard_unsaved_form` could not report a discard that failed, and its
   click was unbounded** (#280, with #281 folded into it -- both defects are in
   that one function, and the timeout belongs on the very click whose reporting
@@ -708,6 +711,54 @@
   **not** the fix -- it would change every wait in the driver -- and neither is
   skipping the restore after a failed discard: it is still the record's only
   chance, so what changes here is the reading and not the order.
+- **A reclaimed row's stored `body_html` was judged as this save's** (#286, the
+  judged half of the stale value #279 fixed the recorded half of, and the issue
+  that bullet asks for; raised by the review of #277 and still on `main` after
+  #279). `mailing-editable` means that field's **Stored reading** to be
+  *write-bounding*: a prefix in it is this save's `commitChanges` leaking (#238
+  rule 8). On a **Reclaimed row** whose save stored only `body_arch` it was not --
+  the value read back was the earlier surface's inlined body -- and
+  `stored_verdict` judges every field it is handed, with a `PREFIX-STORED`
+  promoted to the check's whole verdict ahead of every other branch (#237 check
+  4). So the *ingress* surface's save could be reported as `PREFIX STORED by
+  mailing-editable/public`, exit 1 -- on the surface where a stored prefix means
+  a `sub_filter` leaked out of the Ingress asset location, which is a different
+  and more serious claim. The clean direction landed too: a clean leftover scored
+  `CLEAN` for a `body_html` that save never wrote.
+- **The fix is at the write, and `docs/adr/0014-a-stored-prefix-is-never-suppressed.md`
+  is why it is not at the verdict.** Teaching `stored_verdict` to skip a field
+  known to be stale is indistinguishable, in the code and in the evidence, from
+  erasing a stored prefix -- the finding this module exists to surface, and what
+  #237 check 4 exists to forbid. So the seeder now clears `body_html` in the same
+  `write` that seeds `body_arch`, and what the save leaves in that field is this
+  save's own output. `stored_verdict`, `evidence_record` and `do_report` are
+  untouched.
+- **The clear is gated on the fixture carrying a scratch row, which is
+  `_restore_borrowed_mailing_body`'s own guard inverted.** The two are exact
+  inverses, so the clear can never blank a value the restore would have put back:
+  `created` is a no-op (the field is already `False`), `reclaimed` is the case
+  this fixes -- this driver's own litter -- `given` is the row `--mailing-id`
+  named and is left exactly as it was found, with the restore still running under
+  `--cleanup` only, and `found` is unreachable because this check passes
+  `borrow=False`. `fixture["before"]` keeps the **true pre-run value**: it is both
+  the restore source and the evidence of what was on the row, and the same fixture
+  shape is shared with the document-mailing seeder, so the clear gets a reading of
+  its own (`fixture["seeded"]`, read by the new `body_html_baseline`) rather than
+  overwriting one. `extra["body_html_marker_before"]` is unchanged in meaning and
+  in position -- the marker was on the row before this run touched it -- and is
+  still read before the write.
+- **`body_html_inlined` can now read `true` on a reclaimed row**, which #279 could
+  not give it: the clear turns #279's deliberate one-way reading there -- `false`
+  whichever way the save went -- back into a two-way one, measured against what
+  the seed left the field as rather than against the pre-run value. It stays
+  **recorded and not judged**, for `_media_verdict`'s reason, so no verdict moves
+  on that account either. Nothing is cleared in the **document**-mailing seeder:
+  that check never saves, its read-back exists to prove the discard worked, and
+  clearing the field would destroy the baseline it compares against. The four
+  checks that take a **State-bounding reading** and have it judged as if it were
+  write-bounding -- `readonly-plain`, `mailing-readonly`, `media-document-mailing`'s
+  `body_html` and `readonly-iframe` under `--task-id` -- are the same family by
+  the other admissible correction, attribution, and are #289.
 
 ## 0.4.10 — 2026-10-01
 

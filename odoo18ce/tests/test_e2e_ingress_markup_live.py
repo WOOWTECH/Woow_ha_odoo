@@ -1148,7 +1148,7 @@ def test_a_body_html_the_save_never_inlined_is_not_a_pass():
                                         {"body_html": markup.MAILING_BODY_VALUE})
     source = inspect.getsource(markup._mailing_after_seeding)
     assert '"body_html_inlined"' in source
-    assert 'body_html_inlined(run_id, fixture["before"], after)' in source
+    assert 'body_html_inlined(run_id, body_html_baseline(fixture), after)' in source
 
 
 def test_a_marker_already_in_body_html_is_not_this_save_inlining_it():
@@ -1188,7 +1188,7 @@ def test_the_record_says_whether_the_marker_was_there_before_the_seed():
     assert 'extra["body_html_marker_before"] = body_html_marked(run_id, before)' in source
     assert source.index('fixture["before"] = before') \
         < source.index('extra["body_html_marker_before"]') \
-        < source.index('write_field(side, "mailing.mailing", mailing_id, "body_arch"')
+        < source.index('side.rpc("mailing.mailing", "write", [[mailing_id], seed])')
 
 
 def test_the_newly_present_reading_survives_an_unset_body_html():
@@ -2011,6 +2011,145 @@ def test_the_editable_check_declares_the_rows_it_now_creates():
     check by it; the check wrote before #276 and creates a row now."""
     assert markup.CHECKS["mailing-editable"]["writes"] is True
 
+
+# --- #286: the stored `body_html` is only ever what this save wrote -----------
+#
+# `stored["mailing.mailing.body_html"]` is meant as a **Write-bounding reading**:
+# a prefix in it is *this* save's `commitChanges` leaking. On a **Reclaimed row**
+# whose save stores only `body_arch` it had quietly become a State-bounding one --
+# the value read back was the earlier surface's inlined leftover, and
+# `stored_verdict` judges every field it is handed, so the record attributed to
+# one surface a prefix the other surface's save wrote. ADR 0014 refuses to
+# suppress that judgement: the fix is at the **write**, so the field is empty
+# when the browser half begins.
+
+# What an earlier surface's save left inlined: this run's typed marker, because
+# `--run-id` is one value for the whole invocation (#279), and a prefixed `src`,
+# because that surface's save is exactly what #238 is about.
+INLINED_LEFTOVER = (
+    '<div class="o_layout"><p>%s</p><img src="%s" alt="logo"></div>'
+    % (markup.marker_for(RUN), PREFIX + PICTURE))
+
+
+def reclaimed_with_inlined_body(body_html=INLINED_LEFTOVER):
+    """This driver's own scratch row, carrying the `body_html` a save left in it.
+
+    The subject is an **earlier** run's, the way `scratch_mailing_id` finds one:
+    what makes the row reclaimable is the prefix, not the run id in it.
+    """
+    return FakeSide(mailings={5: {
+        "state": "draft",
+        "subject": markup.scratch_task_name("WOOW-MARKUP-20261003T010101Z"),
+        "body_arch": "<p>an earlier fixture</p>", "body_html": body_html}})
+
+
+def test_the_seed_clears_the_body_html_it_is_about_on_a_row_it_owns():
+    """The row is this driver's own litter, so the field can be emptied before the
+    designer opens -- and then whatever is read back afterwards is this save's."""
+    side = reclaimed_with_inlined_body()
+    fixture = seed_editable_mailing(side)
+    assert fixture["mailing_id"] == 5
+    assert fixture["extra"]["mailing_source"] == "reclaimed"
+    assert side.mailings[5]["body_arch"] == markup.mailing_body_value(RUN)
+    assert side.mailings[5]["body_html"] is False
+    # The reading of what the seed left the field as, which is what
+    # `body_html_inlined` now compares the save against.
+    assert fixture["seeded"] == {"body_html": False}
+
+
+def test_the_seed_and_the_clear_are_one_write():
+    """Two fields, one `write` -- the shape `_restore_mailing_body` already uses
+    on this model, rather than two sequential single-field writes."""
+    side = reclaimed_with_inlined_body()
+    seed_editable_mailing(side)
+    [write] = side.did("mailing.mailing", "write")
+    assert write[2][1] == {"body_arch": markup.mailing_body_value(RUN),
+                           "body_html": False}
+
+
+def test_the_clear_never_touches_the_row_the_operator_named():
+    """The gate is `_restore_borrowed_mailing_body`'s own guard inverted, and that
+    is what makes the clear safe: the one row this check does not own is the one
+    `--mailing-id` named, whose inlined body an ungated clear would blank -- with
+    the restore running under `--cleanup` only."""
+    side = FakeSide(mailings={9: {"state": "draft", "subject": "Real campaign",
+                                  "body_arch": BORROWED, "body_html": BORROWED}})
+    fixture = seed_editable_mailing(side, mailing_id=9)
+    assert fixture["scratch_mailing"] is None and fixture.get("seeded") is None
+    assert side.mailings[9]["body_html"] == BORROWED, "the campaign kept its body"
+    [write] = side.did("mailing.mailing", "write")
+    assert write[2][1] == {"body_arch": markup.mailing_body_value(RUN)}
+
+
+def test_the_pre_run_body_html_is_still_the_fixture_s_own_reading():
+    """`fixture["before"]` is both the restore source and the evidence of what was
+    on the row, and the same fixture shape is shared with the document-mailing
+    seeder -- so the clear gets a reading of its own rather than overwriting it."""
+    side = reclaimed_with_inlined_body()
+    fixture = seed_editable_mailing(side)
+    assert fixture["before"]["body_html"] == INLINED_LEFTOVER
+    assert fixture["before"]["body_arch"] == "<p>an earlier fixture</p>"
+    # #279's reading keeps its meaning and its place: the marker was on the row
+    # before this run touched it.
+    assert fixture["extra"]["body_html_marker_before"] is True
+
+
+def test_a_reclaimed_row_can_now_say_that_this_save_inlined():
+    """#279 could only read `false` on this row, whichever way the save went,
+    because the marker was in the field before the seed. The clear makes the
+    reading two-way there, which is the second half of this fix."""
+    side = reclaimed_with_inlined_body()
+    fixture = seed_editable_mailing(side)
+    baseline = markup.body_html_baseline(fixture)
+    assert not markup.body_html_marked(RUN, baseline)
+    assert markup.body_html_inlined(RUN, baseline,
+                                    {"body_html": markup.marker_for(RUN)})
+    assert not markup.body_html_inlined(RUN, baseline, {"body_html": False})
+    source = inspect.getsource(markup._mailing_after_seeding)
+    assert "body_html_inlined(run_id, body_html_baseline(fixture), after)" in source
+
+
+def test_the_baseline_is_the_pre_run_read_wherever_the_seed_cleared_nothing():
+    """On the `given` branch #279's reading stands exactly as it was: a marker in
+    a row named by `--mailing-id` is not evidence that *this* save put it there."""
+    typed = markup.marker_for(RUN)
+    side = FakeSide(mailings={9: {"state": "draft", "subject": "Real campaign",
+                                  "body_arch": BORROWED,
+                                  "body_html": "<div><p>%s</p></div>" % typed}})
+    fixture = seed_editable_mailing(side, mailing_id=9)
+    baseline = markup.body_html_baseline(fixture)
+    assert baseline is fixture["before"]
+    assert not markup.body_html_inlined(RUN, baseline, {"body_html": typed})
+    # And a fixture that never reached its `before` read has nothing to compare
+    # against rather than a KeyError, the way the give-up paths leave it.
+    assert markup.body_html_baseline({"before": {}}) == {}
+
+
+def test_a_prefix_the_other_surface_inlined_is_not_judged_as_this_save_s():
+    """The judged half, and the whole of #286. `stored_verdict` is unchanged and
+    still judges every field it is handed -- what changes is that the field holds
+    this save's output. Before the clear, the leftover scored `PREFIX-STORED`
+    against the surface that did not write it, and on the Public origin a stored
+    prefix is the leaked-`sub_filter` finding, so the mis-attribution landed on the
+    surface where that verdict means something else entirely."""
+    assert markup.stored_verdict(INLINED_LEFTOVER)[0] == markup.PREFIX_STORED
+    side = reclaimed_with_inlined_body()
+    fixture = seed_editable_mailing(side)
+    # A save that stores only `body_arch`, which is the case the stale value
+    # reached a verdict through.
+    markup.write_field(side, "mailing.mailing", 5, "body_arch",
+                       markup.MAILING_BODY_VALUE)
+    after = side.rpc("mailing.mailing", "read", [[5], ["body_arch", "body_html"]])[0]
+    record = markup.evidence_record(
+        check="mailing-editable", issue=238, run_id=RUN, database="odoo_parity",
+        target="local", surface=PUBLIC, screen="/x",
+        pictures=[{"verdict": markup.AT_ORIGIN_ROOT}],
+        stored={"mailing.mailing.body_arch": after.get("body_arch"),
+                "mailing.mailing.body_html": after.get("body_html")},
+        extra=fixture["extra"])
+    assert record["stored"]["mailing.mailing.body_html"] == {
+        "verdict": markup.CLEAN, "prefixes": 0}
+    assert record["verdict"] == markup.AT_ORIGIN_ROOT
 
 # --- #277: a reclaim deletes the attachments the reclaimed body links ----------
 #
