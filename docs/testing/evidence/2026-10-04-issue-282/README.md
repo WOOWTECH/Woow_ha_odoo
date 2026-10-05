@@ -282,6 +282,23 @@ This is also the clearest thing #289 bought: `readonly-plain` is declared
 `writes: False`, and the record says `state-bounding`, so the run reports a prefix it
 witnessed rather than one it is the author of.
 
+**Annotated 2026-10-04 (#296, after this run; nothing above is rewritten).** The
+disposition is **record it**: there is no admissible fix on the Ingress side, because
+the prefixed value is in the field the moment the Public peer saves it and ADR 0003
+keeps that surface unchanged — what the add-on decides is only whether the field stays
+prefixed too, and #234's strip turning "a prefixed live field, indefinitely" into "a
+clean field plus one ageing history entry" is a strict improvement. The two revisions
+on `project.task(5)` are left untouched as a **decision**, not an omission. The
+heading of this section still says "no save can heal", which is true of a *save* and
+superseded by the mechanism under it: the heal is the writer. What replaces a sentence
+here is a test — `odoo18ce/tests/test_html_field_history_prefix.py` runs the pinned
+package's own `generate_patch` and `apply_patch`, captured verbatim under
+`odoo18ce/tests/fixtures/server/`, over **this record's own document**
+(`project_task_5_description.html` is the `stored_values` above, byte-for-byte, and a
+test holds it to this file): the store patch carries no prefix, the heal patch carries
+both pictures, and `apply_patch` reconstructs the prefixed document from the clean
+value the field holds today, which is what the dialog did here.
+
 ## Item 2 — the hand checks' ambient figure exists
 
 `e2e_ingress_hand_checks.py` had never written an `.ambient.json`; it has now.

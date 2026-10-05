@@ -158,6 +158,35 @@
   Evidence:
   `docs/testing/evidence/2026-10-02-issue-265/`; #243's directory is **annotated**,
   not rewritten. No image change and no version bump.
+- **`G-10` is recorded rather than fixed, and the direction it rests on is pinned at
+  the Static tier** (#296; no Release, no Deploy, no host write). There is no
+  admissible Ingress-side fix: the prefixed value is in `project.task.description`
+  the moment the Public-origin peer saves it, and ADR 0003 keeps that surface
+  unchanged, so what the add-on decides is only whether the field stays prefixed too
+  -- and #234's strip, which turns "a prefixed live field, indefinitely" into "a
+  clean field plus one history entry that ages out", is a strict improvement.
+  `G-08` is therefore not re-graded; #234 is told by comment that its standing
+  sentence is **partial by construction** and its disposition is left alone. The two
+  prefixed revisions on the host stay untouched as a decision: editing the store a
+  reading comes from is the move ADR 0014 refuses a stored-prefix valve under, with
+  fewer witnesses, and the only ways in are `super(HtmlFieldHistory, rec).write(...)`
+  or SQL, neither auditable from the record.
+- `odoo18ce/tests/test_html_field_history_prefix.py` keeps the claim from drifting
+  silently. `diff_utils.py` imports only `re` and `difflib`, so the pinned package's
+  own `generate_patch` and `apply_patch` -- captured verbatim with
+  `html_field_history_mixin.py` under the new `odoo18ce/tests/fixtures/server/` -- are
+  **executed** over `project.task(5).description` exactly as #282's `markup.jsonl`
+  recorded it: the Public peer's store patch carries no prefix, the Ingress heal's
+  patch carries both pictures, and `apply_patch` reconstructs a prefixed document from
+  the clean value the field holds today, which is what the Version History dialog drew.
+  Two store-and-heal pairs replayed offline leave the prefix in the *second* revision
+  of each, the host's revision 13 and 16 shape, and the residue is gone once
+  `_html_field_history_size_limit` further revisions exist. The source shape the
+  direction rests on is pinned with `ast` rather than text, so prose cannot satisfy
+  it: the pre-write capture precedes `super().write(vals)`, `generate_patch` is called
+  new-then-old, `_patch_generator` appends only `old_content_lines`, the
+  reconstruction starts from the current field value, and both `create` and `write`
+  drop `html_field_history` out of the incoming vals.
 
 ### Fixed
 - **`media-document-mailing` could not run on a database with no draft
