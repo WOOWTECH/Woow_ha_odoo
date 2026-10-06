@@ -1,0 +1,259 @@
+[
+ {
+  "appVersion": "Home Assistant Companion 2026.6.5-full",
+  "combo": "android-app-http",
+  "device": "Xiaomi (HyperOS 2.0.205.0.VBNTWXM)",
+  "haUrl": "<HA_BASE_HTTP>",
+  "items": {
+   "blank": {
+    "note": "跳轉至連結(\"<HA_BASE_HTTP><INGRESS_PREFIX>/survey/test/<token>\")，該連結顯示\"401: Unauthorized\"",
+    "status": "fail"
+   },
+   "copy": {
+    "status": "pass"
+   },
+   "export": {
+    "status": "pass"
+   },
+   "login": {
+    "status": "pass"
+   },
+   "pdf": {
+    "status": "pass"
+   },
+   "record": {
+    "status": "pass"
+   },
+   "scan": {
+    "status": "pass"
+   }
+  },
+  "label": "Android · Companion App · http",
+  "osVersion": "Android 15 (AP3A.240905.015.A2)"
+ },
+ {
+  "appVersion": "Home Assistant Companion 2026.6.5-full",
+  "combo": "android-app-https",
+  "device": "Xiaomi (HyperOS 2.0.205.0.VBNTWXM)",
+  "haUrl": "<HA_BASE_HTTPS>",
+  "items": {
+   "blank": {
+    "note": "跳轉至連結(\"<HA_BASE_HTTPS><INGRESS_PREFIX>\")，該連結顯示\"401: Unauthorized\"",
+    "status": "fail"
+   },
+   "copy": {
+    "status": "pass"
+   },
+   "export": {
+    "status": "pass"
+   },
+   "login": {
+    "status": "pass"
+   },
+   "pdf": {
+    "status": "pass"
+   },
+   "record": {
+    "status": "pass"
+   },
+   "scan": {
+    "status": "pass"
+   }
+  },
+  "label": "Android · Companion App · https",
+  "osVersion": "Android 15 (AP3A.240905.015.A2)"
+ },
+ {
+  "appVersion": "Chrome (version not recorded)",
+  "combo": "android-chrome-http",
+  "device": "Xiaomi (HyperOS 2.0.205.0.VBNTWXM)",
+  "haUrl": "<HA_BASE_HTTP>",
+  "items": {
+   "blank": {
+    "status": "pass"
+   },
+   "copy": {
+    "status": "pass"
+   },
+   "export": {
+    "status": "pass"
+   },
+   "login": {
+    "status": "pass"
+   },
+   "pdf": {
+    "status": "pass"
+   },
+   "record": {
+    "status": "pass"
+   },
+   "scan": {
+    "status": "pass"
+   }
+  },
+  "label": "Android · Chrome · http",
+  "osVersion": "Android 15 (AP3A.240905.015.A2)"
+ },
+ {
+  "appVersion": "Chrome (version not recorded)",
+  "combo": "android-chrome-https",
+  "device": "Xiaomi (HyperOS 2.0.205.0.VBNTWXM)",
+  "haUrl": "<HA_BASE_HTTPS>",
+  "items": {
+   "blank": {
+    "status": "pass"
+   },
+   "copy": {
+    "status": "pass"
+   },
+   "export": {
+    "status": "pass"
+   },
+   "login": {
+    "status": "pass"
+   },
+   "pdf": {
+    "status": "pass"
+   },
+   "record": {
+    "status": "pass"
+   },
+   "scan": {
+    "status": "pass"
+   }
+  },
+  "label": "Android · Chrome · https",
+  "osVersion": "Android 15 (AP3A.240905.015.A2)"
+ },
+ {
+  "appVersion": "Home Assistant Companion 2025.5",
+  "combo": "ios-app-http",
+  "device": "iPhone 12",
+  "haUrl": "<HA_BASE_HTTP>",
+  "items": {
+   "blank": {
+    "note": "A popup window has been blocked. You may need to change your browser settings to allow popup windows for this page.",
+    "shots": [
+     "ios-app-http-blank.jpg"
+    ],
+    "status": "fail"
+   },
+   "copy": {
+    "status": "pass"
+   },
+   "export": {
+    "status": "pass"
+   },
+   "login": {
+    "status": "pass"
+   },
+   "pdf": {
+    "status": "pass"
+   },
+   "record": {
+    "status": "pass"
+   },
+   "scan": {
+    "status": "pass"
+   }
+  },
+  "label": "iOS · Companion App · http",
+  "osVersion": "iOS 18.7.8"
+ },
+ {
+  "appVersion": "Home Assistant Companion 2025.5",
+  "combo": "ios-app-https",
+  "device": "iPhone 12",
+  "haUrl": "<HA_BASE_HTTPS>",
+  "items": {
+   "blank": {
+    "note": "A popup window has been blocked. You may need to change your browser settings to allow popup windows for this page.",
+    "status": "fail"
+   },
+   "copy": {
+    "status": "pass"
+   },
+   "export": {
+    "status": "pass"
+   },
+   "login": {
+    "status": "pass"
+   },
+   "pdf": {
+    "status": "pass"
+   },
+   "record": {
+    "status": "pass"
+   },
+   "scan": {
+    "status": "pass"
+   }
+  },
+  "label": "iOS · Companion App · https",
+  "osVersion": "iOS 18.7.8"
+ },
+ {
+  "appVersion": "Safari (ships with iOS 18.7.8)",
+  "combo": "ios-safari-http",
+  "device": "iPhone 12",
+  "haUrl": "<HA_BASE_HTTP>",
+  "items": {
+   "blank": {
+    "note": "A popup window has been blocked. You may need to change your browser settings to allow popup windows for this page.",
+    "status": "fail"
+   },
+   "copy": {
+    "status": "pass"
+   },
+   "export": {
+    "status": "pass"
+   },
+   "login": {
+    "status": "pass"
+   },
+   "pdf": {
+    "status": "pass"
+   },
+   "record": {
+    "status": "pass"
+   },
+   "scan": {
+    "status": "pass"
+   }
+  },
+  "label": "iOS · Safari · http",
+  "osVersion": "iOS 18.7.8"
+ },
+ {
+  "appVersion": "Safari (ships with iOS 18.7.8)",
+  "combo": "ios-safari-https",
+  "device": "iPhone 12",
+  "haUrl": "<HA_BASE_HTTPS>",
+  "items": {
+   "blank": {
+    "note": "A popup window has been blocked. You may need to change your browser settings to allow popup windows for this page.",
+    "status": "fail"
+   },
+   "copy": {
+    "status": "pass"
+   },
+   "export": {
+    "status": "pass"
+   },
+   "login": {
+    "status": "pass"
+   },
+   "pdf": {
+    "status": "pass"
+   },
+   "record": {
+    "status": "pass"
+   },
+   "scan": {
+    "status": "pass"
+   }
+  },
+  "label": "iOS · Safari · https",
+  "osVersion": "iOS 18.7.8"
+ }
+]

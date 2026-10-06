@@ -33,7 +33,7 @@
 | 9. 修掉落差 | 🟡 依 7、8 | 已知落差 G-01 到 G-05 已處理（G-04 屬結構性限制）；#143–#146 找到的落差各開一個 issue |
 | 10. 裝新模組前檢查 | ✅ 文件完成 | 路徑類由 add-on 自動處理（ADR 0005）；其餘寫成 `DOCS.md`「Generated rewrites」末尾的 *After installing an application* 清單（#140）。#144 每裝一個模組就照它驗一次 |
 | 11. POS 設計決定 | ✅ 已決定 | ADR 0011：POS 兩個入口都能用；離線銷售是側欄的 Structural gap，由公網入口承接 |
-| 12. 手機測試 | ⬜ 待測 | 手機畫面寬度的模擬併入 #143；HA 手機 App 與手機瀏覽器的實機測試是 #147（需要人） |
+| 12. 手機測試 | ✅ 完成、已驗 | 手機畫面寬度的模擬併入 #143。2026-10-06 在 0.4.11 上以實機測過 Android（Chrome、HA App）與 iPhone（Safari、HA App）的 http 和 https（#147，`docs/testing/evidence/2026-10-06-issue-147/`）：複製、下載、相機掃碼都正常；新分頁在 Android App 是 Structural gap（401），在 iOS 兩個入口都被擋，與 Public origin 一致 |
 
 ### 還卡在哪裡
 
