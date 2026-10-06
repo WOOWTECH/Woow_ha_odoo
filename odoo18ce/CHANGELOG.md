@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.4.11 — 2026-10-06
+
+Only #271 changes the image: the gateway no longer prefixes the media dialog's
+document domain, so the dialog stops listing generated asset bundles as
+documents. Everything else below is parity drivers, Static-tier tests,
+evidence and ADR text, none of it in the add-on's runtime -- hence the ~0.1 MiB
+download (#303).
 
 ### Added
 - The Ingress markup family's owed Live-tier checks are run on Release 0.4.10
