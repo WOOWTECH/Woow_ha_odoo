@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `.github/workflows/woow-addon-sync.yml`: the App Store's publisher workflow.
+  Since Woow_HA_App_Store `26bb83d` (2026-10-06) the store no longer takes a
+  Release from the `repository_dispatch` alone; it reads a validated notification
+  each source repository writes to its own `woow-addon-sync` branch, and without
+  one 0.4.11 stayed at `waiting-for-source-notification`. The file is the store's
+  template as the Hermes add-on carries it, tooling pinned to `26bb83d`, with
+  `workflow_run` on `Release`. It never writes `main` and changes nothing in the
+  image (#303).
+
 ## 0.4.11 — 2026-10-06
 
 Only #271 changes the image: the gateway no longer prefixes the media dialog's
