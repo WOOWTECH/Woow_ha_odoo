@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- Odoo nightly package 18.0.20260930 -> 18.0.20261004.
+
 ### Added
 - The Ingress markup family's owed Live-tier checks are run on Release 0.4.10
   (#243), and four of the five rows have a driver they did not have:
