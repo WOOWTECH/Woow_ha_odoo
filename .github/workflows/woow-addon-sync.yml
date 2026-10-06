@@ -1,0 +1,60 @@
+---
+name: WOOW addon source notification
+
+# The App Store's publisher workflow (#303). Since Woow_HA_App_Store 26bb83d
+# the store takes a Release only from a validated notification each source
+# writes to its own `woow-addon-sync` branch. With the registry's
+# `ref_policy: release` the notification names the latest Release's tag, and
+# only once ci.yml and release.yml have passed on that commit. It never
+# writes main. The tooling stays pinned to a reviewed store commit; bump the
+# pin only together with the store.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+  schedule:
+    - cron: 23 */6 * * *
+  workflow_run:
+    workflows:
+      - Release
+    types:
+      - completed
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: woow-addon-source-notification
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event != 'pull_request' &&
+      github.event.workflow_run.event != 'pull_request_target' &&
+      github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: WOOWTECH/Woow_HA_App_Store
+          ref: 26bb83db3b28db67c33b13350f3be6cddc880527
+          path: tooling
+          sparse-checkout: .addon-sync
+          persist-credentials: false
+      - name: Install pinned validation dependencies
+        run: python3 -m pip install -r tooling/.addon-sync/requirements.txt
+      - name: Validate synchronization guards
+        run: python3 tooling/.addon-sync/test_addon_sync.py -v
+      - name: Publish immutable source notification
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          python3 tooling/.addon-sync/addon_sync.py publish
+          --registry tooling/.addon-sync/registry.json --apply
