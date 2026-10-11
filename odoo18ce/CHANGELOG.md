@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- Debian base image bookworm-2026.08.0 -> bookworm-2026.10.0.
+
 ### Added
 - `.github/workflows/woow-addon-sync.yml`: the App Store's publisher workflow.
   Since Woow_HA_App_Store `26bb83d` (2026-10-06) the store no longer takes a
