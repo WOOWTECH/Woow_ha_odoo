@@ -273,23 +273,6 @@ jobs:
             --notes-file release-notes.md
           echo "::notice::released v${VERSION}"
 
-      - name: Ask the App Store to sync now
-        env:
-          GH_TOKEN: ${{ secrets.APP_STORE_DISPATCH_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -z "${GH_TOKEN}" ]; then
-            echo "::warning::APP_STORE_DISPATCH_TOKEN is not set;" \
-              "the store will pick this Release up at its nightly sweep"
-            exit 0
-          fi
-          gh api --method POST repos/WOOWTECH/Woow_HA_App_Store/dispatches \
-            -f event_type=upstream-release \
-            -f "client_payload[slug]=odoo18ce" \
-            -f "client_payload[version]=${VERSION}" \
-            -f "client_payload[repository]=${GITHUB_REPOSITORY}"
-          echo "::notice::store sync dispatched for ${VERSION}"
-
       - name: Run the perimeter check
         # A Release created with GITHUB_TOKEN does not fire the `release`
         # event for other workflows, so the check is dispatched explicitly.
