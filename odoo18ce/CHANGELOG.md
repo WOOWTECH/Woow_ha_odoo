@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- Odoo nightly package 18.0.20260930 -> 18.0.20261011.
+
 ### Added
 - `.github/workflows/woow-addon-sync.yml`: the App Store's publisher workflow.
   Since Woow_HA_App_Store `26bb83d` (2026-10-06) the store no longer takes a
