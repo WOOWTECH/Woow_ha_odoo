@@ -185,9 +185,15 @@ jobs:
           # -- no ghcr login, no extra permission. The gha cache stays as
           # the fallback and as the only thing CI writes; a PR must not
           # publish layers to the Release cache (issue #155).
+          # A PR that bumps the version reads only the Release cache, as
+          # the Release build does: when both caches hold a step, BuildKit
+          # may take the gha copy, and an older CI build's apt layer then
+          # gets scanned by the Upgrade comparison instead of the packages
+          # the Release would ship (pipeline #89: PR #320 scanned libexpat1
+          # deb12u4 from gha while 0.4.12 ships the rebuilt layer).
           cache-from: |
             type=registry,ref=${{ env.IMAGE_BASE }}-amd64:buildcache
-            type=gha,scope=amd64
+            ${{ needs.static.outputs.version_changed != 'true' && 'type=gha,scope=amd64' || '' }}
           cache-to: type=gha,scope=amd64,mode=max
 
       # The Static tier cannot see inside the image, which is why the
@@ -482,11 +488,15 @@ jobs:
   # not declared in odoo18ce/upgrade-notes.yaml blocks it, and so does a new
   # fixable Critical/High vulnerability in the amd64 image (the SBOM from
   # build (amd64) against the Release's GHCR image) unless that file accepts
-  # it. A PR that changes no version passes in seconds; on push the job
-  # passes at once. The check is reported as "Upgrade comparison / compare".
+  # it. No needs: on the build, so a PR that changes no version passes in
+  # seconds; after a version bump the job waits for this run's SBOM artifact
+  # (actions: read) and fails if build (amd64) never uploads it. On push the
+  # job passes at once. The check is reported as "Upgrade comparison / compare".
   upgrade-comparison:
     name: Upgrade comparison
-    needs: build-amd64
+    permissions:
+      contents: read
+      actions: read
     uses: WOOWTECH/Woow_HA_App_Store/.github/workflows/woow-addon-upgrade-check.yml@feat/89-upgrade-comparison
     with:
       tooling_ref: feat/89-upgrade-comparison
