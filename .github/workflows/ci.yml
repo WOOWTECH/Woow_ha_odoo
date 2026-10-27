@@ -474,6 +474,6 @@ jobs:
   # The check is reported as "Upgrade comparison / compare".
   upgrade-comparison:
     name: Upgrade comparison
-    uses: WOOWTECH/Woow_HA_App_Store/.github/workflows/woow-addon-upgrade-check.yml@feat/89-upgrade-comparison
+    uses: WOOWTECH/Woow_HA_App_Store/.github/workflows/woow-addon-upgrade-check.yml@feat/89-117
     with:
-      tooling_ref: feat/89-upgrade-comparison
+      tooling_ref: feat/89-117
