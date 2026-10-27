@@ -120,6 +120,12 @@ jobs:
           cache: pip
           cache-dependency-path: ${{ env.ADDON_DIR }}/tests/requirements-test.txt
 
+      # Python 3.12+ warns on an invalid escape sequence and a future version
+      # makes it a SyntaxError (pipeline issue 116). -f recompiles even when
+      # a .pyc is already there.
+      - name: No invalid escape sequences
+        run: python3 -W error -m compileall -f -q .
+
       - name: Install nginx and test requirements
         run: |
           set -euo pipefail
