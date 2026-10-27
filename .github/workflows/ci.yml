@@ -436,7 +436,7 @@ jobs:
       # uploaded as artifact upgrade-comparison-sbom-odoo18ce.
       - name: SBOM for the upgrade comparison
         if: github.event_name == 'pull_request'
-        uses: WOOWTECH/Woow_HA_App_Store/.github/actions/addon-sbom@feat/89-118
+        uses: WOOWTECH/Woow_HA_App_Store/.github/actions/addon-sbom@test/89-118-wrong-image
         with:
           component: odoo18ce
           image: woow-ha-odoo-amd64:ci
@@ -487,7 +487,7 @@ jobs:
   upgrade-comparison:
     name: Upgrade comparison
     needs: build-amd64
-    uses: WOOWTECH/Woow_HA_App_Store/.github/workflows/woow-addon-upgrade-check.yml@feat/89-118
+    uses: WOOWTECH/Woow_HA_App_Store/.github/workflows/woow-addon-upgrade-check.yml@test/89-118-wrong-image
     with:
-      tooling_ref: feat/89-118
+      tooling_ref: test/89-118-wrong-image
       sbom_artifact: upgrade-comparison-sbom-*
