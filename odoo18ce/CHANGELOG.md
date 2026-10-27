@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Changed
+- Odoo nightly package 18.0.20260930 -> 18.0.20261018.
 - Debian base image bookworm-2026.08.0 -> bookworm-2026.10.0.
 
 ### Added
