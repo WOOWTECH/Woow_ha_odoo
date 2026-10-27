@@ -440,13 +440,6 @@ jobs:
       # The SBOM of this image is what the Upgrade comparison scans as the
       # new version (pipeline #89, category 4): pinned Syft from the Store,
       # uploaded as artifact upgrade-comparison-sbom-odoo18ce.
-      - name: SBOM for the upgrade comparison
-        if: github.event_name == 'pull_request'
-        uses: WOOWTECH/Woow_HA_App_Store/.github/actions/addon-sbom@feat/89-118b
-        with:
-          component: odoo18ce
-          image: woow-ha-odoo-amd64:ci
-
   build-aarch64:
     name: build (aarch64)
     needs: static
