@@ -233,6 +233,10 @@ ARG BUILD_NAME
 ARG BUILD_REF
 ARG BUILD_REPOSITORY
 ARG BUILD_VERSION
+# THROWAWAY (#118 test): metadata of an old urllib3 so the scan sees a new fixable vulnerability.
+RUN mkdir -p /opt/upgrade-check-probe/urllib3-1.26.0.dist-info \
+    && printf 'Metadata-Version: 2.1\nName: urllib3\nVersion: 1.26.0\n' > /opt/upgrade-check-probe/urllib3-1.26.0.dist-info/METADATA
+
 LABEL \
     io.hass.name="${BUILD_NAME}" \
     io.hass.description="${BUILD_DESCRIPTION}" \

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.13 — 2026-10-27
+
+THROWAWAY TEST PR for pipeline #89/#118 (upgrade comparison, vulnerabilities). Never merged.
+
+### Changed
+- Test only.
+
 ## 0.4.12 — 2026-10-27
 
 Only the base image changes the add-on: it sits below every layer, so this
