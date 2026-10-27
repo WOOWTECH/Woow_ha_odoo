@@ -1,0 +1,6 @@
+---
+"0.4.13":
+  breaking:
+    - change: option-removed
+      key: workers
+      migration: Test declaration only; this PR is never merged.
