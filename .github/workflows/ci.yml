@@ -466,3 +466,14 @@ jobs:
             type=registry,ref=${{ env.IMAGE_BASE }}-aarch64:buildcache
             type=gha,scope=aarch64
           cache-to: type=gha,scope=aarch64,mode=max
+
+  # Upgrade comparison (pipeline #89): a PR that bumps the add-on version is
+  # compared with the latest formal Release, and a breaking config.yaml
+  # change not declared in odoo18ce/upgrade-notes.yaml blocks it. A PR that
+  # changes no version passes in seconds; on push the job passes at once.
+  # The check is reported as "Upgrade comparison / compare".
+  upgrade-comparison:
+    name: Upgrade comparison
+    uses: WOOWTECH/Woow_HA_App_Store/.github/workflows/woow-addon-upgrade-check.yml@feat/89-upgrade-comparison
+    with:
+      tooling_ref: feat/89-upgrade-comparison
