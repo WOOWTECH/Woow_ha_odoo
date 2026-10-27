@@ -221,6 +221,10 @@ EXPOSE 8069 5691 8072
 HEALTHCHECK --interval=60s --timeout=10s --start-period=600s --retries=3 \
     CMD ["curl", "-fsS", "--max-time", "8", "-o", "/dev/null", "http://127.0.0.1:8069/web/login"]
 
+# THROWAWAY (#118 test): metadata of an old urllib3 so the scan sees a new fixable vulnerability.
+RUN mkdir -p /opt/upgrade-check-probe/urllib3-1.26.0.dist-info \
+    && printf 'Metadata-Version: 2.1\nName: urllib3\nVersion: 1.26.0\n' > /opt/upgrade-check-probe/urllib3-1.26.0.dist-info/METADATA
+
 # ──────────────────────────────────────────────
 # 8. Image labels. The publish workflow fills these in; a local or CI
 #    build leaves all but io.hass.arch empty, which is harmless. BUILD_ARCH
@@ -233,10 +237,6 @@ ARG BUILD_NAME
 ARG BUILD_REF
 ARG BUILD_REPOSITORY
 ARG BUILD_VERSION
-# THROWAWAY (#118 test): metadata of an old urllib3 so the scan sees a new fixable vulnerability.
-RUN mkdir -p /opt/upgrade-check-probe/urllib3-1.26.0.dist-info \
-    && printf 'Metadata-Version: 2.1\nName: urllib3\nVersion: 1.26.0\n' > /opt/upgrade-check-probe/urllib3-1.26.0.dist-info/METADATA
-
 LABEL \
     io.hass.name="${BUILD_NAME}" \
     io.hass.description="${BUILD_DESCRIPTION}" \
