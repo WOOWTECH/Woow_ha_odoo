@@ -8,7 +8,7 @@ name: Perimeter check
 # with ODOO_DB_POLICY=block.
 #
 # Runs by hand only. It checks the origins in ODOO_PUBLIC_URLS; with that
-# variable empty a run fails at its first step without checking anything.
+# variable empty a run fails at its configuration check, before any origin.
 # Otherwise a failure means either the perimeter opened or the site is
 # unreachable from the internet.
 #

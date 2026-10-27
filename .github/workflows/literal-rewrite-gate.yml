@@ -18,7 +18,7 @@ name: Literal rewrite gate
 # same analysis run on the host and applies what it finds as Generated
 # rewrites. The test host that served as the control group was retired
 # (#314; ADR 0003, postscript 2026-10-27); with ODOO_PUBLIC_URLS empty, a
-# run fails at its first step without checking anything. This workflow
+# run fails at its configuration check, before any origin. This workflow
 # stays as the outside-in version of that analysis, on `workflow_dispatch`
 # for whenever a Public origin exists again. It runs the CLI against the
 # rules the image ships; to see a host that applied Generated rewrites
