@@ -213,3 +213,29 @@ def test_a_release_listing_that_fails_fails_the_size_step() -> None:
     assert len(listing) == 1, statements
     assert "||" not in listing[0], (
         "a listing that failed must fail the step, not compare against nothing")
+
+
+# --- declarations from upgrade-notes.yaml (pipeline #89, ticket 119) ------
+
+DECLARATIONS = "Declarations from upgrade-notes.yaml"
+
+
+def test_the_declarations_join_the_notes_before_the_release_is_created() -> None:
+    assert (step_index("Release notes from the CHANGELOG")
+            < step_index(DECLARATIONS)
+            < step_index("Tag and GitHub Release"))
+
+
+def test_the_declarations_come_from_the_store_comparison_tool() -> None:
+    """Same text as the shared release flow writes, so every Release reads alike."""
+    tooling = [step["with"] for step in release_steps()
+               if step.get("with", {}).get("repository") == "WOOWTECH/Woow_HA_App_Store"]
+    assert len(tooling) == 1 and tooling[0]["persist-credentials"] is False
+    step = release_steps()[step_index(DECLARATIONS)]
+    run = step["run"].replace("\\n", " ")
+    assert "set -euo pipefail" in run
+    assert "upgrade_check.py release-notes" in run
+    assert '--notes "${ADDON_DIR}/upgrade-notes.yaml"' in run
+    assert "release-notes.md" in run
+    assert "continue-on-error" not in step, (
+        "a malformed upgrade-notes.yaml fails the Release instead of hiding a breaking change")
