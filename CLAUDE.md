@@ -16,7 +16,7 @@ The five canonical triage roles, each label string equal to its name. See `docs/
 
 ### Live tier and the test host
 
-An Iteration may deploy to the test host and run Live-tier checks that write, inside the boundary of [ADR 0012](docs/adr/0012-sweeps-verify-on-the-test-host.md). How to run one — credentials, the approved command spellings, evidence, and what to do when the host is unreachable — is in `docs/agents/live-tier.md`.
+No test host exists right now (2026-10-27, #314), so every Live-tier item falls back to the Static tier as `docs/agents/live-tier.md` describes. Only once a new test host is provisioned may an Iteration again deploy to it and run Live-tier checks that write, inside the boundary of [ADR 0012](docs/adr/0012-sweeps-verify-on-the-test-host.md); how to run one is in `docs/agents/live-tier.md`.
 
 ### Domain docs
 

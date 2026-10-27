@@ -203,3 +203,12 @@ went over the wire. And `probe`, which keeps no records, prints its figure
 rather than writing one: it opens only `/odoo/...` backend routes so its delta
 is expected to be zero, and a zero that is read is a reading where a zero that
 is assumed is not — the same distinction this postscript draws about `crawl`.
+
+## Postscript (2026-10-27, #314)
+
+The test host is gone: it was reinstalled for another purpose and will not
+come back ([ADR 0003, postscript 2026-10-27](0003-public-origin-stays-open-test-host-is-the-control-group.md#postscript-2026-10-27-314)).
+The boundary above therefore has no host to apply to, and an Iteration has
+nothing it may deploy to or write on; its Live-tier items fall back to the
+Static tier as `docs/agents/live-tier.md` says. The decision itself stands and
+applies again, unchanged, once a new test host is provisioned.

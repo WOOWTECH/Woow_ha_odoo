@@ -7,6 +7,9 @@
 > 本文件是**檢測計劃**，不是測試報告。第 11 節的 `G-xx` 是已對照現行 main 程式
 > 確認的 add-on 層／結構層落差；其餘章節是待執行的檢測項目。
 >
+> **2026-10-27 現況（#314）：測試機 .6 已改作他用、不會回來**（ADR 0003 postscript 2026-10-27）。
+> 以下提到 .6 的段落記的是當時的受測目標；新測試機佈建前，Live 項目一律退回 Static tier（`docs/agents/live-tier.md`）。
+>
 > 受測目標為 **測試機 .6**（Public origin `https://woowtech-odoo-test-6.woowtech.io`，
 > DB `odoo_test`）。主機層的即時狀態不記錄於本文件，一律於執行前重跑第 2.3 節 P-Check。
 >
@@ -81,7 +84,7 @@ Public 是**基準組**，Ingress 是**待測組**。所有比對方向都是「
 
 ### 2.2 受測範圍
 
-- **主機**：測試機 .6（add-on slug `1b7b4ce7_odoo18ce`，Public origin
+- **主機**（至 2026-10 為止，見文首現況）：測試機 .6（add-on slug `1b7b4ce7_odoo18ce`，Public origin
   `https://woowtech-odoo-test-6.woowtech.io`）。這是一台實體機，以 SSH
   進入；**位址不記錄在本 repo**，向維運者取得。`.6` 是名字不是位址，
   它比當初取名時的網段活得久（主機於 2026-09-22 換過網段）
