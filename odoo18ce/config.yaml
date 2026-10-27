@@ -1,7 +1,7 @@
 ---
 name: "Woow Odoo 18"
 description: "Odoo 18 Community Edition + PostgreSQL 16 — bundled all-in-one add-on for SME"
-version: "0.4.12"
+version: "0.4.13"
 slug: "odoo18ce"
 url: "https://github.com/WOOWTECH/Woow_ha_odoo"
 # Prebuilt by .github/workflows/release.yml on every Release; Supervisor
@@ -62,7 +62,6 @@ schema:
   list_db: "bool?"
 
   # Performance
-  workers: "int(0,16)?"
   max_cron_threads: "int(0,4)?"
   limit_memory_hard: "int?"
   limit_memory_soft: "int?"
@@ -105,7 +104,6 @@ options:
   # /web/database/manager, which this gates. Turn it off once your
   # databases exist and the add-on is reachable from outside the LAN.
   list_db: true
-  workers: 2
   max_cron_threads: 1
   limit_memory_hard: 2684354560
   limit_memory_soft: 2147483648
