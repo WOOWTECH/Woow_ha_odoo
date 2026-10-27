@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.13 — 2026-10-27
+
+Throwaway live check of the upgrade comparison; never released.
+
 ## 0.4.12 — 2026-10-27
 
 Only the base image changes the add-on: it sits below every layer, so this
