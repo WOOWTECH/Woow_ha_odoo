@@ -4,12 +4,12 @@
 The Perimeter check and the Literal rewrite gate lost their nightly schedule
 when the add-on took both jobs inside the container: the start-time
 self-check for the perimeter, the Rewrite scan for the Literal rewrite. Both
-workflows stay runnable by hand for whenever a public origin exists again.
+workflows stay runnable by hand for whenever a Public origin exists again.
 
 The test host that served as the control group was reinstalled for another
-purpose (#314), so nothing dispatches the perimeter check any more: release.yml
-used to run it after every Release, and with no public origin left each run
-failed and sent an email.
+purpose (#314; ADR 0003, postscript 2026-10-27), so nothing dispatches the
+perimeter check any more: release.yml used to run it after every Release, and
+with no Public origin left each run failed and sent an email.
 """
 from pathlib import Path
 

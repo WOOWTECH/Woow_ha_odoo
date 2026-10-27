@@ -7,8 +7,9 @@ name: Perimeter check
 # credentials: it is the unauthenticated part of tests/e2e_adversarial.py
 # with ODOO_DB_POLICY=block.
 #
-# Runs by hand only. A failure means either the perimeter opened or the
-# site is unreachable from the internet.
+# Runs by hand only. Once a Public origin is configured again, a failure
+# means either the perimeter opened or the site is unreachable from the
+# internet.
 #
 # No schedule any more (ADR 0005): the add-on's own start-time self-check
 # asks its database-manager route from the add-on network address with the
@@ -16,9 +17,10 @@ name: Perimeter check
 # outside-in pair. release.yml no longer dispatches it either (#314): the
 # test host that served as the control group was reinstalled for another
 # purpose, and ODOO_PUBLIC_URLS was cleared with it, so a run now stops at
-# its first step with "ODOO_PUBLIC_URLS is empty" rather than reporting
-# anything about a perimeter. `workflow_dispatch` stays for whenever a
-# public origin exists again.
+# its first step with "repository variable ODOO_PUBLIC_URLS is empty;
+# nothing to check" rather than reporting anything about a perimeter (ADR
+# 0003, postscript 2026-10-27). `workflow_dispatch` stays for whenever a
+# Public origin exists again.
 
 on:
   workflow_dispatch:
