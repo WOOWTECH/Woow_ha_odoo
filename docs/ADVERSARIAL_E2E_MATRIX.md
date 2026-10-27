@@ -23,9 +23,9 @@ Every release must test both entrances: Cloudflare root and an HTTPS Supervisor-
 
 Release gate: zero blockers, zero important findings on the supported HTTPS HA and Cloudflare paths. Minor findings must be documented.
 
-The `U-A4` item of the gate (`docs/testing/INGRESS_VS_PUBLIC_PARITY.md`) is met without a host (ADR 0005, ADR 0008): the Static tier covers the rewrite rules and the rendered nginx template with the Generated rewrite include, and the add-on's own Rewrite scan turns every `FAIL` (an unlisted prefix in a whole-page navigation) into a Generated rewrite at run time. `WARN` (a path comparison) is never rewritten and `INFO` is only listed (ADR 0004).
+For the `U-A4` item of the Release gate (`docs/testing/INGRESS_VS_PUBLIC_PARITY.md`), the add-on runs the analysis itself instead of a gate against a host (ADR 0005): the Static tier covers the rewrite rules and the rendered nginx template with the Generated rewrite include, and the Rewrite scan turns every `FAIL` (an unlisted prefix in a whole-page navigation) that the shipped exception list does not cover into a Generated rewrite at run time, unless `literal_rewrite_auto` is off (ADR 0008 for how they are applied). `WARN` (a path comparison) is never rewritten and `INFO` is only listed (ADR 0004).
 
-The Literal rewrite gate, `odoo18ce/tests/e2e_literal_rewrite_gate.py`, stays as an optional outside-in acceptance check of the same analysis against a Public origin. `--include-file` counts a copy of the host's Generated rewrite file as registered rules, and `--from-dir` re-evaluates saved bundles. It needs a host, so it does not block a Release; `.github/workflows/literal-rewrite-gate.yml` runs it on dispatch only.
+The Literal rewrite gate, `odoo18ce/tests/e2e_literal_rewrite_gate.py`, stays as an optional outside-in acceptance check of the same analysis against a Public origin; `--include-file` counts a copy of the host's Generated rewrite file as registered rules. It needs a host, so it does not block a Release; `.github/workflows/literal-rewrite-gate.yml` runs it on dispatch only.
 
 ## Commands
 
