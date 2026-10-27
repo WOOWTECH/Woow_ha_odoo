@@ -442,7 +442,7 @@ jobs:
       # uploaded as artifact upgrade-comparison-sbom-odoo18ce.
       - name: SBOM for the upgrade comparison
         if: github.event_name == 'pull_request'
-        uses: WOOWTECH/Woow_HA_App_Store/.github/actions/addon-sbom@feat/89-upgrade-comparison
+        uses: WOOWTECH/Woow_HA_App_Store/.github/actions/addon-sbom@feat/89-118b
         with:
           component: odoo18ce
           image: woow-ha-odoo-amd64:ci
@@ -497,7 +497,7 @@ jobs:
     permissions:
       contents: read
       actions: read
-    uses: WOOWTECH/Woow_HA_App_Store/.github/workflows/woow-addon-upgrade-check.yml@feat/89-upgrade-comparison
+    uses: WOOWTECH/Woow_HA_App_Store/.github/workflows/woow-addon-upgrade-check.yml@feat/89-118b
     with:
-      tooling_ref: feat/89-upgrade-comparison
+      tooling_ref: feat/89-118b
       sbom_artifact: upgrade-comparison-sbom-*
