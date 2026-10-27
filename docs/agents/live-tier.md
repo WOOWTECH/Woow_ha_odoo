@@ -7,7 +7,7 @@ permission prompt.
 
 **No test host exists right now (2026-10-27, #314).** The test host
 described below was reinstalled for another purpose and will not come back
-([ADR 0003, postscript 2026-10-27](../adr/0003-public-origin-stays-open-test-host-is-the-control-group.md#postscript-2026-10-27)).
+([ADR 0003, postscript 2026-10-27](../adr/0003-public-origin-stays-open-test-host-is-the-control-group.md#postscript-2026-10-27-314)).
 Until a new one is provisioned, every Live-tier item, and in particular every
 one that writes data, falls back to the Static tier and leaves its Live box
 unticked with that reason, as under [When it cannot run](#when-it-cannot-run).
@@ -285,9 +285,9 @@ maintenance bootstrap writes `web.base.url`, `web.base.url.freeze` and
 
 ## When it cannot run
 
-- **There is no host.** True since 2026-10-27 (see the top of this file).
-  Fall back to the Static tier and leave the Issue's Live box unticked with
-  that reason; do not point the scripts at any other Odoo to make up for it.
+- **There is no host** (see the top of this file). Fall back to the Static
+  tier and leave the Issue's Live box unticked with that reason; do not point
+  the scripts at any other Odoo to make up for it.
 - **The host is unreachable.** The container's route to it is one firewall rule
   that does not survive a reboot. Say so in the record, fall back to the Static
   tier, and leave the Issue's Live box unticked with the reason — never try to

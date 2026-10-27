@@ -57,7 +57,7 @@ A **Release** is a version bump in `odoo18ce/config.yaml` merged to `main`
 (with a matching CHANGELOG section and no `## Unreleased` left). It
 publishes the images, tags `v<version>`, creates the GitHub Release, and
 asks the App Store mirror to sync; see `.github/workflows/release.yml`.
-`perimeter.yml`, which checks every public origin from outside, runs by hand
+`perimeter.yml`, which checks every Public origin from outside, runs by hand
 only and nothing dispatches it (ADR 0005, #314); the add-on's start-time
 self-check covers the perimeter on every host instead. Weekly,
 `odoo-bump.yml` proposes the newest Odoo nightly and the newest Debian base

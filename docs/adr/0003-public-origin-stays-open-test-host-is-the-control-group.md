@@ -79,7 +79,7 @@ Perimeter check's schedule is removed in favour of a start-time self-check,
 and the Literal rewrite gate becomes the in-container Rewrite scan. The
 Public origin decision above is unchanged.
 
-## Postscript (2026-10-27)
+## Postscript (2026-10-27, #314)
 
 The test host was reinstalled for another purpose and will not come back
 (reported by the owner on 2026-10-27; it went offline sometime between
@@ -88,7 +88,8 @@ run after Release 0.4.12 met Cloudflare error 1033). Its Public origin
 `https://woowtech-odoo-test-6.woowtech.io` was the only entry left in
 `ODOO_PUBLIC_URLS`, so that repository variable was cleared, and release.yml
 no longer dispatches the Perimeter check after a Release (#314).
-`perimeter.yml` stays runnable by hand and now stops at its first step with
-"ODOO_PUBLIC_URLS is empty". No test host exists until a new one is
-provisioned; the start-time self-check still covers the perimeter on every
-customer host. The Public origin decision above is unchanged.
+`perimeter.yml` and `literal-rewrite-gate.yml` stay runnable by hand; with
+the variable empty, each fails at its first step without checking anything.
+No test host exists until a new one is provisioned; the start-time
+self-check still covers the perimeter on every customer host. The Public
+origin decision above is unchanged.

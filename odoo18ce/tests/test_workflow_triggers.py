@@ -8,7 +8,7 @@ workflows stay runnable by hand for whenever a Public origin exists again.
 
 The test host that served as the control group was reinstalled for another
 purpose (#314; ADR 0003, postscript 2026-10-27), so nothing dispatches the
-perimeter check any more: release.yml used to run it after every Release, and
+Perimeter check any more: release.yml used to run it after every Release, and
 with no Public origin left each run failed and sent an email.
 """
 from pathlib import Path
@@ -50,6 +50,6 @@ def test_a_release_does_not_dispatch_the_perimeter_check() -> None:
     # dispatch by workflow name ("Perimeter check") or by file.
     release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
     assert "perimeter" not in release.lower(), (
-        "release.yml mentions the perimeter check again; the test host is gone (#314), "
+        "release.yml mentions the Perimeter check again; the test host is gone (#314), "
         "so a dispatch after every Release would end in a failing run"
     )
