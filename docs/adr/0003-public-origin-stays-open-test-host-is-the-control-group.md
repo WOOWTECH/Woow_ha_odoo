@@ -89,6 +89,6 @@ run after Release 0.4.12 met Cloudflare error 1033). Its Public origin
 `ODOO_PUBLIC_URLS`, so that repository variable was cleared, and release.yml
 no longer dispatches the Perimeter check after a Release (#314).
 `perimeter.yml` stays runnable by hand and now stops at its first step with
-"ODOO_PUBLIC_URLS is empty". No Live-tier host exists until a new one is
+"ODOO_PUBLIC_URLS is empty". No test host exists until a new one is
 provisioned; the start-time self-check still covers the perimeter on every
 customer host. The Public origin decision above is unchanged.
