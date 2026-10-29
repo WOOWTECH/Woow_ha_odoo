@@ -183,15 +183,82 @@ jobs:
           output: download-size.md
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
+  # Pipeline #89 / ticket 119: the breaking changes and accepted
+  # vulnerabilities declared in upgrade-notes.yaml since the last formal
+  # Release go first in the notes, in the same words the Store's shared
+  # release flow uses. Nothing is added when nothing is declared. A
+  # malformed file fails this job, so the release job never runs and no tag
+  # exists; a re-run after the fix works.
+  #
+  # Its own job because it runs code from Woow_HA_App_Store@main: here the
+  # token can only read, and the step that runs that code has no token at
+  # all. The release job, which can write, only reads the result.
+  declarations:
+    name: declarations from upgrade-notes.yaml
+    needs: prepare
+    if: needs.prepare.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      notes: ${{ steps.notes.outputs.notes }}
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check out Store tooling
+        uses: actions/checkout@v7
+        with:
+          repository: WOOWTECH/Woow_HA_App_Store
+          ref: main
+          path: tooling
+          sparse-checkout: .addon-sync
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Releases so far
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
+            | sed -n 's/^v//p' > released.txt
+          echo "Releases: $(wc -l < released.txt)"
+
+      - name: Declarations from upgrade-notes.yaml
+        id: notes
+        run: |
+          set -euo pipefail
+          python -m pip install -r tooling/.addon-sync/requirements.txt
+          python tooling/.addon-sync/test_upgrade_check.py
+          mapfile -t released < released.txt
+          python tooling/.addon-sync/upgrade_check.py release-notes \
+            --notes "${ADDON_DIR}/upgrade-notes.yaml" --version "${VERSION}" \
+            --released "${released[@]}" > declarations.md
+          echo "notes=$(base64 -w0 declarations.md)" >> "$GITHUB_OUTPUT"
+          if [ -s declarations.md ]; then
+            echo "--- declarations ---"; cat declarations.md
+          else
+            echo "No declarations in ${ADDON_DIR}/upgrade-notes.yaml for ${VERSION}."
+          fi
+
   release:
     name: tag, GitHub Release, store sync
-    needs: [prepare, build-amd64, build-aarch64]
-    # Runs when this is a Release and neither build failed (skipped is fine:
-    # it means the image already existed).
+    needs: [prepare, build-amd64, build-aarch64, declarations]
+    # Runs when this is a Release, neither build failed (skipped is fine:
+    # it means the image already existed) and the declarations were read.
     if: >-
       always()
       && needs.prepare.result == 'success'
       && needs.prepare.outputs.is_release == 'true'
+      && needs.declarations.result == 'success'
       && needs.build-amd64.result != 'failure' && needs.build-amd64.result != 'cancelled'
       && needs.build-aarch64.result != 'failure' && needs.build-aarch64.result != 'cancelled'
     runs-on: ubuntu-latest
@@ -258,6 +325,21 @@ jobs:
             { echo; echo "Download size: not computed"; } >> release-notes.md
           fi
           echo "--- release notes ---"; cat release-notes.md
+
+      # The declarations job wrote these; see there.
+      - name: Declarations from upgrade-notes.yaml
+        env:
+          DECLARATIONS: ${{ needs.declarations.outputs.notes }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${DECLARATIONS}" | base64 -d > declarations.md
+          if [ -s declarations.md ]; then
+            { cat declarations.md; echo; cat release-notes.md; } > release-notes.new
+            mv release-notes.new release-notes.md
+            echo "--- release notes with declarations ---"; cat release-notes.md
+          else
+            echo "No declarations in ${ADDON_DIR}/upgrade-notes.yaml for ${VERSION}."
+          fi
 
       - name: Tag and GitHub Release
         env:
