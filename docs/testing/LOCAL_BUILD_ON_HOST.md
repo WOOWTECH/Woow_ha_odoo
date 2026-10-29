@@ -18,7 +18,8 @@
 依 [ADR 0001](../adr/0001-distribution-follows-release-tags.md)，映像只在 Release
 時產生，Deploy 只裝 Release；branch 不會有預建映像。所以在真機上跑一個 branch 的
 **唯一**辦法，就是把它放進主機的 `/addons/`，讓 Supervisor 在本機建置。
-`.6` 測試機上的 `local_odoo18ce` 就是這樣來的。
+`.6` 測試機上的 `local_odoo18ce` 當初就是這樣來的（該機已於 2026-10 改作他用，
+#314；程序本身不變，新測試機佈建後照用）。
 
 ## 2. 把來源放到 `/addons/<dir>`
 

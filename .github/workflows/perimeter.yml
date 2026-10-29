@@ -7,17 +7,18 @@ name: Perimeter check
 # credentials: it is the unauthenticated part of tests/e2e_adversarial.py
 # with ODOO_DB_POLICY=block.
 #
-# Runs after each Release (dispatched by release.yml, because an event
-# created with GITHUB_TOKEN would not trigger this workflow on its own),
-# and by hand. A failure means either the perimeter opened or the site is
-# unreachable from the internet; both are worth an email.
+# Runs by hand only. It checks the origins in ODOO_PUBLIC_URLS; with that
+# variable empty a run fails at its configuration check, before any origin.
+# Otherwise a failure means either the perimeter opened or the site is
+# unreachable from the internet.
 #
 # No schedule any more (ADR 0005): the add-on's own start-time self-check
 # asks its database-manager route from the add-on network address with the
 # public Host, and the in-container Rewrite scan replaced the nightly
-# outside-in pair. The test host that served as the control group is being
-# stopped, so a nightly run would have nothing to check. `workflow_dispatch`
-# stays for whenever a control group exists again.
+# outside-in pair. release.yml stopped dispatching it when the test host,
+# the only Public origin, was retired (#314; ADR 0003, postscript
+# 2026-10-27). `workflow_dispatch` stays for whenever a Public origin
+# exists again.
 
 on:
   workflow_dispatch:

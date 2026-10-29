@@ -16,12 +16,14 @@ name: Literal rewrite gate
 #
 # No schedule any more (ADR 0005): the in-container Rewrite scan makes the
 # same analysis run on the host and applies what it finds as Generated
-# rewrites, and the test host that served as the control group is being
-# stopped. This workflow stays as the outside-in version of that analysis,
-# on `workflow_dispatch` for whenever a control group exists again. It runs
-# the CLI against the rules the image ships; to see a host that applied
-# Generated rewrites judged by the rules it actually serves, run the CLI by
-# hand with `--include-file <a copy of that host's include file>`.
+# rewrites. The test host that served as the control group was retired
+# (#314; ADR 0003, postscript 2026-10-27); with ODOO_PUBLIC_URLS empty, a
+# run fails at its configuration check, before any origin. This workflow
+# stays as the outside-in version of that analysis, on `workflow_dispatch`
+# for whenever a Public origin exists again. It runs the CLI against the
+# rules the image ships; to see a host that applied Generated rewrites
+# judged by the rules it actually serves, run the CLI by hand with
+# `--include-file <a copy of that host's include file>`.
 
 on:
   workflow_dispatch:
