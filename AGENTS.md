@@ -9,45 +9,18 @@ release mechanism is described in the Woow_HA_App_Store README (section
    Push a branch, open a PR, wait for the required checks, then merge.
 2. **A PR that changes an addon version is a release.** Merging it publishes
    that version to the WOOW App Store. It must pass every required check; the
-   checks are the approval, there is no human review step. Every PR also
-   runs `Upgrade comparison / compare` (pipeline #89): it compares each addon
-   whose version the PR changes with the latest Release. It becomes a
-   required check once it is added to the ruleset (pipeline #120); treat a
-   failure as blocking already. A PR that changes no version passes it in
-   seconds. The result is in the job summary. To re-run it, use "Re-run all
-   jobs", not "Re-run failed jobs": a re-run judges its own build, and an
-   earlier attempt's SBOM is not used.
+   checks are the approval, there is no human review step. Every PR runs
+   `Upgrade comparison / compare` (pipeline #89); treat a failure as blocking.
+   It compares each addon whose version the PR changes with the latest Stable
+   Release. A PR that changes no version passes it in seconds. The result is
+   in the job summary. To re-run it, use "Re-run all jobs", not
+   "Re-run failed jobs": a re-run judges its own build, and an earlier
+   attempt's SBOM is not used.
 3. **Breaking changes must be declared in `upgrade-notes.yaml`** next to the
-   addon's `config.yaml` (here `odoo18ce/upgrade-notes.yaml`), with the
-   migration path. Create the file only when something needs declaring. The
-   upgrade comparison blocks any breaking change without a matching entry:
-   `option-removed`, `schema-removed`, `schema-retyped`, `made-required`,
-   `range-narrowed`, `enum-value-removed`, `required-added`, `arch-removed`,
-   `port-removed`, `image-changed`. Changed defaults and host ports are only
-   reported. It also blocks a new fixable Critical or High vulnerability in
-   the amd64 image unless it is accepted with a reason. Format:
-
-   ```yaml
-   "1.3.0":                       # the new version, quoted
-     breaking:
-       - change: option-removed   # change and key exactly as the report shows
-         key: ssl_port            # schema path, e.g. database.port; the arch,
-                                  # the port (8069/tcp) or `image`
-         migration: Use the 443/tcp port mapping instead.
-     accepted_vulnerabilities:
-       - id: CVE-2026-1234        # id and package exactly as the report shows
-         package: openssl
-         reason: Upstream base image not updated yet; replaced in 1.3.1.
-   ```
-
-   Only sections newer than the latest Release and up to the new
-   version count. `migration` and `reason` must not be empty. A declaration
-   for which the check finds no matching change is only reported. The report
-   prints a ready-to-paste entry for each undeclared breaking change. The
-   release workflow (`release.yml`) puts these entries on the GitHub Release
-   under 破壞性變更與遷移方式 and 已接受的漏洞.
-   Full rules: the Woow_HA_App_Store README, section
-   "升版比對與 `upgrade-notes.yaml`", and the docstrings in that repo's
-   `.addon-sync/`: `upgrade_check.py` for the comparison, `addon_sync.py`
-   for the file format, which sections count and the Release notes. The
-   code wins on any difference.
+   addon's `config.yaml` (here `odoo18ce/upgrade-notes.yaml`). Create the file
+   only when the upgrade comparison asks for it; copy `change` and `key` from
+   its report and write the migration path. It also blocks a new fixable
+   Critical or High vulnerability unless it is accepted with a reason. The
+   release puts these entries on the GitHub Release. Rules, change names and
+   the file format: the Woow_HA_App_Store README, section
+   "升版比對與 `upgrade-notes.yaml`".
