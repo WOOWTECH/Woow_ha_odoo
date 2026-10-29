@@ -11,7 +11,7 @@ release mechanism is described in the Woow_HA_App_Store README (section
    that version to the WOOW App Store. It must pass every required check; the
    checks are the approval, there is no human review step. Every PR also
    runs `Upgrade comparison / compare` (pipeline #89): it compares each addon
-   whose version the PR changes with the latest Stable Release. It becomes a
+   whose version the PR changes with the latest Release. It becomes a
    required check once it is added to the ruleset (pipeline #120); treat a
    failure as blocking already. A PR that changes no version passes it in
    seconds. The result is in the job summary. To re-run it, use "Re-run all
@@ -40,12 +40,14 @@ release mechanism is described in the Woow_HA_App_Store README (section
          reason: Upstream base image not updated yet; replaced in 1.3.1.
    ```
 
-   Only sections newer than the latest Stable Release and up to the new
+   Only sections newer than the latest Release and up to the new
    version count. `migration` and `reason` must not be empty. A declaration
    for which the check finds no matching change is only reported. The report
    prints a ready-to-paste entry for each undeclared breaking change. The
    release workflow (`release.yml`) puts these entries on the GitHub Release
    under 破壞性變更與遷移方式 and 已接受的漏洞.
    Full rules: the Woow_HA_App_Store README, section
-   "升版比對與 `upgrade-notes.yaml`", and the docstring of that repo's
-   `.addon-sync/upgrade_check.py`; upgrade_check.py wins on any difference.
+   "升版比對與 `upgrade-notes.yaml`", and the docstrings in that repo's
+   `.addon-sync/`: `upgrade_check.py` for the comparison, `addon_sync.py`
+   for the file format, which sections count and the Release notes. The
+   code wins on any difference.
