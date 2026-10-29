@@ -222,7 +222,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Formal Releases so far
+      - name: Releases so far
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -230,7 +230,7 @@ jobs:
           gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
             --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
             | sed -n 's/^v//p' > released.txt
-          echo "formal Releases: $(wc -l < released.txt)"
+          echo "Releases: $(wc -l < released.txt)"
 
       - name: Declarations from upgrade-notes.yaml
         id: notes
