@@ -486,7 +486,7 @@ jobs:
           cache-to: type=gha,scope=aarch64,mode=max
 
   # Upgrade comparison (pipeline #89): a PR that bumps the add-on version is
-  # compared with the latest formal Release. A breaking config.yaml change
+  # compared with the latest Release. A breaking config.yaml change
   # not declared in odoo18ce/upgrade-notes.yaml blocks it, and so does a new
   # fixable Critical/High vulnerability in the amd64 image (the SBOM from
   # build (amd64) against the Release's GHCR image) unless that file accepts
