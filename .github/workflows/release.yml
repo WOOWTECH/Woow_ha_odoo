@@ -270,8 +270,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: WOOWTECH/Woow_HA_App_Store
-          # Switch to main once feat/89-upgrade-comparison is merged.
-          ref: feat/89-upgrade-comparison
+          ref: main
           path: tooling
           sparse-checkout: |
             .addon-sync
