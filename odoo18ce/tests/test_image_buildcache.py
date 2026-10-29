@@ -124,14 +124,28 @@ def test_the_pins_say_what_changing_them_costs() -> None:
 
 # --- CI -------------------------------------------------------------------
 
-@pytest.mark.parametrize("arch", ARCHES)
-def test_ci_reads_the_registry_cache_first_then_the_gha_cache(arch: str) -> None:
-    step = ci_build_step(arch)
+def test_ci_aarch64_reads_the_registry_cache_first_then_the_gha_cache() -> None:
+    step = ci_build_step("aarch64")
     assert lines(step["cache-from"]) == [
-        "type=registry,ref=${{ env.IMAGE_BASE }}-" + f"{arch}:buildcache",
-        f"type=gha,scope={arch}",
+        "type=registry,ref=${{ env.IMAGE_BASE }}-aarch64:buildcache",
+        "type=gha,scope=aarch64",
     ], "the registry cache comes first; the gha cache stays as the fallback"
     assert document(CI)["env"]["IMAGE_BASE"] == IMAGE_BASE
+
+
+def test_ci_amd64_reads_only_the_registry_cache_when_the_version_changes() -> None:
+    """The Upgrade comparison scans this image (pipeline #89, user story 19).
+
+    With the gha cache also listed, BuildKit took an older CI build's apt
+    layer for a version-bump PR (libexpat1 deb12u4) although the Release
+    would reuse the rebuilt layer from :buildcache, so the scan reported
+    vulnerabilities the Release would not ship. Other PRs keep the fallback.
+    """
+    assert lines(ci_build_step("amd64")["cache-from"]) == [
+        "type=registry,ref=${{ env.IMAGE_BASE }}-amd64:buildcache",
+        "${{ needs.static.outputs.version_changed != 'true' && 'type=gha,scope=amd64' || '' }}",
+    ]
+    assert document(CI)["jobs"]["build-amd64"]["needs"] == "static"
 
 
 @pytest.mark.parametrize("arch", ARCHES)
