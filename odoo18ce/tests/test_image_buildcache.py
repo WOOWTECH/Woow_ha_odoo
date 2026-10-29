@@ -226,16 +226,38 @@ def test_the_declarations_join_the_notes_before_the_release_is_created() -> None
             < step_index("Tag and GitHub Release"))
 
 
+def declarations_job() -> dict:
+    return document(RELEASE)["jobs"]["declarations"]
+
+
 def test_the_declarations_come_from_the_store_comparison_tool() -> None:
     """Same text as the shared release flow writes, so every Release reads alike."""
-    tooling = [step["with"] for step in release_steps()
-               if step.get("with", {}).get("repository") == "WOOWTECH/Woow_HA_App_Store"]
-    assert len(tooling) == 1 and tooling[0]["persist-credentials"] is False
-    step = release_steps()[step_index(DECLARATIONS)]
-    run = step["run"].replace("\\n", " ")
+    steps = declarations_job()["steps"]
+    run = next(step["run"] for step in steps if step.get("name") == DECLARATIONS)
     assert "set -euo pipefail" in run
     assert "upgrade_check.py release-notes" in run
     assert '--notes "${ADDON_DIR}/upgrade-notes.yaml"' in run
-    assert "release-notes.md" in run
-    assert "continue-on-error" not in step, (
+    assert "continue-on-error" not in declarations_job(), (
         "a malformed upgrade-notes.yaml fails the Release instead of hiding a breaking change")
+    release = document(RELEASE)["jobs"]["release"]
+    assert "declarations" in release["needs"]
+    assert "needs.declarations.result == 'success'" in release["if"]
+    joined = release_steps()[step_index(DECLARATIONS)]["run"]
+    assert "needs.declarations.outputs.notes" in str(
+        release_steps()[step_index(DECLARATIONS)]["env"])
+    assert "release-notes.md" in joined
+
+
+def test_store_code_never_runs_with_a_token_that_can_write() -> None:
+    """Woow_HA_App_Store@main is another repo's code: it runs in a job that
+    can only read, in a step with no token, and never in the release job."""
+    job = declarations_job()
+    assert job["permissions"] == {"contents": "read"}
+    for step in job["steps"]:
+        if step.get("uses", "").startswith("actions/checkout"):
+            assert step["with"]["persist-credentials"] is False
+        if "tooling/" in step.get("run", ""):
+            assert "secrets." not in str(step.get("env", {})), step["name"]
+    assert not [step for step in release_steps()
+                if step.get("with", {}).get("repository") == "WOOWTECH/Woow_HA_App_Store"]
+    assert "tooling/" not in str(release_steps())
