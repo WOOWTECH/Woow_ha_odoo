@@ -6,8 +6,10 @@ name: CI
 # the add-on version also has to build aarch64, because the moment it merges
 # users who added this repository directly will try to pull that version.
 #
-# The live tier (Playwright against a deployed Odoo) never runs here; the
-# perimeter workflow is the one read-only exception.
+# The live tier (Playwright against a deployed Odoo) never runs here. The
+# read-only perimeter.yml and literal-rewrite-gate.yml are dispatch-only and,
+# with no test host (#314; ADR 0003, postscript 2026-10-27), have no origin
+# to run against.
 
 on:
   pull_request:

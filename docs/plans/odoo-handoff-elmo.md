@@ -9,6 +9,7 @@
 
 - 原文所指的正式機 **.189**（資料庫 `<.189 的正式資料庫>`、網址 `https://woowtech-odooo.woowtech.io`）上的 Odoo 已於 **2026-09-16 退役**（ADR 0003、#59）。網址已從 Cloudflare tunnel 與 DNS 移除；add-on 已停止並設為手動啟動，資料保留，退役前有備份 `pre-retire-odoo18ce-2026-09-16`。
 - 目前所有驗證改在**測試機 .6**：資料庫 `odoo_test`，Public origin `https://woowtech-odoo-test-6.woowtech.io`，也是 parity 比對的對照組。主機位址不記錄在本 repo，向維運者取得。
+  - **2026-10-27 更新（#314）：** 測試機 .6 已改作他用、不會回來，`ODOO_PUBLIC_URLS` 已清空；目前沒有測試機（見 ADR 0003 postscript 2026-10-27、`docs/agents/live-tier.md`）。
 - 會寫入資料的破壞性測試只准在測試機上跑（#59 P-8）。
 - 附加元件從 0.3.38 升到 **0.4.3**。`main` 上還有尚未發版的變更（#126），之後的版本需要 Supervisor 2026.07.1 以上。
 - `lan_networks` 預設值現在是 `192.168.0.0/16 10.0.0.0/8 172.16.0.0/12`。add-on 網段 `172.30.32.0/23` 一律不算內部網路，這就是 2026-09-08 曝險事件的修法。
