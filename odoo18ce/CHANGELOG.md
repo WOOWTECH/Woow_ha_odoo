@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- Odoo nightly package 18.0.20260930 -> 18.0.20261101.
+
 ## 0.4.12 — 2026-10-27
 
 Only the base image changes the add-on: it sits below every layer, so this
