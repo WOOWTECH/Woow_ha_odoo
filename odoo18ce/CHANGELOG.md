@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- Debian base image bookworm-2026.10.0 -> bookworm-2026.10.3.
+
 ## 0.4.12 — 2026-10-27
 
 Only the base image changes the add-on: it sits below every layer, so this
