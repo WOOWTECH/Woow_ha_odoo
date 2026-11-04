@@ -5,5 +5,8 @@
 # first runs the maintenance bootstrap (odoo shell) over every database.
 startup_timeout: 600
 # seed creates a database through Odoo's database service, which installs
-# base and its auto-install modules in one request.
-hook_timeout: 900
+# base and its auto-install modules in one request. hook_timeout covers the
+# whole docker exec, so it is longer than seed's own limits
+# (odoo_upgrade.py READY_TIMEOUT 420 + CREATE_TIMEOUT 600 = 1020 s) plus the
+# other calls; seed then writes its own report before the Store stops it.
+hook_timeout: 1200

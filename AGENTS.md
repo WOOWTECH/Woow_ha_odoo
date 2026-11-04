@@ -24,7 +24,7 @@ release mechanism is described in the Woow_HA_App_Store README (section
    its manifest). An image that changes a module's manifest version without
    the add-on updating the database fails there. Both use the ingress port
    (the 8069 origin denies the add-on network) and the master password from
-   `/data/odoo.conf`; `settings.yaml` raises the startup and hook time
+   `/data/options.json`; `settings.yaml` raises the startup and hook time
    limits. Keep the hooks executable (`git update-index --chmod=+x`), with LF
    endings, Python standard library only: they run in the Store's
    python:3.12-alpine mock Supervisor container (python3 and busybox sh, no

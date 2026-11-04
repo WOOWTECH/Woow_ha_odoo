@@ -18,8 +18,8 @@ ADDON_URL is the ingress port 5691: the add-on's nginx lets only the
 Supervisor's address in there and proxies every path to Odoo. The 8069 origin
 denies the whole add-on network (172.30.32.0/23), so it is not used.
 
-Credentials: the master password is admin_passwd in /data/odoo.conf, which
-cont-init renders from the add-on options on every start (the upgrade test
+Credentials: the master password is the admin_passwd option, read from
+/data/options.json as the Store's hook interface requires (the upgrade test
 gives the required admin_passwd one random value for both versions). seed
 generates the database administrator's password; it and the record ids are
 kept in HOOK_STATE_DIR for verify.
@@ -30,7 +30,6 @@ Standard library only (the hooks run on python:3.12-alpine).
 from __future__ import annotations
 
 import base64
-import configparser
 import hashlib
 import json
 import os
@@ -102,14 +101,15 @@ class Odoo:
 
 
 def master_password() -> str:
-    """admin_passwd of the add-on's odoo.conf (in /data), never printed."""
-    path = os.path.join(os.environ["DATA_DIR_DATA"], "odoo.conf")
-    parser = configparser.RawConfigParser()
-    if not parser.read(path, encoding="utf-8"):
-        raise AssertionError(f"{path} is missing")
-    value = parser.get("options", "admin_passwd", fallback=None)
-    assert value, f"{path} has no admin_passwd"
-    assert not value.startswith("$"), "admin_passwd in odoo.conf is a hash; the hook needs the plain master password"
+    """The admin_passwd option from /data/options.json, never printed."""
+    path = os.path.join(os.environ["DATA_DIR_DATA"], "options.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            options = json.load(f)
+    except (OSError, ValueError) as exc:
+        raise AssertionError(f"{path} is not readable JSON: {exc}") from None
+    value = options.get("admin_passwd") if isinstance(options, dict) else None
+    assert isinstance(value, str) and value, f"{path} has no admin_passwd"
     return value
 
 
