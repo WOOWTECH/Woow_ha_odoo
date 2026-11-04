@@ -15,10 +15,20 @@ release mechanism is described in the Woow_HA_App_Store README (section
    Release. It also runs the upgrade test (pipeline #143): the Release's image,
    then this PR's amd64 image on the same data directories, under a mock
    Supervisor; the new version must start (here: the ingress port 5691 answers
-   and the container stays up). For now it checks startup only, not data.
-   Data-check hooks, when added, go in `odoo18ce/upgrade-check/`; their
-   interface is defined by pipeline #138 and will be documented in the
-   Woow_HA_App_Store README. A PR that changes no version passes it in seconds.
+   and the container stays up). It also checks data (pipeline #149) with the
+   hooks in `odoo18ce/upgrade-check/`: `seed` creates a database through
+   Odoo's database service and writes a partner and a filestore attachment
+   on the Release; `verify` reads them back over XML-RPC on this PR's image
+   and fails unless the module update finished (no module left to install,
+   upgrade or remove, and every installed module's database version equals
+   its manifest). An image that changes a module's manifest version without
+   the add-on updating the database fails there. Both use the ingress port
+   (the 8069 origin denies the add-on network) and the master password from
+   `/data/odoo.conf`; `settings.yaml` raises the startup and hook time
+   limits. Keep the hooks executable (mode 100755), with LF endings, Python
+   standard library only (they run on python:3.12-alpine, no bash). The hook
+   interface is the Woow_HA_App_Store README's upgrade test section (pipeline
+   #138). A PR that changes no version passes it in seconds.
    The result is in the job summary. To re-run it, use "Re-run all jobs", not
    "Re-run failed jobs": a re-run judges its own build, and an earlier
    attempt's SBOM and image are not used.
