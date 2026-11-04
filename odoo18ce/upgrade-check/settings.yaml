@@ -1,0 +1,9 @@
+---
+# Time limits of the Store's upgrade test (Woow_HA_App_Store
+# .addon-sync/upgrade_check.py SETTINGS_DEFAULTS: 300, 60, 600).
+# The ingress probe waits for Odoo itself behind nginx, and a new version
+# first runs the maintenance bootstrap (odoo shell) over every database.
+startup_timeout: 600
+# seed creates a database through Odoo's database service, which installs
+# base and its auto-install modules in one request.
+hook_timeout: 900
