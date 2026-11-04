@@ -20,7 +20,7 @@ denies the whole add-on network (172.30.32.0/23), so it is not used.
 
 Credentials: the master password is admin_passwd in /data/odoo.conf, which
 cont-init renders from the add-on options on every start (the upgrade test
-leaves admin_passwd unset, so it is whatever bashio renders for that). seed
+gives the required admin_passwd one random value for both versions). seed
 generates the database administrator's password; it and the record ids are
 kept in HOOK_STATE_DIR for verify.
 
