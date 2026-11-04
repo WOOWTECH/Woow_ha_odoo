@@ -25,13 +25,16 @@ release mechanism is described in the Woow_HA_App_Store README (section
    the add-on updating the database fails there. Both use the ingress port
    (the 8069 origin denies the add-on network) and the master password from
    `/data/odoo.conf`; `settings.yaml` raises the startup and hook time
-   limits. Keep the hooks executable (mode 100755), with LF endings, Python
-   standard library only (they run on python:3.12-alpine, no bash). The hook
-   interface is the Woow_HA_App_Store README's upgrade test section (pipeline
-   #138). A PR that changes no version passes it in seconds.
-   The result is in the job summary. To re-run it, use "Re-run all jobs", not
-   "Re-run failed jobs": a re-run judges its own build, and an earlier
-   attempt's SBOM and image are not used.
+   limits. Keep the hooks executable (`git update-index --chmod=+x`), with LF
+   endings, Python standard library only: they run in the Store's
+   python:3.12-alpine mock Supervisor container (python3 and busybox sh, no
+   bash), so never `docker run` from them. The hook interface (environment,
+   JSON report, `settings.yaml` keys `startup_timeout`, `stable_seconds`,
+   `hook_timeout`) is in the Woow_HA_App_Store README, "第 2 類 升級測試",
+   paragraph "資料檢查（#138）". A PR that changes no version passes it in
+   seconds. The result is in the job summary. To re-run it, use
+   "Re-run all jobs", not "Re-run failed jobs": a re-run judges its own build,
+   and an earlier attempt's SBOM and image are not used.
 3. **Breaking changes must be declared in `upgrade-notes.yaml`** next to the
    addon's `config.yaml` (here `odoo18ce/upgrade-notes.yaml`). Create the file
    only when the upgrade comparison asks for it; copy `change` and `key` from
