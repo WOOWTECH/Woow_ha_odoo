@@ -28,9 +28,14 @@ release mechanism is described in the Woow_HA_App_Store README (section
    limits. Keep the hooks executable (`git update-index --chmod=+x`), with LF
    endings, Python standard library only: they run in the Store's
    python:3.12-alpine mock Supervisor container (python3 and busybox sh, no
-   bash), so never `docker run` from them. The hook interface (environment,
-   JSON report, `settings.yaml` keys `startup_timeout`, `stable_seconds`,
-   `hook_timeout`) is in the Woow_HA_App_Store README, "第 2 類 升級測試",
+   bash), so never `docker run` from them. A hook must not leave background
+   processes running when it exits, and a hook file must not be a symlink to
+   anything outside `upgrade-check/` (only that directory is mounted).
+   `settings.yaml` values are positive integer seconds; `hook_timeout`
+   defaults to 600 and covers the whole `docker exec` of a hook. The hook
+   interface (environment, JSON report, `settings.yaml` keys
+   `startup_timeout`, `stable_seconds`, `hook_timeout`) is in the
+   Woow_HA_App_Store README, "第 2 類 升級測試",
    paragraph "資料檢查（#138）". A PR that changes no version passes it in
    seconds. The result is in the job summary. To re-run it, use
    "Re-run all jobs", not "Re-run failed jobs": a re-run judges its own build,
