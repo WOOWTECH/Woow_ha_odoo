@@ -60,6 +60,7 @@ jobs:
             echo "${ADDON_DIR}/rootfs/usr/local/bin/odoo-rewrite-apply"
             echo "${ADDON_DIR}/rootfs/usr/local/bin/odoo-canonical-catchup"
             echo "${ADDON_DIR}/rootfs/usr/local/lib/supervisor-read.sh"
+            echo "${ADDON_DIR}/tests/in_image/postgres_after_restore.sh"
             echo "docs/runbooks/slow-link-pull.sh"
           )
           shellcheck --version | head -2
@@ -438,6 +439,32 @@ jobs:
             exit 1
           fi
           echo "mutation: --load=${without_patch} reports the patch not applied, as it must"
+
+      # Supervisor restores an add-on by copying its backup into /data as
+      # root, so the PostgreSQL cluster comes back owned by root, and up to
+      # 0.4.12 the start stopped at `pg_ctl: could not open PID file`. The
+      # Static tier runs the repair in 00-postgres-init.sh against a stand-in
+      # tree (tests/test_postgres_after_restore.py); only a real start shows
+      # PostgreSQL then runs on the repaired cluster, in this image, under s6
+      # and bashio. The script makes a real cluster with a first start,
+      # restores it the way Supervisor does and the way the test box showed
+      # it, and starts the image on it; its header says what each round
+      # reads. A stub answers the Supervisor reads a start makes.
+      - name: In-image contract (PostgreSQL after a Home Assistant restore)
+        run: |
+          set -euo pipefail
+          status=0
+          out="$(timeout -k 30 600 bash "${ADDON_DIR}/tests/in_image/postgres_after_restore.sh" \
+            woow-ha-odoo-amd64:ci 2>&1)" || status=$?
+          echo "${out}"
+          if ! grep -qx 'postgres-after-restore: ok' <<< "${out}"; then
+            echo "::error::the add-on did not come up on a PostgreSQL cluster restored the way" \
+              "Home Assistant restores one (every file owned by root), or did not repair it the" \
+              "way 00-postgres-init.sh says; the FAIL line above names the reading. Exit" \
+              "${status} (124 is the 600 s timeout) with no FAIL line is a container failure," \
+              "not a finding."
+            exit 1
+          fi
 
       # The SBOM of this image is what the Upgrade comparison scans as the
       # new version (pipeline #89, category 4): pinned Syft from the Store,
