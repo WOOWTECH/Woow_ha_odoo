@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.4.13 — 2026-11-18
+
+Only `00-postgres-init.sh` changes in the image: updating reuses the base,
+apt, Odoo and add-ons layers and downloads only the layers from the rootfs
+copy down. The Odoo nightly bump (#301) and the base-image bump (#328) are
+not in this Release.
 
 ### Fixed
 - The add-on starts after Home Assistant restores it from a backup. Supervisor
