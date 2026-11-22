@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- Odoo nightly package 18.0.20260930 -> 18.0.20261122.
+
 ## 0.4.13 — 2026-11-18
 
 Only `00-postgres-init.sh` changes in the image: updating reuses the base,
