@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- Debian base image bookworm-2026.10.0 -> bookworm-2026.11.0.
+
 ## 0.4.13 — 2026-11-18
 
 Only `00-postgres-init.sh` changes in the image: updating reuses the base,
